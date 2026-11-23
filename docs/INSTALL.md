@@ -46,7 +46,7 @@ Get-FileHash -Algorithm SHA256 -LiteralPath '.\Workdesk-Setup-x64.exe'
 
 ### 安装提示缺少 Visual C++ 运行库
 
-安装微软的 **Visual C++ v14 x64** 版本后重试。安装程序检查的是 x64 组件，最低版本为 14.44.35208。下载入口见本页的安装说明。
+当前安装版要求 Visual C++ v14 x64 ≥ 14.44.35208.0，建议安装微软提供的最新版本。下载入口见本页的安装说明。
 
 ### 桌面窗口打不开
 
