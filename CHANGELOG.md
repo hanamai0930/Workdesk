@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.1（发行准备）
+## [1.0.1] - 2026-11-23
 
-源码与通用兼容安装包已准备，下载入口将在百度网盘分享准备后更新到 Release。GitHub 不新增本轮 EXE 附件，原 v1.0.0 附件保留。
+通用兼容安装包通过[百度网盘统一入口](https://pan.baidu.com/s/1c6fh-cs804YLCSTst1_Kyg?pwd=g6hg)分发，提取码 **g6hg**，进入 **v1.0.1** 文件夹。GitHub 不新增本轮 EXE 附件，原 v1.0.0 附件保留。
 
 - **合作条件等待**：聊天直接显示待处理条件和入口；支持外部资源、人工配合、后续阶段核对说明，以及原有 Skill/MCP 预设。
 - **原任务接续**：逐项保存说明并明确确认后重新规划，保留原目标、成员、权限、累计上限、派发截止和原回复。旧等待记录、服务重启、重复提交与过期授权均有回归覆盖。
@@ -23,4 +23,5 @@
 
 下载与安装要求见[发行页](https://github.com/hanamai0930/Workdesk/releases/tag/v1.0.0)，操作方法见[用户指南](docs/USER_GUIDE.md)。
 
+[1.0.1]: https://github.com/hanamai0930/Workdesk/releases/tag/v1.0.1
 [1.0.0]: https://github.com/hanamai0930/Workdesk/releases/tag/v1.0.0

@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="docs/INSTALL.md#下载安装包">下载 Windows 安装版</a></strong> ·
+  <strong><a href="https://pan.baidu.com/s/1c6fh-cs804YLCSTst1_Kyg?pwd=g6hg">下载 Windows 安装版</a></strong> ·
   <a href="docs/INSTALL.md">安装指南</a> ·
   <a href="docs/INSTALL.md#常见问题">常见问题</a> ·
   <a href="#从源码开发">源码</a>
@@ -105,7 +105,7 @@ Workdesk 组织对话和任务。Chat 通过模型服务返回回复，Work 通�
 
 **1.0.1 通用兼容包**文件名为 **Workdesk-Setup-Win10-Win11-x64.exe**，面向 Windows 10 1809 及以上 x64 和 Windows 11 x64，已包含合作条件等待修复。安装后从开始菜单打开 Workdesk，连接自己的模型账号或 API Key。
 
-新版安装包改用百度网盘分发，分享链接将在 Release 更新时公布；当前 GitHub 附件仍为历史 v1.0.0。下载状态、兼容范围和文件校验见[安装指南](docs/INSTALL.md)。
+打开[百度网盘统一下载入口](https://pan.baidu.com/s/1c6fh-cs804YLCSTst1_Kyg?pwd=g6hg)，提取码 **g6hg**，进入 **v1.0.1** 文件夹，下载上面的完整安装包。历史版本按版本号保存在同一根目录，以后继续使用这个入口。兼容范围和文件校验见[安装指南](docs/INSTALL.md)。
 
 [安装与文件校验](docs/INSTALL.md) · [常见问题](docs/INSTALL.md#常见问题) · [操作指南](docs/USER_GUIDE.md)
 

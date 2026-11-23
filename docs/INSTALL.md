@@ -4,7 +4,11 @@
 
 ## 下载安装包
 
-新版安装包改用百度网盘分发，分享链接和提取码将在 [Release](https://github.com/hanamai0930/Workdesk/releases) 更新时公布。当前 GitHub 附件仍为历史 v1.0.0，本轮不新增 EXE 附件。
+**[打开百度网盘统一下载入口](https://pan.baidu.com/s/1c6fh-cs804YLCSTst1_Kyg?pwd=g6hg)** · 提取码：**g6hg**。
+
+打开后进入 **Workdesk → v1.0.1**，下载 **Workdesk-Setup-Win10-Win11-x64.exe**。分享链接对应 Workdesk 根目录，各版本按 `v1.0.0`、`v1.0.1` 等子文件夹保存；查看旧版本时选择相应目录。后续版本继续复用同一分享入口。
+
+各版变化见 [Release](https://github.com/hanamai0930/Workdesk/releases)。新版 EXE 通过网盘提供，GitHub 保留源码和发行说明；原 v1.0.0 的历史附件保留。
 
 | 文件 | 适用情况 |
 | --- | --- |
