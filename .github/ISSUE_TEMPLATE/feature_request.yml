@@ -1,0 +1,37 @@
+name: "功能建议"
+description: "说明一个使用需求，以及希望 Workdesk 怎样帮助完成。"
+title: "[建议] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请围绕具体需求说明场景和希望达到的效果。
+        提交前请移除密钥、令牌、账号信息和私有项目内容。
+  - type: textarea
+    id: need
+    attributes:
+      label: "需求是什么"
+      description: "用简短的话说明你希望增加或改进的能力。"
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: "使用场景"
+      description: "在什么任务、页面或工作流程中会用到？"
+    validations:
+      required: true
+  - type: textarea
+    id: current_problem
+    attributes:
+      label: "当前问题"
+      description: "目前怎样处理？哪里不方便，或哪一步无法完成？"
+    validations:
+      required: true
+  - type: textarea
+    id: desired_result
+    attributes:
+      label: "希望达到的效果"
+      description: "描述理想的操作和结果；如有示例，可以附图或文字说明。"
+    validations:
+      required: true

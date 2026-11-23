@@ -1,0 +1,71 @@
+name: "问题反馈"
+description: "报告安装、界面或功能中可以复现的问题。"
+title: "[问题] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请尽量提供能够复现问题的最少步骤。
+        提交前请移除密钥、令牌、账号信息和私有项目内容，截图与日志也需要检查。
+  - type: input
+    id: version
+    attributes:
+      label: "Workdesk 版本"
+      description: "填写安装版版本号；源码运行请附提交编号。"
+      placeholder: "例如：v1.0.0，或源码提交编号"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: "Windows 版本与架构"
+      placeholder: "例如：Windows 11 24H2 x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: location
+    attributes:
+      label: "发生位置"
+      options:
+        - "Chat"
+        - "独立 Work"
+        - "合作 Work"
+        - "资料与文档"
+        - "项目、记录与成果"
+        - "连接、用量与设置"
+        - "安装、启动与更新"
+        - "其他"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "复现步骤"
+      description: "说明从哪个页面开始、依次做了什么，以及问题是否每次出现。"
+      placeholder: |
+        1. 打开……
+        2. 点击或输入……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "预期结果"
+      description: "你希望这次操作产生什么结果？"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "实际结果"
+      description: "描述实际行为，并保留相关错误提示的原文。"
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "截图与日志"
+      description: "可粘贴相关日志片段或上传截图。只提供与问题有关的内容，并先清理私有信息。"
+    validations:
+      required: false

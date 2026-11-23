@@ -30,3 +30,12 @@
 ## 使用方式
 
 README 通过相对路径引用这些图片。仓库维护者可在 GitHub 仓库设置的 Social Preview 中选择 `social-preview.png`。
+
+### 设置 GitHub Social Preview
+
+1. 保存本目录的 `social-preview.png`。
+2. 打开 [Workdesk 仓库设置](https://github.com/hanamai0930/Workdesk/settings)。
+3. 在 **Social preview** 中选择 **Edit → Upload an image…**，上传该文件。
+4. 确认设置中显示新的封面预览。
+
+该图片为 1280 × 640、不透明 PNG，小于 1 MB，可用于浅色和深色页面背景。GitHub 的上传要求与操作说明见[官方文档](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/customizing-your-repositorys-social-media-preview)。
