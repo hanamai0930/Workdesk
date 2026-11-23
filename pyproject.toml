@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=77,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workdesk"
+version = "0.1.0"
+description = "Local Workdesk task, collaboration, and native provider control"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["pypdf>=6.21,<7", "Pillow>=11,<13", "tokenizers>=0.22,<0.23", "PyYAML==6.0.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["researchos", "researchos.workdesk*"]
+
+[tool.setuptools.package-data]
+"researchos.workdesk" = ["workers/*.mjs", "workers/*.py", "_compat/*.py"]

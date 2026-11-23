@@ -1,0 +1,75 @@
+(()=>{
+  'use strict';const $=WorkdeskModules.dom('projects'),S=WorkdeskSupport,{h}=S;
+  const v={data:null,error:'',busy:false,folder:'',name:'',scene:'',relocate:null,preview:null,seq:0,edits:{}};const active=()=>location.hash.split('/')[0]==='#projects';
+  const scenes=[['','普通项目'],['research','科研探索'],['documents','文档处理'],['computer','电脑操控'],['development','应用开发']];
+  const edited=p=>v.edits[p.id]||{title:p.name,scene:p.scene||''};
+  const changed=(p,values=edited(p))=>values.title.trim()!==p.name||values.scene!==(p.scene||'');
+  function removalReason(p){
+    const links=[['任务',p.work_items],['项目对话',p.project_conversations],['执行记录',p.records],['草稿',p.drafts],['自动目标',p.goals]]
+      .filter(([,count])=>count>0).map(([label,count])=>`${count} 项${label}`);
+    return links.length?'仍关联 '+links.join('、')+'，暂不能移除登记。':'';
+  }
+  function relocation(p){
+    if(v.relocate!==p.id)return '';
+    return `<section class="project-relocation" aria-label="重新定位项目文件夹">
+      <p class="sp-note">先选择新文件夹，再核对指定文件的版本。历史回合保留原路径；此处不移动文件。旧目录不可用时采用已保存的材料版本。</p>
+      ${p.identity_files.map(n=>`<label><input type="checkbox" data-project-proof="${h(n)}"> ${h(n)}</label><br>`).join('')||'<p>尚无可核对文件；请先保存一个材料选择，或将新文件夹作为新项目添加。</p>'}
+      ${S.button('选择新位置并核对',`data-project="location" data-id="${h(p.id)}"`)}
+      ${v.preview?`<section class="project-location-preview"><h3 id="project-location-preview-title" tabindex="-1">目录核对预览</h3>
+        <p>${h(v.preview.old_root)} → ${h(v.preview.new_root)}</p>
+        <p class="sp-note">仅核对所选文件；不代表整个文件夹相同。确认后保留项目身份并撤销旧位置的范围授权。</p>
+        ${S.raw(v.preview.manifest)}${S.button('确认使用新位置',`data-project="commit" data-id="${h(p.id)}"`)}
+      </section>`:''}
+    </section>`;
+  }
+  function projectCard(p){
+    const values=edited(p),dirty=changed(p),reason=removalReason(p);
+    return `<article class="sp-card" data-project-card="${h(p.id)}"><div class="sp-row"><h2>${h(p.name)}</h2><span class="sp-badge">${p.exists?'目录可用':'目录不可用'}</span></div>
+      <p class="sp-note">${h(p.root)} · ${p.work_items} 个任务 · ${p.project_conversations} 条项目对话 · ${p.records} 条执行记录 · ${p.drafts} 个草稿 · ${p.goals} 个目标</p>
+      <a class="project-primary-link" href="#work-items/project/${h(p.id)}">进入项目任务与对话</a>
+      <form data-project-edit="${h(p.id)}">
+        ${S.field('项目名称','title',values.title,'required maxlength="100"')}${S.select('工作场景','scene',scenes,values.scene)}
+        <div class="sp-actions"><button type="submit" ${dirty?'':'disabled'} aria-describedby="project-save-${h(p.id)}">保存名称和场景</button>
+          ${S.button(p.pinned?'取消置顶':'置顶',`data-project="pin" data-id="${h(p.id)}"`)}
+          ${S.button('重新定位文件夹',`data-project="relocate" data-id="${h(p.id)}"`)}
+          ${S.button('移除闲置登记',`class="project-remove" data-project="remove" data-id="${h(p.id)}" ${reason?`disabled aria-describedby="project-remove-${h(p.id)}" title="${h(reason)}"`:''}`)}
+        </div>
+        <p class="sp-note" id="project-save-${h(p.id)}" data-project-save-status aria-live="polite" ${dirty?'':'hidden'}>${dirty?'修改尚未保存。':''}</p>
+        ${reason?`<p class="sp-note" id="project-remove-${h(p.id)}">${h(reason)}</p>`:''}
+      </form>${relocation(p)}
+    </article>`;
+  }
+  function draw(){
+    if(!active()||!v.data)return;
+    $('#main').innerHTML=`<section class="sp-page">${S.nav('projects')}
+      <header class="sp-heading"><div><h1>项目与工作区</h1><p>管理项目登记和文件夹位置；这些操作不会移动或删除项目文件，也不改变执行权限。</p></div></header>
+      ${v.error?`<p class="sp-error" role="alert">${h(v.error)}</p>`:''}
+      <section class="sp-card"><h2>添加项目</h2><form id="projects-add">${S.field('项目名称','name',v.name,'required maxlength="100"')}${S.select('工作场景','scene',scenes,v.scene)}
+        <p class="sp-note">${h(v.folder||'请选择项目源文件夹')}</p>${S.button('选择项目文件夹','data-project="pick"')}<button type="submit" ${v.folder?'':'disabled'}>添加项目</button>
+      </form></section>${v.data.projects.map(projectCard).join('')}
+    </section>`;
+  }
+  function updateEdit(form){
+    const p=v.data?.projects.find(p=>p.id===form.dataset.projectEdit);if(!p)return;
+    const data=new FormData(form),values={title:String(data.get('title')||''),scene:String(data.get('scene')||'')};
+    v.edits[p.id]=values;
+    const dirty=changed(p,values);form.querySelector('[type="submit"]').disabled=!dirty;
+    const status=form.querySelector('[data-project-save-status]'),message=dirty?'修改尚未保存。':'';
+    status.hidden=!dirty;
+    if(status.textContent!==message)status.textContent=message;
+  }
+  async function load(){const seq=++v.seq;try{const data=await S.request('projects');if(seq!==v.seq||!active())return;v.data=data;draw();}catch(e){v.error=e.message;if(v.data)draw();else if(active())$('#main').innerHTML=errorPage(e.message);}}
+  document.addEventListener('input',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='name')v.name=e.target.value;});
+  document.addEventListener('change',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='scene')v.scene=e.target.value;});
+  document.addEventListener('click',async e=>{const el=e.target.closest('[data-project]');if(!active()||!el||el.disabled||v.busy)return;v.busy=true;try{const a=el.dataset.project,p=v.data.projects.find(p=>p.id===el.dataset.id);
+    if(a==='pick'){const path=await S.directory();if(path){v.folder=path;if(!v.name)v.name=path.split(/[\\/]/).at(-1);draw();}}
+    if(a==='pin')await S.command('work.project-record',{project_id:p.id,revision:p.revision,pinned:!p.pinned});
+    if(a==='remove'&&await S.confirm('移除此工作区登记？',p.name,'项目文件和历史审计会保留；仍被记录、草稿或目标使用的登记不会移除。',{tone:'danger',confirmLabel:'移除登记'}))await S.command('work.projects-remove',{projects:[{id:p.id,revision:p.revision}],confirm:true});
+    if(a==='relocate'){v.relocate=p.id;v.preview=null;draw();}
+    if(a==='location'){const files=[...el.closest('[data-project-card]').querySelectorAll('[data-project-proof]:checked')].map(x=>x.dataset.projectProof);const path=await S.directory();if(path){v.preview=(await S.command('project.location-prepare',{project_id:p.id,revision:p.revision,new_root:path,files})).preview;draw();$('#project-location-preview-title')?.focus();}}
+    if(a==='commit'&&v.relocate===p.id&&v.preview&&await S.confirm('更改项目登记位置？',v.preview.new_root,'保留旧文件夹和历史回合路径；自动计划不会静默跟随目录变化。',{confirmLabel:'使用新位置'})){await S.command('project.location-commit',{id:v.preview.id,preview_hash:v.preview.preview_hash,confirm:true});v.preview=null;v.relocate=null;}
+    if(['pin','remove','commit'].includes(a)){await S.refreshChrome();await load();}v.error='';
+  }catch(e){v.error=e.message;draw();}finally{v.busy=false;}});
+  document.addEventListener('submit',async e=>{const f=e.target;if(!active()||!(f.id==='projects-add'||f.dataset.projectEdit))return;e.preventDefault();if(v.busy)return;v.busy=true;try{const data=new FormData(f);if(f.id==='projects-add'){await S.command('project.create',{root:v.folder,name:data.get('name'),scene:data.get('scene')||null});v.folder='';v.name='';}else{const p=v.data.projects.find(p=>p.id===f.dataset.projectEdit);updateEdit(f);if(!changed(p))return;await S.command('work.project-record',{project_id:p.id,revision:p.revision,title:data.get('title'),scene:data.get('scene')||null});delete v.edits[p.id];}v.error='';await S.refreshChrome();await load();}catch(e){v.error=e.message;draw();}finally{v.busy=false;}});
+  WorkdeskModules.onLeave('projects',()=>++v.seq);window.WorkdeskProjectsPage={render:load};
+})();

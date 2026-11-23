@@ -1,0 +1,78 @@
+@scope ([data-ui-module="control"]) {
+  .ctl-usage {max-width:1100px;display:grid;gap:16px}
+  .ctl-usage .detail-back {margin:0;justify-self:start}
+  .ctl-usage-heading {display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .ctl-usage-heading h1 {font-size:30px}
+  .ctl-usage-actions,.ctl-usage-heading .heading-actions {display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  .ctl-usage-card {background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;min-width:0}
+  .ctl-usage-card > h2 {font-size:17px;padding:13px 15px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+  .ctl-usage-task {display:flex;align-items:center;justify-content:space-between;gap:9px;padding:10px 14px;border-bottom:1px solid var(--line);word-break:break-word}
+  .ctl-usage-task:last-child {border-bottom:0}
+  .ctl-usage-task[href]:hover,.ctl-usage-task[aria-current="page"] {background:var(--soft)}
+  .ctl-usage-task div {min-width:0}
+  .ctl-usage-task div strong {display:block;font-size:13px}
+  .ctl-usage-task div span {display:block;font-size:12px;color:var(--muted);margin-top:3px}
+  .ctl-usage-task svg {width:15px;height:15px;flex:none;color:var(--muted)}
+  .ctl-usage-note {padding:9px 15px;color:var(--muted);font-size:13px;line-height:1.6}
+  .ctl-usage-technical > summary {cursor:pointer;font-size:13px;line-height:1.6}
+  .ctl-usage-technical p {color:var(--sub);font-size:13px;line-height:1.7;margin:7px 0}
+  .ctl-usage-technical {padding:11px 15px}
+  .ctl-work-consumption {grid-template-columns:minmax(0,1fr)}
+  .ctl-work-consumption > .ctl-usage-note {padding:0}
+  .ctl-usage-search {display:block;max-width:360px}
+  .ctl-usage-search input {display:block;width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--panel);color:var(--text);font-size:13px}
+  .ctl-usage-list {display:grid;gap:10px;min-width:0}
+  .ctl-usage-summary > h2 {padding:0;border:0;font-size:15px;font-weight:650}
+  .ctl-usage-summary h2 a {display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 15px}
+  .ctl-usage-summary h2 a:hover,.ctl-usage-summary h2 a:focus-visible {background:var(--soft)}
+  .ctl-usage-summary h2 svg {width:16px;height:16px;color:var(--sub);flex:none}
+  .ctl-usage-summary ul {display:flex;flex-wrap:wrap;gap:6px 8px;list-style:none;margin:0;padding:0 15px 12px}
+  .ctl-usage-summary li {display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 8px;min-width:0;padding:4px 8px;border:1px solid var(--line);border-radius:7px;background:var(--soft);font-size:12px;overflow-wrap:anywhere}
+  .ctl-usage-summary li strong {font-variant-numeric:tabular-nums}
+  .ctl-usage-summary li small {font-size:11px;color:var(--muted)}
+  #ctl-usage-pager {justify-content:center;color:var(--sub);font-size:13px}
+  #ctl-usage-pager[hidden] {display:none}
+  .ctl-usage-detail-title {font-size:17px;color:var(--sub);overflow-wrap:anywhere}
+  .ctl-usage-scroll {max-width:100%;overflow:auto}
+  .ctl-usage-steps {width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  .ctl-usage-steps :is(th,td) {padding:10px 12px;text-align:right;white-space:nowrap}
+  .ctl-usage-steps thead {background:var(--soft);color:var(--sub)}
+  .ctl-usage-steps thead th {font-weight:600}
+  .ctl-usage-steps :is(th:nth-child(-n+2),td:nth-last-child(6)) {text-align:left}
+  .ctl-usage-steps tbody {border-top:1px solid var(--line)}
+  .ctl-usage-steps th[scope="rowgroup"] {text-align:left;vertical-align:top;white-space:normal;min-width:170px;max-width:320px}
+  .ctl-usage-steps th :is(time,a,small) {display:block;color:var(--sub);font-size:12px;font-weight:400;margin-top:3px}
+  .ctl-usage-steps th a {text-decoration:underline}
+  .ctl-embedded {display:grid;gap:11px;min-width:0;color:var(--text)}
+  .ctl-embedded-summary,.ctl-embedded-evidence,.ctl-embedded-waiting .warning-banner {
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:12px 14px;
+    min-width:0;
+    overflow-wrap:anywhere;
+  }
+  .ctl-embedded-summary {display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px 12px}
+  .ctl-embedded-summary h2 {margin:0 0 4px;font-size:15px;font-weight:600}
+  .ctl-embedded-summary p {margin:0;font-size:13px}
+  .ctl-embedded-summary .ctl-embedded-time,.ctl-embedded-loading {color:var(--muted);font-size:12px}
+  .ctl-embedded-summary .ctl-actions {margin:0}
+  .ctl-embedded-waiting {display:grid;gap:8px;min-width:0}
+  .ctl-embedded-waiting .warning-banner {margin:0;background:color-mix(in srgb,var(--panel) 91%,var(--warning))}
+  .ctl-embedded-waiting .ctl-actions {margin:9px 0}
+  .ctl-embedded-request {margin:4px 0 0;white-space:pre-wrap;font-size:13px}
+  .ctl-embedded-evidence {font-size:13px}
+  .ctl-embedded-evidence summary {cursor:pointer;width:fit-content;max-width:100%;color:var(--sub)}
+  .ctl-embedded-evidence summary:hover {color:var(--text)}
+  .ctl-embedded-evidence[open] > :is(.raw-page,.source-block,.section-subtitle,.callout) {margin-top:9px}
+  .ctl-embedded-evidence .raw-page {max-height:400px;overflow:auto}
+  .ctl-embedded-waiting .ctl-embedded-evidence {padding:4px 0 0;border:0;background:transparent}
+  @media (max-width:440px) {
+    .page:has(#ctl-resources) {max-width:100%;box-sizing:border-box;overflow-wrap:anywhere}
+    .page:has(#ctl-resources) :is(.page-heading,.provider-detail-top,.heading-actions,.ctl-actions) {flex-wrap:wrap;min-width:0}
+    .page:has(#ctl-resources) :is(.provider-detail,.provider-detail-top > *,.history-page,pre) {min-width:0;max-width:100%;box-sizing:border-box}
+    .page:has(#ctl-resources) .button {white-space:normal}
+    .ctl-usage-heading h1 {font-size:23px}
+    .ctl-embedded-summary,.ctl-embedded-evidence,.ctl-embedded-waiting .warning-banner {padding:9px 10px}
+  }
+}

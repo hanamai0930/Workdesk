@@ -1,0 +1,12 @@
+@scope ([data-ui-module="workbench"]) {
+  .wd-work-file-drop { padding:17px;border:1px dashed var(--wk-line);border-radius:10px;text-align:center; }
+  .wd-work-files { max-height:280px;overflow-y:auto;margin:14px 0; }
+  .wd-work-file { display:flex;align-items:center;gap:10px;min-width:0;padding:10px 2px;border-bottom:1px solid var(--wk-line); }
+  .wd-work-file>svg { width:19px;height:19px;flex-shrink:0;color:var(--wk-muted); }
+  .wd-work-file>span { display:flex;flex-direction:column;gap:3px;min-width:0;flex:1; }
+  .wd-work-file strong { font-size:13px;font-weight:500;overflow-wrap:anywhere; }
+  .wd-work-file small { font-size:11px;line-height:17px;color:var(--wk-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  :scope .wd-work-file>.wk-button { width:30px;min-width:30px;min-height:30px;padding:4px;border:0;background:transparent; }
+  .wd-work-file>.wk-button svg { width:15px;height:15px; }
+  .wd-work-file-empty { text-align:center;padding:18px 0; }
+}

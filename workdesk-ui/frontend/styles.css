@@ -1,0 +1,71 @@
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@source "./";
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+body.workdesk > #root { display:contents; }
+@theme inline {
+  --color-background: var(--wk-bg);
+  --color-foreground: var(--wk-text);
+  --color-primary: var(--wk-action);
+  --color-primary-foreground: var(--wk-inverse);
+  --color-secondary: var(--wk-soft);
+  --color-secondary-foreground: var(--wk-text);
+  --color-muted: var(--wk-soft);
+  --color-muted-foreground: var(--wk-muted);
+  --color-accent: var(--wk-hover);
+  --color-accent-foreground: var(--wk-text);
+  --color-destructive: var(--wk-danger,light-dark(#aa2929,#ffaaaa));
+  --color-border: var(--wk-line);
+  --color-input: var(--wk-line);
+  --color-ring: var(--wk-action);
+  --color-card: var(--wk-bg);
+  --color-card-foreground: var(--wk-text);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+/* Legacy pages use a 13px root and retain their own controls. Shared React
+   controls size one text line plus padding, rather than assuming a 16px root. */
+@scope (body.workdesk) {
+  :is([data-slot="button"],[data-slot="input"],[data-slot="native-select"],[data-slot="textarea"]) {
+    box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;line-height:1.4;
+    color:inherit;border-radius:8px;vertical-align:middle;
+  }
+  :is([data-slot="input"],[data-slot="native-select"],[data-slot="textarea"]) {
+    border:1px solid var(--wk-line);background:var(--wk-bg);
+  }
+  :is([data-slot="input"]:where(:not([type="range"],[type="color"],[type="checkbox"],[type="radio"])),[data-slot="native-select"]) {
+    height:auto;min-height:max(32px,calc(1lh + .75em + 2px));padding:.375em .7em;
+  }
+  [data-slot="native-select"] { appearance:none;padding-inline-end:2.4em; }
+  [data-slot="native-select"]:where([data-size="sm"]) { min-height:max(28px,calc(1lh + .5em + 2px));padding-block:.25em; }
+  [data-slot="native-select-icon"] { width:1em;height:1em;right:.7em; }
+  [data-slot="textarea"] { padding:.5em .7em; }
+  [data-slot="button"] {
+    --wd-button-icon:1em;
+    display:inline-flex;align-items:center;justify-content:center;gap:.45em;
+    height:auto;min-height:max(32px,calc(1lh + .8em + 2px));padding:.4em .85em;
+    border:1px solid transparent;background:transparent;text-align:center;
+  }
+  [data-slot="button"]:where([data-size="sm"]) { min-height:max(28px,calc(1lh + .5em + 2px));padding:.25em .65em; }
+  [data-slot="button"]:where([data-size="xs"]) { min-height:24px;padding:.15em .5em;font-size:max(12px,.875em);--wd-button-icon:12px; }
+  [data-slot="button"]:where([data-size="lg"]) { min-height:max(38px,calc(1lh + 1em + 2px));padding:.5em 1.1em; }
+  [data-slot="button"]:where([data-size^="icon"]) { min-width:0;min-height:0;width:32px;height:32px;aspect-ratio:1;padding:0; }
+  [data-slot="button"]:where([data-size="icon-xs"]) { width:24px;height:24px;--wd-button-icon:12px; }
+  [data-slot="button"]:where([data-size="icon-sm"]) { width:28px;height:28px; }
+  [data-slot="button"]:where([data-size="icon-lg"]) { width:36px;height:36px; }
+  [data-slot="button"] svg { width:var(--wd-button-icon);height:var(--wd-button-icon);flex:none; }
+  [data-slot="button"]:where([data-variant="default"]) { background:var(--wk-action);color:var(--wk-inverse); }
+  [data-slot="button"]:where([data-variant="outline"]) { border-color:var(--wk-line);background:var(--wk-bg); }
+  [data-slot="button"]:where([data-variant="secondary"]) { background:var(--wk-soft); }
+  [data-slot="button"]:where([data-variant="destructive"]) { background:var(--wk-danger,light-dark(#aa2929,#ffaaaa));color:var(--wk-inverse); }
+  [data-slot="button"]:where([data-variant="link"]) { color:var(--wk-action);text-decoration:underline;text-underline-offset:3px; }
+  [data-slot="button"]:where(:hover,:focus-visible):where(:not(:disabled,[data-variant="default"],[data-variant="destructive"])) { background:var(--wk-hover); }
+  :is([data-slot="button"],[data-slot="input"],[data-slot="native-select"],[data-slot="textarea"]):focus-visible {
+    outline:2px solid var(--wk-action);outline-offset:-2px;box-shadow:none;
+  }
+  :is([data-slot="input"],[data-slot="native-select"],[data-slot="textarea"])[aria-invalid="true"] { border-color:var(--wk-danger,light-dark(#aa2929,#ffaaaa)); }
+}

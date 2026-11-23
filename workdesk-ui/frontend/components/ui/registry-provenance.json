@@ -1,0 +1,54 @@
+[
+  {
+    "name": "button",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/button.json",
+    "dependencies": [
+      "cn",
+      "radix-ui"
+    ]
+  },
+  {
+    "name": "input",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/input.json",
+    "dependencies": [
+      "cn"
+    ]
+  },
+  {
+    "name": "textarea",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/textarea.json",
+    "dependencies": [
+      "cn"
+    ]
+  },
+  {
+    "name": "native-select",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/native-select.json",
+    "dependencies": [
+      "cn"
+    ]
+  },
+  {
+    "name": "card",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/card.json",
+    "dependencies": [
+      "cn"
+    ]
+  },
+  {
+    "name": "badge",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/badge.json",
+    "dependencies": [
+      "cn",
+      "radix-ui"
+    ]
+  },
+  {
+    "name": "separator",
+    "source": "https://ui.shadcn.com/r/styles/new-york-v4/separator.json",
+    "dependencies": [
+      "cn",
+      "radix-ui"
+    ]
+  }
+]

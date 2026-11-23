@@ -1,0 +1,104 @@
+/* Basic batch-2 controls. Display reads never enable a queue or send a model message. */
+(() => {
+  'use strict';
+  const $=window.WorkdeskModules.dom('collaboration');
+  const v={data:null,workspace:null,timer:null,generation:0,pending:null,preview:null};
+  const h=esc;
+  const btn=(label,action,extra='')=>`<button class="button secondary" data-co="${action}" ${extra}>${h(label)}</button>`;
+  const input=(label,name,value='',type='text')=>`<label class="ctl-field"><span>${h(label)}</span><input name="${name}" type="${type}" value="${h(value)}"></label>`;
+  const area=(label,name,value='',rows=5)=>`<label class="ctl-field"><span>${h(label)}</span><textarea name="${name}" rows="${rows}">${h(value)}</textarea></label>`;
+  const obj=value=>rawBlock('准确记录',JSON.stringify(value,null,2),false);
+  const linkTask=id=>`<a href="#control/task/${encodeURIComponent(id)}">查看任务 / 停止 / 核对</a>`;
+  const provider=(name,value='codex')=>`<label class="ctl-field"><span>${h(name==='reviewer'?'指定独立审查端':'工作端')}</span><select name="${name}">${['codex','deepseek','qwen'].map(p=>`<option ${value===p?'selected':''}>${p}</option>`).join('')}</select></label>`;
+  const defaults=p=>{const f=v.workspace?.profiles?.find(x=>x.id===p),fallback=p==='codex'?{model:'gpt-6-luna',effort:'low',tier:'fast'}:{model:p==='deepseek'?'deepseek-flash':'qwen3.8-flash',effort:'off',tier:'standard'};return {provider:p,model:f?.model||fallback.model,effort:f?.effort||fallback.effort,tier:f?.tier||fallback.tier,execution:p+'_native'};};
+  const chainBudget={attempts:10,codex_turns:3,requests:20,cny:60,tools:60,seconds:600};
+  const lines=value=>String(value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  async function call(route,p){return api('v1/'+route,p===undefined?undefined:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});}
+  async function cmd(kind,payload){const id=crypto.randomUUID();v.pending={id,kind};try{const r=await call('command',{id,kind,payload});v.pending=null;return r.receipt;}catch(e){throw Error(e.message+' · 命令 '+id+'；先查回执，不自动重发。');}}
+  function decision(message,wantsText=false){return new Promise(resolve=>{let d=document.querySelector('#co-dialog');if(!d){d=document.createElement('dialog');d.id='co-dialog';d.className='ctl-dialog';document.body.append(d);}d.innerHTML=`<h2>${wantsText?'记录判断依据':'核对操作'}</h2><pre class="raw-page">${h(message)}</pre>${wantsText?area('理由与依据','note'):''}<div class="dialog-actions"><button class="button secondary" data-co-modal="cancel">取消</button><button class="button primary" data-co-modal="confirm">确认</button></div>`;const finish=value=>{d.close();d.onclick=null;d.oncancel=null;resolve(value);};d.onclick=event=>{const b=event.target.closest('[data-co-modal]');if(!b)return;if(b.dataset.coModal==='cancel')finish(wantsText?null:false);else if(wantsText){const value=d.querySelector('[name=note]').value.trim();if(value)finish(value);}else finish(true);};d.oncancel=event=>{event.preventDefault();finish(wantsText?null:false);};d.showModal();});}
+  function leave(){clearTimeout(v.timer);v.generation++;}
+  function shell(title,body,{ledger=false}={}){
+    const back=ledger?'#monitor':'#collab',backLabel=ledger?'返回运行监控':'返回旧版协作队列';
+    return `<div class="page co-ledger-page">
+      <a class="detail-back" href="${back}">${icon('back')}${backLabel}</a>
+      <div class="page-heading">
+        <div><h1>${h(title)}</h1>${ledger?'<p>查看已保存的旧版讨论、方案和成果，管理原队列的后续派发。</p>':''}</div>
+        <div class="heading-actions">${btn('刷新','refresh')}<a class="button secondary" href="#control/receipts">操作回执</a></div>
+      </div>${body}</div>`;
+  }
+
+  const planLabels={PROPOSED:'待确认',APPROVED:'已确认',RETURN:'已退回',REJECT:'已拒绝',SUPERSEDED:'已由新版替代'};
+  const queueLabels={RUNNING:'派发中',PAUSED:'队列已暂停',COMPLETE:'队列已完成'};
+  const displayProviders={codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen'};
+  const label=(labels,key)=>Object.hasOwn(labels,key)?labels[key]:key||'状态待核对';
+  const ledgerLink=(href,title,detail,status)=>`<li><a class="co-ledger-row" href="${h(href)}">
+    <span class="co-ledger-text"><strong>${h(title)}</strong>${detail?`<small>${h(detail)}</small>`:''}</span>
+    <span class="co-ledger-state">${h(status)}</span>${icon('chevron')}
+  </a></li>`;
+  const ledgerGroup=(title,description,rows,placeholder)=>`<section class="co-ledger-card">
+    <header><h2>${h(title)}</h2><p>${h(description)}</p></header>
+    ${rows.length?`<ul class="co-ledger-rows">${rows.join('')}</ul>`:`<p class="co-ledger-empty">${h(placeholder)}</p>`}
+  </section>`;
+  function chainRow(chain){
+    const closed=chain.state==='CLOSED';
+    return `<li><details class="co-ledger-chain">
+      <summary class="co-ledger-row">
+        <span class="co-ledger-text"><strong>${h(chain.title)}</strong><small>尝试 ${h(chain.usage.attempts)}/${h(chain.budget.attempts)} · 请求 ${h(chain.usage.model_requests)}/${h(chain.budget.requests)} · 预留 ¥${h(chain.usage.reserved_cny.toFixed(6))}/${h(chain.budget.cny)}</small></span>
+        <span class="co-ledger-state">${closed?'已封闭':'可用'}</span>${icon('chevron')}
+      </summary>
+      <div class="co-ledger-chain-details">${obj(chain)}${closed?'':btn('封闭此问题链执行权限','close-chain',`data-id="${h(chain.id)}"`)}</div>
+    </details></li>`;
+  }
+
+  function home(){
+    const display=new Map((v.data.display_records||[]).filter(row=>row.kind==='dialogue').map(row=>[row.record_id,row]));
+    const tasks=new Map(v.workspace.tasks.map(row=>[row.id,row.title]));
+    const discussions=v.data.dialogues.filter(d=>!display.get(d.id)?.deleted).map(d=>{
+      const record=display.get(d.id);
+      const detail=[displayProviders[d.config.provider]||d.config.provider,d.config.model,record?.archived?'已归档':''].filter(Boolean).join(' · ');
+      return ledgerLink('#collab/dialogue/'+d.id,record?.title||d.title,detail,d.pending?'有回合待核对':'空闲');
+    });
+    const plans=v.data.plans.map(p=>ledgerLink('#collab/plan/'+p.id,p.title,label(planLabels,p.state),label(queueLabels,p.queue_state)));
+    const candidates=v.data.candidates.map(c=>ledgerLink('#collab/candidate/'+c.id,tasks.get(c.task_id)||'候选成果 '+c.id.slice(0,12),
+      (c.checks_passed?'检查通过':'检查待通过')+' · '+(c.independent_review_passed?'独立审查通过':'等待独立审查'),c.current?'当前版本':'历史版本'));
+    return shell('旧版协作队列',`<div class="co-ledger-grid">
+      ${ledgerGroup('协作方案','核对方案版本、串行派发和前置条件。',plans,'暂无旧版协作方案。')}
+      ${ledgerGroup('已保存讨论','查看讨论正文和原回合。',discussions,'暂无旧版讨论。')}
+      ${ledgerGroup('问题链用量','查看跨回合累计尝试、请求和费用预留。',v.data.chains.map(chainRow),'暂无问题链。')}
+      ${ledgerGroup('候选成果','核对冻结版本、检查和独立审查。',candidates,'暂无候选成果。')}
+    </div>`,{ledger:true});
+  }
+  function createLegacyDiscussion(){
+    return shell('新建旧版讨论',`<form id="co-new-dialogue"><h2>主协作讨论</h2>${input('项目绝对目录','root','')}${input('讨论名称','title','主协作讨论')}${provider('provider')}${area('允许交付的材料相对路径，每行一项','files')}${area('明确附件路线JSON（可含图像、pdf_visual及选页）','attachments','[]')}<label class="ctl-checkbox"><input name="host_command_permission" type="checkbox">允许讨论使用原生本机工具。讨论职责限于只读。</label>${area('问题链累计预算（讨论、执行、审查、返工共用）','budget',JSON.stringify(chainBudget,null,2))}<button class="button primary" type="submit">保存讨论（不发送）</button></form>`);
+  }
+  function dialogue(d){return shell(d.title,`<p>工作端 ${h(d.config.provider)} / ${h(d.config.model)} · 角色：主协作 · 上下文：保存的准确文字 + 每次新会话。 ${d.pending?linkTask(d.pending):''}</p><div class="source-block">${d.messages.map(m=>`<section><strong>${m.role==='human'?'Human':'主协作端（方案意见）'}</strong>${markdown(m.content)}${m.task_id?`<p>${linkTask(m.task_id)} · ${h(m.state)}</p>`:''}</section>`).join('')||empty('先保存一条消息。')}</div><form id="co-message" data-id="${d.id}">${area('讨论消息（保存不会发送）','content')}<button class="button secondary" type="submit" ${d.pending?'disabled':''}>保存消息</button> ${btn('请主协作端回复','send',`data-id="${d.id}" ${d.pending?'disabled':''}`)}</form><form id="co-configure" data-id="${d.id}"><details><summary>调整主协作模型与材料（旧方案上下文失效）</summary>${area('工作端配置','config',JSON.stringify(d.config,null,2))}${area('允许材料，每行一项','files',d.files.join('\n'))}${area('明确附件路线JSON','attachments',JSON.stringify(d.attachments||[],null,2))}<label class="ctl-checkbox"><input name="host_command_permission" type="checkbox" ${d.host_command_permission?'checked':''}>允许原生本机工具；职责与范围另行约束，不提供OS隔离。</label><button class="button secondary" type="submit">保存新配置</button></details></form><div class="section-space">${btn('从讨论编写可核对方案','edit-plan',`data-dialogue="${d.id}"`)}</div>`);}
+  function template(d){return {title:'待核对的协作方案',dialogue_id:d?.id,project_id:d?.project_id,chain_id:d?.chain_id,items:[{key:'implement',task:{title:'执行任务',goal:'请填写准确目标',acceptance:'请填写验收条件',...defaults(d?.work_roles?.execute||'deepseek'),role:'executor',files:d?.files||[],attachments:d?.attachments||[],writable:[],checks:[],host_command_permission:true,controller_checks:true,campaign:null,budget:{attempts:2,seconds:120,tools:20,requests:8,cny:20}},depends:[],reviewer:defaults(d?.work_roles?.review||'qwen'),gate:'reviewed',max_repairs:1,review_budget:{attempts:1,seconds:120,tools:12,requests:5,cny:20}}]};}
+  function editPlan(d,old){let value=template(d);if(old){value={title:old.title+' · 修订',dialogue_id:old.dialogue_id,project_id:old.project_id,chain_id:old.chain_id,previous_plan:old.id,items:old.items.map(i=>({key:i.key,task:{...v.workspace.tasks.find(t=>t.id===i.task_id)?.spec,files:Object.keys(v.workspace.tasks.find(t=>t.id===i.task_id)?.spec.materials||{})},depends:i.depends,reviewer:i.reviewer,gate:i.gate,max_repairs:i.max_repairs,review_budget:i.review_budget,input_from:i.input_from,required_decisions:i.required_decisions||[]}))};}$('#main').innerHTML=shell('编写方案',`<p>从主协作端的建议中确认目标、准确文件、角色、检查和预算。以下保存的是草稿，之后分别确认范围和启用队列。修订会暂停旧方案。</p><form id="co-plan-editor">${provider('executor',d?.work_roles?.execute||'deepseek')}${provider('reviewer',d?.work_roles?.review||'qwen')}${btn('把所选工作端应用到各任务','apply-providers')}${area('准确方案 JSON：depends 引用任务 key；gate 为 validated / reviewed / integrated / accepted','definition',JSON.stringify(value,null,2),28)}<button class="button primary" type="submit">保存新方案草稿</button></form>`);}
+  function plan(p){const chain=v.data.chains.find(c=>c.id===p.chain_id);return shell(p.title,`<p>状态 ${h(p.state)} · 队列 ${h(p.queue_state)} · 版本 ${h(p.version.slice(0,12))}</p>${p.pause_reason?`<p class="callout">${h(p.pause_reason)}</p>`:''}<p>累计尝试 ${chain?.usage.attempts}/${chain?.budget.attempts}，工具 ${chain?.usage.tool_calls}/${chain?.budget.tools}，请求 ${chain?.usage.model_requests}/${chain?.budget.requests}，预留 ¥${chain?.usage.reserved_cny.toFixed(6)}/${chain?.budget.cny}。账单、订阅剩余未知。</p><div class="ctl-actions">${btn('确认本版范围','approve-plan',`data-id="${p.id}"`)}${btn('退回方案','return-plan',`data-id="${p.id}"`)}${btn('拒绝方案','reject-plan',`data-id="${p.id}"`)}${btn('修订方案','edit-plan',`data-plan="${p.id}"`)}${btn('启用后续串行派发','enable',`data-id="${p.id}"`)}${btn('暂停后续派发','pause',`data-id="${p.id}"`)}</div><div class="task-table">${p.items.map(i=>`<div class="source-block"><h3>${h(i.key)} ${i.temporary?'· 临时任务':''}</h3><p>${linkTask(i.task_id)} · <a href="#collab/task/${i.task_id}">成果 / 检查 / 审查</a> · ${h(i.state)}</p><p>前置 ${h(i.depends.join(', ')||'无')} · ${h(i.complete?'门槛满足':i.reason)} · ${h(i.blocked.join('；'))}</p><p>门槛 ${h(i.gate)} · 审查者 ${h(i.reviewer?.provider||'未指定')} · 最多返工 ${i.max_repairs} 次</p>${btn('上移','up',`data-plan="${p.id}" data-key="${h(i.key)}"`)}${btn('下移','down',`data-plan="${p.id}" data-key="${h(i.key)}"`)}</div>`).join('')}</div><form id="co-insert" data-id="${p.id}"><h2>临时插入同项目草稿</h2><p>保留原队列位置，插入后重新确认扩大范围，当前执行不因插入自动停止。</p>${input('新任务 key','key','temporary')}<label class="ctl-field"><span>草稿任务</span><select name="task">${v.workspace.tasks.filter(t=>t.project_id===p.project_id&&t.state==='DRAFT').map(t=>`<option value="${t.id}">${h(t.title)}</option>`).join('')}</select></label><button class="button secondary" type="submit">插入并等待新确认</button></form><form id="co-decision" data-id="${p.id}"><h2>范围内技术决定</h2><p>意见、已采用技术决定、工程开工资格和Human阶段接受分别记录。required_decisions 可按键阻塞任务。</p>${input('决定 key','key')}${area('依据与适用范围','rationale')}<label class="ctl-field"><span>决定状态</span><select name="status"><option>PROPOSED</option><option>ADOPTED</option><option>RETURNED</option></select></label><button class="button secondary" type="submit">保存技术决定（不派发）</button></form>${v.data.technical_decisions.filter(d=>d.plan_id===p.id).map(d=>obj({...d,current:d.plan_version===p.version})).join('')}${obj(p)}`);}
+  function candidate(c){return shell('候选 '+c.id.slice(0,12),`<p>${linkTask(c.task_id)} · 当前版本 ${c.current?'是':'否'} · 检查 ${c.checks_passed?'通过':'未通过'} · 指定独立审查 ${c.independent_review_passed?'通过':'未完成'}</p>${c.stale_reason?`<p>${h(c.stale_reason)}</p>`:''}<div class="ctl-actions">${btn('对冻结候选运行检查','check',`data-id="${c.id}"`)}${btn('请求指定独立审查','review',`data-id="${c.id}"`)}${btn('负责人技术通过','judge-pass',`data-id="${c.id}"`)}${btn('技术退回 / 说明','judge-return',`data-id="${c.id}"`)}${btn('整合预览','preview',`data-id="${c.id}"`)}${btn('Human阶段接受','accept',`data-id="${c.id}"`)}${btn('Human阶段退回','reject',`data-id="${c.id}"`)}</div><p>自检、独立审查、技术判断与Human阶段接受分开记录；不会写入科研接受状态。</p>${c.review_details.map(r=>`<div class="source-block">${linkTask(r.id)} · ${h(r.verdict||r.state||'待结束')} · ${h(r.independence||'未满足独立证据')}<p>${h(r.findings||'等待准确版本审查回执')}</p></div>`).join('')}${c.diffs.map(d=>rawBlock(d.file+' · 基线差异',d.diff,true)).join('')}${obj(c)}`);}
+  async function render(section='',id=''){leave();const generation=v.generation;try{const [data,workspace]=await Promise.all([call('collaboration'),call('workspace')]);if(generation!==v.generation)return;v.data=data;v.workspace=workspace;if(section==='new')$('#main').innerHTML=createLegacyDiscussion();else if(section==='dialogue')$('#main').innerHTML=dialogue(data.dialogues.find(d=>d.id===id));else if(section==='plan')$('#main').innerHTML=plan(data.plans.find(p=>p.id===id));else if(section==='candidate')$('#main').innerHTML=candidate(data.candidates.find(c=>c.id===id));else if(section==='task'){const task=await call('task?id='+encodeURIComponent(id));if(generation!==v.generation)return;$('#main').innerHTML=shell('任务成果',`<p>${linkTask(id)}</p>${btn('捕获当前正常结束的候选','capture',`data-id="${id}"`)}${task.candidates.map(c=>`<p><a href="#collab/candidate/${c.id}">候选 ${h(c.id.slice(0,12))}</a> · ${c.current?'当前版本':'已过时'}</p>`).join('')}${obj(task.attempts.at(-1)?.result?.validation||{status:'暂无正常结果'})}`);}else $('#main').innerHTML=home();if(section==='dialogue'&&data.dialogues.find(d=>d.id===id)?.pending||section==='plan'&&data.plans.find(p=>p.id===id)?.queue_state==='RUNNING'||section==='candidate'&&data.candidates.find(c=>c.id===id)?.review_details.some(r=>!r.finished)){v.timer=setTimeout(()=>render(section,id),1800);}}catch(e){$('#main').innerHTML=errorPage(e.message);}}
+  async function refresh(){const [,section,id]=location.hash.slice(1).split('/');await render(section,id);}
+  async function action(a,e){
+    if(a==='refresh')return refresh();
+    if(a==='close-chain'){if(!await decision('封闭这条问题链的后续真实执行权限，原记录和预算保留；不自动重新打开。'))return;await cmd('chain.close',{chain_id:e.dataset.id});return refresh();}
+    if(a==='edit-plan'){const p=v.data.plans.find(p=>p.id===e.dataset.plan),d=v.data.dialogues.find(d=>d.id===(e.dataset.dialogue||p?.dialogue_id));return editPlan(d,p);}
+    if(a==='apply-providers'){const f=$('#co-plan-editor'),value=JSON.parse(f.elements.definition.value);for(const i of value.items){Object.assign(i.task,defaults(f.elements.executor.value));if(i.reviewer)i.reviewer=defaults(f.elements.reviewer.value);}f.elements.definition.value=JSON.stringify(value,null,2);return;}
+    if(a==='send'){const d=v.data.dialogues.find(d=>d.id===e.dataset.id);if(!await decision(`向 ${d.config.provider}/${d.config.model} 发送本轮准确讨论和材料，仅请求建议。使用同一问题链累计预算。`))return;await cmd('dialogue.send',{dialogue_id:d.id,revision:d.revision});return refresh();}
+    const p=v.data.plans.find(p=>p.id===(e.dataset.plan||e.dataset.id));
+    if(['approve-plan','return-plan','reject-plan'].includes(a)){const action=a.split('-')[0];if(!await decision(`对准确方案 ${p.version} 执行 ${action}？\n${JSON.stringify(p.items,null,2)}`))return;await cmd('plan.decide',{plan_id:p.id,version:p.version,action,note:'Human在工作台核对本版方案。'});return refresh();}
+    if(a==='enable'||a==='pause'){if(a==='enable'&&!await decision('启用此已确认方案的后续串行执行、指定审查和有限返工；共用已保存预算。'))return;await cmd('plan.queue',{plan_id:p.id,version:p.version,action:a});return refresh();}
+    if(a==='up'||a==='down'){const order=p.items.map(i=>i.key),at=order.indexOf(e.dataset.key),to=at+(a==='up'?-1:1);if(to>=0&&to<order.length)[order[at],order[to]]=[order[to],order[at]];await cmd('plan.order',{plan_id:p.id,version:p.version,order});return refresh();}
+    if(a==='capture'){const d=await call('task?id='+e.dataset.id),at=d.attempts.at(-1);if(!at)throw Error('尚无尝试。');const r=await cmd('candidate.capture',{task_id:d.task.id,attempt_id:at.id,owner:at.owner});location.hash='#collab/candidate/'+r.candidate.id;return;}
+    const c=v.data.candidates.find(c=>c.id===e.dataset.id);
+    if(a==='check'){const d=await call('task?id='+encodeURIComponent(c.task_id)),s=d.task.spec,native=s.execution&&s.execution!=='scoped',subscription=native&&s.provider==='codex',budget={attempts:1,seconds:120,tools:12,requests:subscription?0:5,cny:subscription?0:native?20:.8};if(!await decision('发起此冻结候选的只读检查回合，共用原问题链上限。以下是本次有限上限，不是费用估计：\n'+JSON.stringify({candidate_id:c.id,provider:s.provider,model:s.model,execution:s.execution,materials:c.manifest,checks:s.checks,budget},null,2)))return;await cmd('candidate.check',{candidate_id:c.id,budget});return refresh();}
+    if(a==='review'){if(!await decision('发起此准确候选的指定新会话独立审查，使用已确认方案中的接收方和审查预算。'))return;await cmd('candidate.review',{candidate_id:c.id});return refresh();}
+    if(a==='judge-pass'||a==='judge-return'){const note=await decision('请记录负责人对这一候选版本的技术判断及依据（不替代独立审查或Human阶段接受）：',true);if(!note)return;await cmd('candidate.judge',{candidate_id:c.id,verdict:a==='judge-pass'?'pass':'return',note});return refresh();}
+    if(a==='accept'||a==='reject'){const note=await decision('记录普通工程阶段的接受/退回理由；这不改变Research State：',true);if(!note)return;await cmd('candidate.accept',{candidate_id:c.id,accepted:a==='accept',note});return refresh();}
+    if(a==='preview'){v.preview=await call('integration-preview?id='+c.id);$('#main').innerHTML=shell('整合预览',`<p>将核对原项目所有已选材料和可写文件；发现新修改时拒绝覆盖。整合和阶段接受是两个动作。</p>${obj(v.preview)}${btn('确认将此版本整合到原项目','integrate',`data-id="${c.id}" ${v.preview.conflicts.length?'disabled':''}`)}`);return;}
+    if(a==='integrate'){if(!await decision('确认将预览中列出的准确候选文件写入原项目？已有修改如与基线不同会拒绝。'))return;const r=await cmd('candidate.integrate',{candidate_id:e.dataset.id,preview_hash:v.preview.preview_hash});toast('整合状态：'+r.integration.state);return refresh();}
+  }
+  document.addEventListener('click',async event=>{const e=event.target.closest('[data-co]');if(!e)return;event.preventDefault();e.disabled=true;try{await action(e.dataset.co,e);}catch(error){toast(error.message);}finally{if(e.isConnected)e.disabled=false;}});
+  document.addEventListener('submit',async event=>{const f=event.target;if(!f.id.startsWith('co-'))return;event.preventDefault();const button=f.querySelector('[type=submit]');button.disabled=true;try{const d=new FormData(f);if(f.id==='co-new-dialogue'){const p=await cmd('project.create',{root:d.get('root')});const r=await cmd('dialogue.create',{project_id:p.project_id,title:d.get('title'),files:lines(d.get('files')),config:defaults(d.get('provider')),attachments:JSON.parse(d.get('attachments')||'[]'),host_command_permission:d.get('host_command_permission')==='on',budget:JSON.parse(d.get('budget'))});location.hash='#collab/dialogue/'+r.dialogue.id;}else if(f.id==='co-message'){await cmd('dialogue.message',{dialogue_id:f.dataset.id,content:d.get('content')});await refresh();}else if(f.id==='co-configure'){await cmd('dialogue.configure',{dialogue_id:f.dataset.id,config:JSON.parse(d.get('config')),files:lines(d.get('files')),attachments:JSON.parse(d.get('attachments')||'[]'),host_command_permission:d.get('host_command_permission')==='on'});await refresh();}else if(f.id==='co-plan-editor'){const r=await cmd('plan.save',JSON.parse(d.get('definition')));location.hash='#collab/plan/'+r.plan.id;}else if(f.id==='co-decision'){const p=v.data.plans.find(p=>p.id===f.dataset.id);await cmd('decision.record',{plan_id:p.id,version:p.version,key:d.get('key'),rationale:d.get('rationale'),status:d.get('status')});await refresh();}else if(f.id==='co-insert'){const p=v.data.plans.find(p=>p.id===f.dataset.id);await cmd('plan.insert',{plan_id:p.id,version:p.version,key:d.get('key'),task_id:d.get('task')});await refresh();}}catch(error){toast(error.message);}finally{if(button.isConnected)button.disabled=false;}});
+  window.WorkdeskModules.onLeave('collaboration',leave);
+  window.WorkdeskCollaboration={render,leave,confirm:decision};
+})();

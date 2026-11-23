@@ -1,0 +1,23 @@
+@scope ([data-ui-module="workbench"]) {
+  .wd-chat-records { --record-rgb:77,107,254;border:1px solid rgba(var(--record-rgb),.05);border-radius:12px;padding:7px 5px;background:rgba(var(--record-rgb),.03);min-width:0; }
+  .wd-chat-record-row { display:flex;align-items:center;min-width:0;border-radius:9px;min-height:40px;border:1px solid transparent; }
+  .wd-chat-record-row:is(:hover,:focus-within,.is-active,.is-selected) { background:rgba(var(--record-rgb),.05);border-color:rgba(var(--record-rgb),.05); }
+  :scope .wd-chat-record-row .wd-chat-record-link { flex:1;min-width:0;margin:0;padding:8px 6px;background:transparent;text-align:left;color:var(--wk-tree-text);font-size:15px;font-weight:400; }
+  .wd-chat-record-link>span { min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis; }
+  .wd-chat-record-link>svg { width:12px;height:12px;color:var(--wk-muted); }
+  .wd-chat-records .wd-chat-record-more { display:grid;place-items:center;flex-shrink:0;width:26px;height:26px;min-width:26px;margin-right:2px;border-radius:7px;opacity:0;pointer-events:none;color:var(--wk-muted); }
+  .wd-chat-record-row:is(:hover,:focus-within,.is-active) .wd-chat-record-more { opacity:1;pointer-events:auto; }
+  .wd-chat-records .wd-chat-record-more:focus-visible { opacity:1;pointer-events:auto; }
+  .wd-chat-record-more svg { width:17px;height:17px; }
+  .wd-chat-records .wd-chat-select { width:25px;height:32px;flex-shrink:0;display:grid;place-items:center;color:var(--wk-muted); }
+  .wd-chat-select svg { width:16px;height:16px; }
+  .wd-chat-records .wd-chat-select[aria-checked="true"] { color:rgb(var(--record-rgb)); }
+  .wd-chat-records .wd-chat-records-heading { min-height:28px;padding:0 5px 5px; }
+  .wd-chat-records .wd-chat-select-close { width:22px;height:22px;color:var(--wk-muted); }
+  .wd-chat-select-close svg { width:14px;height:14px; }
+  .wd-chat-batch { display:flex;justify-content:space-between;gap:5px;padding:2px 3px 7px;border-bottom:1px solid rgba(var(--record-rgb),.05);margin-bottom:3px; }
+  .wd-chat-records .wd-chat-batch button { font-size:12px;line-height:1.6;height:28px;padding:3px 5px;color:var(--wk-muted); }
+  .wd-chat-records .wd-chat-batch button:disabled { opacity:.4; }
+  .wd-chat-batch svg { width:13px;height:13px; }
+  @media(hover:none) { .wd-chat-records .wd-chat-record-more { opacity:1;pointer-events:auto; } }
+}

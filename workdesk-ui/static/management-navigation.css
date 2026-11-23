@@ -1,0 +1,90 @@
+@scope (.wk-main[data-management-section]) {
+  :scope {
+    --wd-management-width:1180px;
+    --wd-management-gutter:clamp(14px,3vw,30px);
+  }
+
+  [data-management-navigation] {
+    flex:none;
+    min-width:0;
+    background:var(--wk-bg);
+    border-bottom:1px solid var(--wk-line);
+  }
+
+  .wd-management-tabs {
+    position:relative;
+    display:flex;
+    gap:5px;
+    max-width:var(--wd-management-width);
+    margin-inline:auto;
+    padding:8px var(--wd-management-gutter);
+    overflow-x:auto;
+    overscroll-behavior-inline:contain;
+    scrollbar-width:thin;
+    scrollbar-color:var(--wk-line) transparent;
+  }
+
+  .wd-management-tabs a {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    flex:none;
+    min-height:32px;
+    padding:4px 11px;
+    border:1px solid transparent;
+    border-radius:8px;
+    color:var(--wk-muted);
+    font-size:13px;
+    line-height:1.4;
+    white-space:nowrap;
+  }
+
+  .wd-management-tabs a:hover {
+    color:var(--wk-text);
+    background:var(--wk-hover);
+  }
+
+  .wd-management-tabs a[aria-current="page"] {
+    color:var(--wk-text);
+    background:var(--wk-soft);
+    border-color:var(--wk-line);
+    font-weight:600;
+  }
+
+  .wd-management-tabs a:focus-visible {
+    outline:2px solid var(--wk-action);
+    outline-offset:-2px;
+  }
+
+  .wd-management-subtabs {
+    display:flex;
+    flex-wrap:wrap;
+    gap:5px;
+    width:fit-content;
+    max-width:100%;
+    margin:0 0 18px;
+    padding:3px;
+    border-radius:10px;
+    background:var(--wk-soft);
+  }
+
+  .wd-management-subtabs a {
+    padding:5px 11px;
+    border-radius:7px;
+    color:var(--wk-muted);
+    font-size:13px;
+  }
+
+  .wd-management-subtabs a:is(:hover,:focus-visible,[aria-current="page"]) {
+    color:var(--wk-text);
+    background:var(--wk-bg);
+  }
+
+  :scope :is(#main > [data-ui-module], #main > [data-ui-module] > [data-react-template]) > :is(.sp-page,.wk-content):not(.wi-team-page,.wi-project-page) {
+    width:100%;
+    max-width:var(--wd-management-width);
+    min-width:0;
+    margin:0 auto;
+    padding:clamp(18px,2.5vw,26px) var(--wd-management-gutter) 42px;
+  }
+}

@@ -1,0 +1,50 @@
+@scope (:is([data-ui-module="workbench"],[data-ui-module="workitems"])) {
+  .wd-quick-workspace{display:flex;flex-direction:column;width:100%;height:100%;min-width:0;min-height:0;background:var(--panel);color:var(--text);container:wd-quick/inline-size}
+  .wd-quick-header{display:flex;align-items:center;gap:6px;padding:6px 9px;border-bottom:1px solid var(--line)}
+  .wd-quick-tabs{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow:auto;scrollbar-width:thin}
+  .wd-quick-tab-group{display:inline-flex;align-items:center;flex:none;border-radius:7px;scroll-margin-inline:4px}
+  .wd-quick-tab-group[data-selected=true],.wd-quick-tab[aria-current=page]{background:var(--soft)}
+  .wd-quick-tab,.wd-quick-icon{border:0;border-radius:7px;flex:none;color:var(--muted)}
+  .wd-quick-tab{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;font-size:12px;white-space:nowrap}
+  .wd-quick-tab>svg{width:14px;height:14px;flex:none}
+  .wd-quick-panel-actions{display:flex;align-items:center;gap:5px;flex:none;padding-inline-start:6px;border-inline-start:1px solid var(--line)}
+  .wd-quick-tab-close{width:22px;height:24px;margin-inline-end:2px}
+  .wd-quick-tab-close svg{width:12px;height:12px}
+  .wd-quick-close{background:var(--soft);color:var(--text)}
+  .wd-quick-icon{display:inline-grid;place-items:center;width:26px;height:26px}
+  .wd-quick-icon svg{width:14px;height:14px}
+  .wd-quick-icon[data-workspace-expand][aria-pressed=true]{display:flex;gap:5px;width:auto;padding-inline:8px;
+    background:var(--soft);font-size:12px;white-space:nowrap}
+  .wd-quick-tab:is(:hover,:focus-visible),.wd-quick-icon:is(:hover,:focus-visible){background:var(--soft);color:var(--text)}
+  .wd-quick-tabs button:focus-visible{outline-offset:-2px}
+  .wd-quick-scroll{flex:1;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain}
+  .wd-quick-launcher{padding:clamp(12px,2vw,24px);margin-inline:auto;max-width:650px}
+  .wd-quick-workspace[data-expanded=true] .wd-quick-launcher{padding-top:clamp(22px,8vh,84px)}
+  @container wd-quick (min-width:730px){
+    .wd-quick-workspace[data-expanded=true] .wd-quick-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+  }
+  @container wd-quick (max-width:420px){
+    .wd-quick-header{gap:4px;padding-inline:6px}
+    .wd-quick-tab{padding-inline:6px}
+    .wd-quick-tab>span{display:none}
+    .wd-quick-icon[data-workspace-expand][aria-pressed=true]{width:26px;padding-inline:0;justify-content:center}
+    .wd-quick-icon[data-workspace-expand]>span{display:none}
+  }
+  .wd-quick-search{display:flex;align-items:center;gap:7px;padding:6px 7px 6px 10px;border:1px solid var(--line);border-radius:10px}
+  .wd-quick-search svg{width:16px;height:16px;flex:none;color:var(--muted)}
+  .wd-quick-search input{flex:1;width:0;min-width:0;border:0;background:transparent;color:var(--text);font:inherit;font-size:13px}
+  .wd-quick-search button{padding:5px 7px;border-radius:6px;background:var(--soft);font-size:12px;white-space:nowrap}
+  .wd-quick-search button:disabled{opacity:.55}
+  .wd-quick-results{list-style:none;margin:7px 0 0;padding:5px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .wd-quick-results :is(a,button){display:flex;align-items:center;gap:5px;padding:6px;width:100%;border-radius:5px;text-align:start;overflow-wrap:anywhere}
+  .wd-quick-results :is(a,button):is(:hover,:focus-visible){background:var(--soft)}
+  .wd-quick-results svg{width:13px;height:13px;flex:none}
+  .wd-quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:16px}
+  .wd-quick-workspace .wd-quick-grid button{display:grid;justify-items:start;gap:9px;padding:12px;min-width:0;
+    border:1px solid var(--line);border-radius:9px;background:var(--soft);text-align:start;font-size:13px}
+  .wd-quick-grid button:is(:hover,:focus-visible){color:var(--accent)}
+  .wd-quick-grid svg{width:17px;height:17px;color:var(--accent)}
+  .wd-quick-context{display:grid;gap:8px;margin-top:18px;padding-top:13px;border-top:1px solid var(--line)}
+  .wd-quick-context .wi-tools-files{margin-top:9px}
+  .wd-quick-scroll>:is([data-wb-side-host],.wd-quick-files-tab),.wd-quick-loading{padding:12px}
+}

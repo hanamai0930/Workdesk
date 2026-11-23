@@ -1,0 +1,20 @@
+@scope ([data-ui-module="management"]) {
+  .wd-management{max-width:1040px;margin:0 auto;padding:32px 24px 64px;color:var(--text);}
+  .wd-management header{margin-bottom:24px;}.wd-management h1{font-size:25px;margin:10px 0;}.wd-management h2{font-size:19px;margin:30px 0 16px;}
+  .wd-management p{line-height:1.6;}.wd-management label{display:grid;gap:8px;font-weight:500;font-size:14px;}
+  .wd-management-compose,.wd-management-record{padding:22px;margin:14px 0;gap:12px;}
+  .wd-management form{display:grid;gap:18px;}.wd-management-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;}
+  .wd-management-grid>label{min-width:0;}.wd-management-grid select{min-width:0;max-width:100%;}
+  .wd-management select,.wd-management textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit;padding:10px 12px;font:inherit;}
+  .wd-management textarea{resize:vertical;font-weight:400;}.wd-management-note{font-size:13px;color:var(--muted);margin:0;}
+  .wd-management-actions,.wd-management-record-head{display:flex;align-items:center;flex-wrap:wrap;gap:12px;}.wd-management-actions a{font-size:13px;}
+  .wd-management .wd-management-compose button,.wd-management .wd-management-record button{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);font-size:13px;cursor:pointer;}
+  .wd-management .wd-management-compose button[type="submit"]{background:var(--text);border-color:var(--text);color:var(--panel);}
+  .wd-management .wd-management-compose button:disabled,.wd-management .wd-management-record button:disabled{opacity:.5;cursor:default;}
+  .wd-management button:focus-visible{outline:2px solid var(--wk-muted);outline-offset:2px;}
+  .wd-management-record-head time{margin-left:auto;color:var(--muted);font-size:12px;}.wd-management-record-head span{font-size:13px;}
+  .wd-management-request{white-space:pre-wrap;font-weight:500;}.wd-management pre{font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto;}
+  .wd-management small{display:block;font-size:11px;overflow-wrap:anywhere;color:var(--muted);}.wd-management li{margin:12px 0;}
+  .wd-management details{margin-top:14px;}.wd-management summary{cursor:pointer;color:var(--muted);font-size:13px;}.wd-management-error{color:var(--danger,#b42318);}
+  @media(max-width:640px){.wd-management-grid{grid-template-columns:1fr;}.wd-management{padding:24px 14px;}.wd-management-record-head time{margin-left:0;}}
+}

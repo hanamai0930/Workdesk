@@ -1,0 +1,20 @@
+@scope ([data-ui-module="settings"]) {
+  .wd-settings-accounts .wd-settings-copy>span { font-size:14px; font-weight:550; }
+  .wd-settings-accounts .wd-settings-value { overflow-wrap:anywhere; text-align:right; }
+  .wd-account-state { display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:99px; color:var(--wk-muted); background:var(--wk-soft); font-size:12px; }
+  .wd-account-state::before { width:6px; height:6px; border-radius:50%; background:currentColor; content:""; }
+  .wd-account-state[data-connected="true"] { color:var(--wk-good); background:color-mix(in srgb,var(--wk-good) 14%,var(--wk-bg)); }
+  .wd-account-defaults { padding:14px 16px; }
+  .wd-account-fields { display:flex; gap:12px; flex-wrap:wrap; }
+  .wd-account-fields label { min-width:min(150px,100%); display:grid; flex:1; gap:5px; font-size:13px; }
+  .wd-account-fields [data-slot="native-select-wrapper"] { width:100%; min-width:0; }
+  .wd-settings-accounts select { min-height:36px; padding:6px 31px 6px 9px; color:var(--wk-text); background:var(--wk-bg); border:1px solid var(--wk-line); border-radius:8px; }
+  .wd-account-actions { display:flex; justify-content:flex-end; margin-top:12px; }
+  .wd-settings-accounts .wd-settings-button:disabled { opacity:.55; cursor:default; }
+  .wd-account-feedback { margin:0 0 15px; padding:0 5px; color:var(--wk-muted); font-size:13px; }
+  @media(max-width:640px) {
+    .wd-account-defaults { padding:12px; }
+    .wd-account-fields { gap:9px; }
+    .wd-settings-accounts .wd-settings-theme button { padding-inline:7px; }
+  }
+}

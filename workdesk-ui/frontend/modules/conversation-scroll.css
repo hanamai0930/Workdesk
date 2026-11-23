@@ -1,0 +1,8 @@
+@scope ([data-ui-module="workbench"], [data-ui-module="workitems"]) {
+  .wd-reading-position { position:sticky;bottom:8px;height:0;min-height:0;flex:none;width:100%;z-index:6;display:flex;justify-content:center;pointer-events:none; }
+  .wd-reading-position[hidden] { display:none; }
+  .wd-reading-position .wd-reading-latest { pointer-events:auto;transform:translateY(calc(-100% - 8px));display:inline-flex;align-items:center;justify-content:center;gap:6px;height:auto;min-height:34px;max-width:calc(100% - 20px);padding:6px 12px;border:1px solid var(--wk-line,var(--line));border-radius:18px;background:var(--wk-bg,var(--panel));color:var(--wk-text,var(--text));box-shadow:0 3px 13px var(--wk-shadow,#0002);font-size:13px;line-height:1.5;white-space:normal; }
+  .wd-reading-position .wd-reading-latest:disabled { display:none; }
+  .wd-reading-latest svg { width:15px;height:15px;flex:none; }
+  .wd-reading-announcement { position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }
+}

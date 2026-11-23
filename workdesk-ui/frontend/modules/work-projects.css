@@ -1,0 +1,32 @@
+@scope ([data-ui-module="workbench"]) {
+  :scope.wb-dialog[data-work-project-dialog] { width:520px; }
+  :scope.wb-dialog[data-work-project-dialog]>.wk-dialog-actions { display:none; }
+  .wd-project-name { position:relative;display:flex;align-items:center;margin:20px 0 16px; }
+  .wd-project-name>svg { position:absolute;left:13px;width:17px;height:17px;color:var(--wk-muted); }
+  :scope .wd-project-name input { width:100%;padding-left:40px; }
+  .wd-project-source-label { font-size:13px;font-weight:500;margin-bottom:9px; }
+  :scope .wd-project-scene { margin:0 0 18px; }
+  :scope .wd-project-scene [data-slot="native-select-wrapper"] { width:100%;min-width:0; }
+  :scope .wd-project-scene select { width:100%;min-width:0;padding-right:36px; }
+  :scope .wk-popover.wd-project-picker { width:min(380px,calc(100vw - 16px)); }
+  .wd-project-picker #wb-project-results { max-height:min(340px,45dvh);overflow-y:auto;overscroll-behavior:contain; }
+  :scope .wd-project-picker [data-wb-project] { height:auto;min-height:62px;white-space:normal;text-align:left; }
+  :scope .wd-project-picker [data-wb-project]>svg { flex-shrink:0;width:17px;height:17px; }
+  .wd-project-option-copy { display:flex;flex-direction:column;gap:4px;min-width:0; }
+  .wd-project-option-copy strong { display:block;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:20px; }
+  :scope .wd-project-picker .wd-project-option-copy small { display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:17px;margin:0; }
+  .wd-project-source { display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px 16px;border:1px solid var(--wk-line);border-radius:12px;background:var(--wk-bg);min-width:0; }
+  #wb-project-empty { color:var(--wk-muted);font-size:13px; }
+  :scope .wd-project-source>.wk-button { padding:4px 9px;min-height:29px;font-size:12px;gap:5px;background:var(--wk-soft); }
+  .wd-project-source>.wk-button svg { width:15px;height:15px; }
+  .wd-project-folder { display:flex;align-items:flex-start;gap:10px;width:100%;min-width:0;font-size:13px; }
+  .wd-project-folder[hidden] { display:none; }
+  .wd-project-folder>svg { width:20px;height:20px;flex-shrink:0;margin-top:2px;color:var(--wk-muted); }
+  .wd-project-folder>div { min-width:0; }
+  .wd-project-folder strong { display:block;font-weight:500;overflow-wrap:anywhere; }
+  #wb-project-folder-path { color:var(--wk-muted);font-size:12px;overflow-wrap:anywhere;margin:4px 0 0; }
+  #wb-project-folder-status { color:var(--wk-muted);font-size:12px;overflow-wrap:anywhere;margin:0; }
+  .wd-project-actions { display:flex;justify-content:flex-end;gap:9px;margin-top:28px; }
+  :scope .wd-project-actions>.wk-button { min-height:36px; }
+  :scope .wd-project-actions>[data-wb="close"] { border-color:transparent;background:transparent;color:var(--wk-muted); }
+}

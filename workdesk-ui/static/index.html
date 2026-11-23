@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark"><title>Workdesk · 工作台</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="workbench.css">
+  <link rel="stylesheet" href="settings.css">
+  <script src="ui-modules.js" defer></script><script src="app.js" defer></script><script src="settings.js" defer></script><script src="control.js" defer></script>
+  <script src="collaboration.js" defer></script><script src="operations.js" defer></script>
+  <script src="extensions.js" defer></script><script src="workbench-features.js" defer></script><script src="workbench.js" defer></script>
+</head>
+<body class="workdesk">
+  <div class="wk-topbar">
+    <button class="wk-icon" data-wb="back" aria-label="后退"><span data-icon="back"></span></button>
+    <button class="wk-icon" data-wb="forward" aria-label="前进"><span data-icon="arrow"></span></button>
+    <button class="wk-icon" data-wb="sidebar" aria-label="显示或收起侧栏"><span data-icon="panel"></span></button>
+    <nav class="wk-menubar" aria-label="应用菜单">
+      <button class="wk-top-menu" data-wb-menu="file">文件</button><button class="wk-top-menu" data-wb-menu="edit">编辑</button>
+      <button class="wk-top-menu" data-wb-menu="view">视图</button><button class="wk-top-menu" data-wb-menu="help">帮助</button>
+    </nav>
+  </div>
+  <div class="wk-shell">
+    <nav class="wk-rail" aria-label="功能分区">
+      <div class="wk-rail-group">
+        <a class="wk-rail-button" href="#chat" aria-label="主页" title="主页"><span data-icon="house"></span></a>
+        <button class="wk-rail-button" data-wb="records" aria-label="对话记录" title="对话记录"><span data-icon="history"></span></button>
+        <a class="wk-rail-button" href="#collab" aria-label="协作" title="协作"><span data-icon="workflow"></span></a>
+      </div><div class="wk-rail-divider"></div>
+      <div class="wk-rail-group">
+        <a class="wk-rail-button" href="#extensions" aria-label="插件与 Skills" title="插件与 Skills"><span data-icon="puzzle"></span></a>
+        <button class="wk-rail-button" data-wb-menu="more" aria-label="更多功能" title="更多功能"><span data-icon="more"></span></button>
+      </div>
+      <div class="wk-rail-footer"><button class="wk-account" data-wb-menu="app" aria-label="应用与设置">w</button></div>
+    </nav>
+    <aside class="wk-sidebar" id="sidebar" aria-label="项目与对话">
+      <div class="wk-brand">Workdesk<button class="wk-icon" data-wb="search" aria-label="搜索对话"><span data-icon="search"></span></button></div>
+      <button class="wk-new" data-wb="new"><span data-icon="edit"></span><span id="wb-new-label">新聊天</span></button>
+      <div id="wb-sidebar"></div>
+      <div class="wk-sidebar-footer"><span data-icon="save"></span><span>本地工作台</span></div>
+    </aside>
+    <section class="wk-main">
+      <header class="wk-main-header">
+        <span id="wb-title" class="wk-header-title"></span>
+        <div class="wk-mode-tabs" aria-label="对话模式"><a href="#chat" id="wb-chat-tab" aria-current="page">Chat</a><a href="#work" id="wb-work-tab">Work</a></div>
+        <div class="wk-header-actions" id="wb-header-actions"><button class="wk-icon" data-wb="new" aria-label="新建对话"><span data-icon="plus"></span></button></div>
+      </header>
+      <main id="main" tabindex="-1"><div class="loading"><span class="loader"></span>正在读取工作台…</div></main>
+    </section>
+  </div>
+  <div hidden aria-hidden="true"><span id="task-count"></span><div id="recent-nav"></div><span id="breadcrumb"></span><span id="load-status"></span><button data-action="theme"></button></div>
+  <dialog id="search-dialog" class="search-dialog"><div class="search-field"><span data-icon="search"></span><input id="search-input" placeholder="搜索已保存记录…" aria-label="搜索已保存记录"><kbd>Esc</kbd></div><div id="search-results" class="search-results"></div><div class="search-foot">仅搜索本地记录</div></dialog>
+  <dialog id="confirm-dialog" class="confirm-dialog"><h2>登记停止请求？</h2><p>向所选任务登记停止意图，随后核对后台中断和退出记录。</p><div class="dialog-actions"><button class="button secondary" data-action="cancel-stop">取消</button><button class="button danger-button" data-action="confirm-stop">登记停止请求</button></div></dialog>
+  <dialog id="wb-dialog" class="wb-dialog"></dialog><div id="wb-overlays"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

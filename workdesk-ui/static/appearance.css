@@ -1,0 +1,19 @@
+/* Shared finite region selectors. No generic button, input or text rules. */
+:root[data-appearance="ready"] body.workdesk .wk-shell { background:var(--wd-region-shell-bg);box-shadow:inset 0 0 0 1px var(--wd-region-shell-border); }
+:root[data-appearance="ready"] body.workdesk .wk-topbar { background:var(--wd-region-toolbar-bg);border-color:var(--wd-region-toolbar-border); }
+:root[data-appearance="ready"] body.workdesk .wk-rail { background:var(--wd-region-rail-bg);border-color:var(--wd-region-rail-border); }
+:root[data-appearance="ready"] body.workdesk .wk-sidebar .wk-brand { background:var(--wd-region-brand-bg);border-color:var(--wd-region-brand-border); }
+:root[data-appearance="ready"] body.workdesk .wk-new { background:var(--wd-region-new-chat-bg);border-color:var(--wd-region-new-chat-border); }
+:root[data-appearance="ready"] body.workdesk .wk-mode-tabs { background:var(--wd-region-mode-tabs-bg);border-color:var(--wd-region-mode-tabs-border); }
+:root[data-appearance="ready"] body.workdesk .wk-main { background:var(--wd-region-main-bg);border-color:var(--wd-region-main-border); }
+@scope ([data-ui-module="workbench"]) {
+  .wd-chat-records { background:var(--wd-region-chat-list-bg);border-color:var(--wd-region-chat-list-border); }
+  .wd-chat-record-row:is(.is-active,.is-selected) { background:var(--wd-region-selection-bg);border-color:var(--wd-region-selection-border); }
+  .wd-chat[data-api-chat] { box-shadow:inset 0 0 0 1px var(--wd-region-chat-api-border); }
+  .wd-chat[data-provider="codex"] { box-shadow:inset 0 0 0 1px var(--wd-region-chat-codex-border); }
+  .wd-chat[data-provider="deepseek"] { box-shadow:inset 0 0 0 1px var(--wd-region-chat-deepseek-border); }
+  .wd-chat[data-provider="qwen"] { box-shadow:inset 0 0 0 1px var(--wd-region-chat-qwen-border); }
+  :is(.wd-api-composer,.wk-composer,.wd-chat .wd-chat-entry) { background:var(--wd-region-composer-bg);border-color:var(--wd-region-composer-border); }
+  :is(.wd-api-composer,.wk-composer):focus-within { outline:2px solid var(--wk-muted);outline-offset:2px; }
+  :is(.wd-api-user>div,.wk-user .aui-message-text) { background:var(--wd-region-user-bubble-bg);box-shadow:inset 0 0 0 1px var(--wd-region-user-bubble-border); }
+}

@@ -1,0 +1,52 @@
+@scope ([data-ui-module="records"]) {
+
+.sp-page{width:100%;box-sizing:border-box;max-width:1180px;margin:0 auto;padding:26px 30px 48px;color:var(--text,#242727)}
+.sp-tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--line,#e6e8ea);padding-bottom:14px;margin-bottom:24px}
+.sp-tabs a{padding:7px 12px;border-radius:9px;color:var(--muted,#747b83);text-decoration:none;font-size:13px}
+.sp-tabs a[aria-current=page]{background:var(--soft,#eef0f8);color:var(--text,#242727)}
+.sp-heading,.sp-row,.sp-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.sp-heading{margin-bottom:24px}.sp-heading h1{font-size:25px;font-weight:600;margin:0 0 8px}.sp-heading p,.sp-note{font-size:12px;color:var(--muted,#747b83);line-height:1.7;margin:8px 0}
+.sp-page h2{font-size:15px;font-weight:600;margin:10px 0}.sp-page a{color:var(--text,#242727)}
+.sp-field{display:flex;flex-direction:column;gap:7px;margin:12px 0;min-width:0}.sp-field span{font-size:12px;color:var(--muted,#747b83)}
+.sp-page input:not([type=checkbox]):not([type=file]),.sp-page textarea,.sp-page select{width:100%;box-sizing:border-box;background:var(--panel,#fff);color:var(--text,#242727);border:1px solid var(--line,#e3e5e7);padding:10px 12px;border-radius:10px;font:inherit;font-size:13px}
+.sp-page textarea{resize:vertical;min-height:68px}.sp-page select{max-width:520px;height:auto;min-height:40px;line-height:1.5;padding-right:34px}.sp-field [data-slot=native-select-wrapper]{width:100%;max-width:520px}
+.sp-page.sp-page button,.sp-upload{border:1px solid var(--line,#e3e5e7);border-radius:9px;padding:7px 11px;background:var(--panel,#fff);color:var(--text,#242727);font-size:12px;cursor:pointer;line-height:1.5;height:auto;min-height:32px}
+.sp-page.sp-page button:hover,.sp-upload:hover{background:var(--hover,#f3f4f7)}.sp-page.sp-page button:disabled{opacity:.45;cursor:default}
+.sp-page.sp-page button[type=submit]{background:var(--text,#272727);color:var(--panel,#fff)}
+.sp-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.sp-filters .sp-field{flex:1}.sp-filters .sp-field:first-child{flex:2;min-width:210px}.sp-filters button{margin-bottom:12px}
+.sp-card{padding:18px 20px;border:1px solid var(--line,#e5e8eb);border-radius:14px;margin:12px 0;background:var(--panel,#fff);min-width:0}.sp-title{font-size:14px;font-weight:500;text-decoration:none;overflow-wrap:anywhere}
+.sp-badge{font-size:11px;background:var(--soft,#f1f3f7);padding:4px 8px;border-radius:6px;color:var(--muted,#747b83)}
+.sp-actions{justify-content:flex-start;margin-top:12px}.sp-actions a{font-size:12px;padding:6px 0;margin-right:9px}
+.sp-empty{text-align:center;padding:28px 12px;font-size:13px;color:var(--muted,#747b83)}.sp-error{font-size:13px;color:#ba3b3b;padding:10px 12px;border:1px solid #eacccc;border-radius:9px;overflow-wrap:anywhere}
+.sp-page pre{font:12px/1.7 Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto;padding:12px;background:var(--soft,#f7f8fa);border-radius:8px}
+.sp-page details{font-size:12px;margin:12px 0}.sp-page summary{cursor:pointer;color:var(--muted,#747b83)}
+.sp-grid{display:grid;grid-template-columns:minmax(280px,.85fr) minmax(300px,1.15fr);gap:18px}.sp-file-list{max-height:420px;overflow:auto}.sp-file-row{display:flex;gap:8px;align-items:center;padding:5px 0}.sp-file-row button{justify-content:flex-start;border:0;text-align:left;flex:1;min-width:0;overflow-wrap:anywhere}.sp-file-row small{font-size:10px;color:var(--muted,#747b83);white-space:nowrap}
+.sp-preview img{max-width:100%;max-height:420px;object-fit:contain}.sp-preview iframe{width:100%;min-height:400px;border:1px solid var(--line,#eee);border-radius:9px}.sp-preview .sp-note{overflow-wrap:anywhere}.sp-upload input{display:none}
+.sp-facts{display:grid;grid-template-columns:170px minmax(0,1fr);font-size:12px;line-height:1.8;gap:4px 10px}.sp-facts dt{color:var(--muted,#747b83)}.sp-facts dd{margin:0;overflow-wrap:anywhere}
+.records-modes{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 4px}
+.sp-page.sp-page .records-modes button{border-color:transparent;background:transparent;font-size:13px}
+.sp-page.sp-page .records-modes button:hover{background:var(--hover)}
+.sp-page.sp-page .records-modes button[aria-pressed=true]{background:var(--soft);border-color:var(--line);font-weight:600}
+.records-card{margin:8px 0;padding:13px 16px}
+.records-card-heading{align-items:baseline}
+.records-card-heading .sp-title{min-width:0}
+.records-card-heading .sp-title:hover,.records-detail-link:hover{text-decoration:underline;text-underline-offset:3px}
+.records-card-aside{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px}
+.sp-page .records-detail-link{color:var(--wk-good,var(--text));font-size:12px;white-space:nowrap}
+.records-card .sp-note{margin:6px 0}
+.records-card .sp-actions{gap:6px;margin-top:8px}
+.records-card .sp-actions{justify-content:flex-end}
+.sp-page .records-more{position:relative;margin:0;font-size:12px}
+.records-more>summary{list-style:none;border:1px solid var(--line);border-radius:9px;padding:7px 11px;color:var(--text);background:var(--panel)}
+.records-more>summary::-webkit-details-marker{display:none}
+.records-more>summary:hover,.records-more[open]>summary{background:var(--hover)}
+.records-more>summary:focus-visible{outline:2px solid var(--wk-action,var(--text));outline-offset:2px}
+.records-menu{position:absolute;right:0;top:calc(100% + 5px);z-index:5;display:grid;gap:3px;min-width:170px;max-width:calc(100vw - 72px);padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px var(--wk-shadow,#0002)}
+.sp-page.sp-page .records-menu button{text-align:left;justify-content:flex-start;border-color:transparent;background:transparent;white-space:normal}
+.sp-page.sp-page .records-menu button:hover{background:var(--hover)}
+.sp-page.sp-page .records-menu .records-delete{color:light-dark(#a72b2b,#ffb4ad);border-top:1px solid var(--line);border-radius:0 0 6px 6px;margin-top:3px}
+.sp-empty button,.sp-empty a{margin-left:8px}
+.records-edit-actions{display:flex;gap:8px}
+@media(max-width:920px){.sp-page{padding:20px 18px}.sp-grid{grid-template-columns:1fr}.sp-facts{grid-template-columns:135px 1fr}}
+@media(max-width:525px){.sp-filters .sp-field:first-child{min-width:100%;margin-bottom:0}}
+}

@@ -1,0 +1,21 @@
+@scope ([data-ui-module="workitems"]) {
+  .wi-cooperation-toolbar { display:flex;align-items:center;gap:4px; }
+  .wi-cooperation-toolbar .wi-chat-toggle svg { width:16px;height:16px; }
+  .wi-cooperation-toolbar [data-cooperation-toolbar-trigger="menu"] { anchor-name:--wi-cooperation-menu; }
+  .wi-cooperation-toolbar [data-cooperation-toolbar-trigger="share"] { anchor-name:--wi-cooperation-share; }
+  .wi-cooperation-toolbar #wi-cooperation-menu { position-anchor:--wi-cooperation-menu; }
+  .wi-cooperation-toolbar #wi-cooperation-share { position-anchor:--wi-cooperation-share; }
+  .wi-cooperation-action-panel {
+    position:fixed;inset:auto;inset-block-start:calc(anchor(bottom) + 5px);inset-inline-end:anchor(right);
+    box-sizing:border-box;width:max-content;min-width:154px;max-width:min(270px,calc(100vw - 20px));
+    max-height:calc(100dvh - 100px);overflow:auto;margin:0;padding:5px;border:1px solid var(--wk-line);border-radius:10px;
+    background:var(--wk-bg);color:var(--wk-text);box-shadow:0 7px 22px var(--wk-shadow);
+  }
+  :scope .wi-cooperation-action-panel button:not([hidden]) {
+    display:block;width:100%;padding:6px 9px;border-radius:6px;color:var(--wk-text);font-size:13px;white-space:normal;
+  }
+  :scope .wi-cooperation-action-panel button:not(:disabled):is(:hover,:focus-visible) { background:var(--wk-hover); }
+  .wi-cooperation-action-panel button:disabled { opacity:.48; }
+  .wi-cooperation-action-panel hr { margin:4px 2px;border:0;border-top:1px solid var(--wk-line); }
+  .wi-cooperation-action-dialog h2 { margin-bottom:10px;font-size:18px; }
+}

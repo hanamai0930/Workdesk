@@ -1,0 +1,22 @@
+@scope ([data-ui-module="settings"]) {
+  .wd-settings-usage-header,.wd-settings-usage-header nav {
+    display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+  }
+  .wd-settings-usage-header { justify-content:space-between;padding:13px 14px;border-bottom:1px solid var(--wk-line); }
+  .wd-settings-usage-header h2 { font-size:17px;font-weight:650; }
+  .wd-settings-usage-header nav .wd-settings-button[data-variant="ghost"] { background:transparent;border-color:transparent; }
+  .wd-settings-usage-header nav .wd-settings-button[data-variant="ghost"]:hover { background:var(--wk-hover); }
+  .wd-settings .wd-settings-row.wd-settings-usage-quota { display:grid;gap:6px;align-items:initial;min-height:50px; }
+  .wd-settings-quota-heading,.wd-settings-quota-line { display:flex;justify-content:space-between;align-items:baseline;gap:12px; }
+  .wd-settings-quota-actions { display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0; }
+  .wd-settings-quota-status { display:inline-flex;align-items:center;padding:5px 9px;border:1px solid var(--wk-line);border-radius:20px;font-size:12px;line-height:1.5;color:var(--wk-muted);max-width:100%;white-space:normal;overflow-wrap:anywhere; }
+  .wd-settings-quota-status[data-connected] { color:var(--wk-good);background:color-mix(in srgb,var(--wk-good) 14%,var(--wk-bg));border-color:transparent; }
+  .wd-settings-quota-status[aria-busy=true] { border-style:dashed; }
+  .wd-settings .wd-settings-quota-actions .wd-settings-button { height:auto;min-height:32px;max-width:100%;white-space:normal;text-overflow:clip;overflow:visible; }
+  .wd-settings-quota-line { font-size:13px;flex-wrap:wrap; }
+  .wd-settings-quota-line :is(strong,span):last-child { text-align:right;font-variant-numeric:tabular-nums; }
+  .wd-settings-quota-bucket { display:grid;gap:4px; }
+  .wd-settings-usage-quota small { color:var(--wk-muted);font-size:12px;overflow-wrap:anywhere; }
+  .wd-settings-usage-quota small a { text-decoration:underline; }
+  .wd-settings-recorded-tokens { margin-top:5px;padding-top:8px;border-top:1px solid var(--wk-line);font-variant-numeric:tabular-nums; }
+}
