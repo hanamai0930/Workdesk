@@ -9,13 +9,13 @@
 <p align="center">面向 Windows 的本地 AI 工作台，让聊天、项目执行、多模型协作与成果管理自然衔接。</p>
 
 <p align="center">
-  <a href="https://github.com/hanamai0930/Workdesk/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Windows-11_x64-4F7DF3?style=flat-square" alt="Windows 11 x64"></a>
+  <a href="docs/INSTALL.md#兼容范围"><img src="https://img.shields.io/badge/Windows-10_1809%2B_%7C_11_x64-4F7DF3?style=flat-square" alt="Windows 10 1809+ / Windows 11 x64"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-16A085?style=flat-square" alt="MIT License"></a>
   <a href="#认识-workdesk"><img src="https://img.shields.io/badge/Local-AI_Workspace-8B7CF6?style=flat-square" alt="Local AI Workspace"></a>
 </p>
 
 <p align="center">
-  <strong><a href="https://github.com/hanamai0930/Workdesk/releases/download/v1.0.0/Workdesk-Setup-x64.exe">下载 Windows 安装版</a></strong> ·
+  <strong><a href="docs/INSTALL.md#下载安装包">下载 Windows 安装版</a></strong> ·
   <a href="docs/INSTALL.md">安装指南</a> ·
   <a href="docs/INSTALL.md#常见问题">常见问题</a> ·
   <a href="#从源码开发">源码</a>
@@ -103,7 +103,9 @@ Workdesk 组织对话和任务。Chat 通过模型服务返回回复，Work 通�
 
 ### 使用 Windows 安装版
 
-从 [v1.0.0 发行页](https://github.com/hanamai0930/Workdesk/releases/tag/v1.0.0)下载 **Workdesk-Setup-x64.exe**，安装后从开始菜单打开 Workdesk，连接自己的模型账号或 API Key。
+**1.0.1 通用兼容包**文件名为 **Workdesk-Setup-Win10-Win11-x64.exe**，面向 Windows 10 1809 及以上 x64 和 Windows 11 x64，已包含合作条件等待修复。安装后从开始菜单打开 Workdesk，连接自己的模型账号或 API Key。
+
+新版安装包改用百度网盘分发，分享链接将在 Release 更新时公布；当前 GitHub 附件仍为历史 v1.0.0。下载状态、兼容范围和文件校验见[安装指南](docs/INSTALL.md)。
 
 [安装与文件校验](docs/INSTALL.md) · [常见问题](docs/INSTALL.md#常见问题) · [操作指南](docs/USER_GUIDE.md)
 
@@ -144,7 +146,7 @@ $env:WORKDESK_HOME = Join-Path (Get-Location) '.workdesk-dev'
 
 ## 项目状态
 
-- 当前主要支持 **Windows 11 x64**，提供公开源码和 Windows 安装版。
+- 1.0.1 的兼容目标为 **Windows 10 1809+ x64 / Windows 11 x64**，已完成 Win11 本机安装检查；Win10 实机验收待确认。具体排除版本见[兼容范围](docs/INSTALL.md#兼容范围)。
 - 实际模型和工具能力取决于连接的服务、组件版本及授权。
 - 使用模型、官网与外部工具时，相关请求由选中的提供方处理，费用按提供方规则结算。
 

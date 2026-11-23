@@ -17,6 +17,12 @@
   .wi-row{padding:14px 0;border-top:1px solid var(--line)}.sp-badge{font-size:11px;padding:4px 8px;background:var(--soft);border-radius:6px;margin-left:12px}
   .wi-run{border-top:1px solid var(--line);margin-top:16px;padding-top:16px;overflow-wrap:anywhere}.wi-request{margin:12px 0;padding:12px;background:var(--soft);border-radius:9px}
   .wi-unit{border:1px solid var(--line);border-radius:10px;padding:14px;margin:16px 0;min-width:0}.wi-unit legend{font-size:13px;padding:0 6px}.wi-dependencies label{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;overflow-wrap:anywhere}.wi-dependencies input{width:auto;flex-shrink:0}.wi-teamwork .sp-row{justify-content:flex-start}
+  .wi-condition-saved{font-weight:600;color:var(--text)}
+  .wi-condition-note{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+  .wi-condition-tools{margin:14px 0;padding-top:10px;border-top:1px solid var(--line)}
+  .wi-condition-tools summary{cursor:pointer;font-size:13px}
+  [data-fixed-capability=condition] textarea{min-height:105px}
+  [data-fixed-capability-request] button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
   .wi-driver{padding:14px;margin:16px 0;border:1px solid var(--line);border-radius:10px;min-width:0;overflow-wrap:anywhere}.wi-driver h3{font-size:14px;font-weight:600}.wi-driver-issues{margin-top:12px;font-size:12px}
   .wi-cooperation{margin:16px 0;padding:14px;border:1px solid var(--line);border-radius:10px;min-width:0}.wi-cooperation h3{font-size:14px;font-weight:600}.wi-cooperative-unit{padding:14px 0;border-top:1px solid var(--line);min-width:0}.wi-cooperative-unit h4{font-size:13px}.wi-unit-answer{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px}
   .wi-artifacts{padding:12px;background:var(--soft);border-radius:9px;min-width:0;overflow-wrap:anywhere}.wi-teamwork .sp-raw{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:260px;overflow:auto}
@@ -349,6 +355,13 @@
   .wi-chat-bubble p{margin:0}
   .wi-chat-card{border:1px solid var(--line);background:var(--panel);padding:15px 16px;border-radius:14px;min-width:0}
   .wi-chat-card h2{margin:0 0 9px;font-size:15px;font-weight:650}
+  .wi-capability-wait{margin-top:16px;border-color:color-mix(in srgb,var(--wi-chat-accent) 45%,var(--line))}
+  .wi-capability-wait p{margin:7px 0;font-size:13px;line-height:1.65}
+  .wi-capability-wait ol{margin:12px 0 16px;padding-left:22px}
+  .wi-capability-wait li+li{margin-top:12px}
+  .wi-capability-wait li>span{font-size:12px;color:var(--muted)}
+  .wi-capability-wait-link{display:inline-flex;align-items:center;justify-content:center;min-height:36px;
+    border:1px solid var(--line);border-radius:9px;padding:7px 12px;background:var(--soft);font-size:13px;text-decoration:none}
   .wi-chat-brief{background:color-mix(in srgb,var(--wi-chat-accent) 6%,var(--panel))}
   [data-cooperation-brief]>.wi-chat-brief{margin-top:18px}
   .wi-chat-brief dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 13px;margin:0}

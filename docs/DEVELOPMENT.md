@@ -1,6 +1,6 @@
 # 从源码运行 Workdesk
 
-推荐在 Windows 11 x64 上使用 Python 3.12、Node.js 22 和 pnpm 11。以下命令从项目根目录执行。
+推荐在 Windows 11 x64 上使用 Python 3.12、Node.js 22 和 pnpm 11。Windows 10 1809 及以上 x64 也列入兼容目标，实机状态见[安装指南](INSTALL.md#兼容范围)。以下命令从项目根目录执行。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -26,6 +26,12 @@ $env:WORKDESK_HOME = Join-Path (Get-Location) '.workdesk-dev'
 | Qwen | `@qwen-code/sdk@0.1.20` 安装到 `runtime/qwen`。独立订阅授权组件使用 SDK `0.1.35`，路径和回退规则见 `src/researchos/workdesk/setup_qwen.py` |
 | 额外运行组件 | Work 使用 `runtime/node-v22.23.3-win-x64/node.exe`。场景和计划的 YAML、时区数据见 `capabilities.py` 与 `planning.py`。PDF 预览和额度工具见 `pdf_visual.py` 与 `quota_observations.py` |
 
+场景导入和相关检查从应用自己的目录读取 YAML。将开发依赖安装到这个目录：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --target .\runtime\python-site PyYAML==6.0.3 tzdata
+```
+
 运行组件需要与具体功能所用版本相符。首次源码预览的验证范围是前端构建、本地启动和隔离测试。完整的工作端部署包与 Windows 安装测试另行整理。
 
 ## 本地检查
@@ -35,3 +41,5 @@ $env:WORKDESK_HOME = Join-Path (Get-Location) '.workdesk-dev'
 ```
 
 仓库中的检查使用临时资料库与模拟的工作端或响应，不要求连接付费模型。源码入口、前端模块和持久化边界分别位于 `src/researchos/workdesk`、`workdesk-ui/frontend` 和 `workdesk-ui/static`。
+
+合作等待条件的定向回归可用 `python -m unittest discover -s tests -p test_capability_conditions.py` 运行，覆盖原任务接续、三种合作模式、旧预设、授权到期和重复提交。安装与独立修复包的构建输入见 [安装器工具](../tools/windows-installer/README.md) 和 [修复程序工具](../tools/windows-repair/README.md)。

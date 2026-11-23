@@ -501,6 +501,7 @@ class CooperationConversation:
             limit = row['authorization']['limit']
             deadline = row.get('deadline')
             recovery = None
+            capability_wait = None
             handoff = None
             handoff_history = []
             pending_followup = row.get('queued_followup')
@@ -532,6 +533,15 @@ class CooperationConversation:
                       or (saved or {}).get('state') in ('BLOCKED','PAUSED_AFTER_RESTART','NEEDS_RECONCILIATION','NEEDS_CAPABILITY')):
                     state = 'PAUSED'
                     problem = ((not preparing and (flow or {}).get('reason')) or (saved or {}).get('reason'))
+                    if (saved or {}).get('state') == 'NEEDS_CAPABILITY' and (not plan or preparing):
+                        requests = saved.get('requests', [])
+                        problem = f'等待补充条件：共 {len(requests)} 项，请处理后重新规划。'
+                        capability_wait = {
+                            'state': 'NEEDS_CAPABILITY', 'requests': requests,
+                            'bindings': saved.get('capability_bindings', {}),
+                            'preparation': saved['reference'], 'message': problem,
+                            'details_href': '#work-items/item/' + identity,
+                        }
                     if flow and not preparing:
                         from .cooperation_recovery import preview
                         recovery,_ = preview(self.s,db,item,flow,plan)
@@ -586,6 +596,7 @@ class CooperationConversation:
                     'attention_task_id':attention if state!='DISCUSSING' else None,
                     'access':row['authorization']['access'],
                     'recovery':recovery,'resume_notes':row.get('resume_notes',[]),'handoff':handoff,'handoff_history':handoff_history,
+                    'capability_wait':capability_wait,
                     'can_follow_up':followup_phase=='complete' and not record.get('archived'),
                     'can_adjust_budget':followup_phase=='active' and not record.get('archived'),
                     'followup_pending':({'text':pending_followup['proposal']['text'],

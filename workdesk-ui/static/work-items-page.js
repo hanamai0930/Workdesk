@@ -602,26 +602,49 @@
       <p data-public-skill-description class="sp-note"></p>
       <button type="submit">查看来源并采用</button>`;
   }
+  const capabilityConditionKinds=[['','请选择处理方式'],['external_resource','提供外部资源或环境信息'],
+    ['human_input','由我配合或人工验证'],['later_stage','安排到后续阶段核对']];
+  const capabilityConditionDrafts=new Map();
+  const capabilityDraftKey=(item,row,index)=>JSON.stringify([item,row.reference.id,Number(index)]);
+  function unsavedCapabilityConditions(row){
+    return row.requests.some((_,index)=>{
+      const draft=capabilityConditionDrafts.get(capabilityDraftKey(current().id,row,index));
+      const saved=row.capability_bindings?.[index];
+      return draft&&(draft.kind!==(saved?.kind||'')||draft.note.trim()!==(saved?.note||'').trim());
+    });
+  }
+  function capabilityConditionForm(row,index,binding){
+    const key=capabilityDraftKey(current().id,row,index);
+    const draft=capabilityConditionDrafts.get(key)||{kind:binding?.kind||'',note:binding?.note||''};
+    return `<form data-fixed-capability="condition" data-index="${index}" data-condition-draft="${h(key)}">
+      ${S.select('处理方式','kind',capabilityConditionKinds,draft.kind)}
+      ${S.text('补充说明','note',draft.note,'required maxlength="4000" placeholder="填写资源或环境的实际信息、需要你配合的内容，或说明在哪个后续阶段核对。"')}
+      <p class="sp-note">说明会交给负责人重新规划；执行时仍需核对实际条件。后续核对保留原目标和验收要求。</p>
+      <button type="submit">保存处理说明</button></form>`;
+  }
   function fixedCapabilityRequests(row,presets,editable,used){
     if(!row.requests.length)return '';
     const eligible=presets.filter(preset=>preset.capabilities.length||preset.extensions.length);
     const options=[['','请选择预设'],...eligible.map(preset=>[presetValue(preset),preset.name])];
-    const bound=row.capability_bindings;
+    const bound=row.capability_bindings||{};
     const allBound=row.requests.every((_,index)=>bound[index]);
-    const required=new Set([...row.required_presets,...Object.values(bound).map(binding=>binding.reference.id)]);
+    const required=new Set([...(row.required_presets||[]),...Object.values(bound).flatMap(binding=>binding.reference?[binding.reference.id]:[])]);
     const remaining=Math.min(20,row.max_attempts_total-used-1);
-    const inBudget=required.size<=remaining&&Date.now()/1000<row.dispatch_before;
-    return `<h3>本轮需要的能力</h3>
+    const inBudget=remaining>=1&&required.size<=remaining&&Date.now()/1000<row.dispatch_before;
+    const unsaved=unsavedCapabilityConditions(row);
+    return `<h3>需要补充的条件</h3><p class="sp-note">逐项补充实际情况。工具扩展可使用 Skill 或 MCP；资源、环境和人工配合可填写处理说明。</p>
       ${row.requests.map((request,index)=>`<section class="wi-unit" data-fixed-capability-request="${index}">
         <p>${h(request)}</p>
-        ${bound[index]?`<p>已选预设 ${h(bound[index].name)}</p>
+        ${bound[index]?.kind?`<p class="wi-condition-saved">已保存：${h(bound[index].name)}</p>
+          <p class="wi-condition-note">${h(bound[index].note)}</p><p class="sp-note">用户提供的说明，执行时核对。</p>`:bound[index]?`<p>已选预设 ${h(bound[index].name)}</p>
           ${bound[index].local_bundle?`<p class="sp-note">本机来源 ${h(bound[index].local_bundle.source)} · 文件版本 ${h(bound[index].local_bundle.content_hash.slice(0,12))}</p>`:''}
           ${(bound[index].public_skills||[]).map(skill=>`<p class="sp-note">公开来源 ${h(skill.repository)} · ${h(skill.commit.slice(0,12))} · <a href="${h(skill.url)}" target="_blank" rel="noopener noreferrer">查看源文件</a></p>`).join('')}`:''}
-        ${editable?`<form data-fixed-capability="preset" data-index="${index}">
+        ${editable?`${capabilityConditionForm(row,index,bound[index])}
+        <details class="wi-condition-tools"><summary>使用 Skill 或 MCP 补充工具</summary>
+        <form data-fixed-capability="preset" data-index="${index}">
           ${S.field('查找已有预设','filter','','type="search" data-fixed-capability-filter')}
           ${S.select('使用已有预设','preset',options,'')}
           <button type="submit" ${eligible.length?'':'disabled'}>采用所选预设</button>
-          ${bound[index]?S.button('撤回本次选择',`type="button" data-fixed-capability-clear="${index}"`):''}
         </form>
         <details><summary>查找公开 Skill</summary>
           <p class="sp-note">从 Hugging Face 公开目录查找。筛选在本机进行。</p>
@@ -638,9 +661,13 @@
             <button type="submit">预览本机能力</button>
             <div data-local-bundle-preview></div>
           </form>
-        </details>`:''}
+        </details></details>
+        ${bound[index]?S.button('撤回本项处理',`data-fixed-capability-clear="${index}"`):''}`:''}
       </section>`).join('')}
-      ${editable?S.button('使用所选能力继续准备',`data-fixed-action="continue" ${allBound&&inBudget?'':'disabled'}`):''}
+      ${editable?S.button('按补充说明重新规划并继续',`data-fixed-action="continue" data-conditions-ready="${allBound&&inBudget}" ${allBound&&inBudget&&!unsaved?'':'disabled'}`):''}
+      ${editable?`<p class="sp-note" data-condition-unsaved ${unsaved?'':'hidden'}>请先保存已修改的处理说明，再重新规划。</p>`:''}
+      ${editable&&!allBound?'<p class="sp-note">请先为每项条件保存处理说明，或选用相应的工具预设。</p>':''}
+      ${editable?'<p class="sp-note">重新规划会使用 1 次准备回合，沿用原成员、权限、累计上限和派发截止；原方案回复继续保留。</p>':''}
       ${editable&&!inBudget?'<p class="sp-note">原授权的剩余次数或派发时间不足。可释放本次准备并重新授权。</p>':''}
       <p><a href="#extensions">管理能力预设</a></p>`;
   }
@@ -673,7 +700,7 @@
     const members=(v.resources?.members||[]).filter(member=>member.available);
     const presets=v.presets.filter(preset=>preset.enabled);
     const labels={PREPARING:'正在准备方案',APPLIED:'方案已交给连续合作流程',BLOCKED:'方案待处理',
-      NEEDS_CAPABILITY:'需要补充能力',NEEDS_RECONCILIATION:'准备回合待核对',
+      NEEDS_CAPABILITY:'等待补充条件',NEEDS_RECONCILIATION:'准备回合待核对',
       PAUSED_AFTER_RESTART:'服务重启后等待核对',RELEASED:'本次准备已释放'};
     if(!row&&!canStart)return '';
     const used=preparation.attempts_used;
@@ -860,7 +887,7 @@
       `<li>${h(file)}${attachments.has(file)?' <small>附件</small>':''}</li>`).join('')}</ul>`:'';
   }
   function pdcaPreparation(item,row){
-    const status={PREPARING:'正在准备方案',BLOCKED:'方案待处理',NEEDS_CAPABILITY:'需要补充能力',
+    const status={PREPARING:'正在准备方案',BLOCKED:'方案待处理',NEEDS_CAPABILITY:'等待补充条件',
       NEEDS_RECONCILIATION:'准备回合待核对',PAUSED_AFTER_RESTART:'服务重启后等待核对',RELEASED:'本次准备已释放'};
     const {stages,coordinator}=row.pdca;
     const leader=row.organization==='leader',host=row.organization==='host_experts';
@@ -884,7 +911,7 @@
         </dl></section>
         <section class="wi-note-card">${row.reason?`<p>${h(row.reason)}</p>`:''}
           <a href="#control/task/${h(row.task_id)}">查看准备回合</a>
-          <details><summary>准备与恢复</summary>${fixedPreparation(item,{allowStart:false})}</details></section></div>
+          <details ${row.state==='NEEDS_CAPABILITY'?'open':''}><summary>准备与恢复</summary>${fixedPreparation(item,{allowStart:false})}</details></section></div>
     </section></section>`;
   }
   const workTabs=[['controls','操作与配置'],['notes','执行纪要'],['trace','执行轨迹'],['delivery','成果与验收'],['usage','额度消耗']];
@@ -1006,7 +1033,7 @@
   }
   function paintCooperationComposer(view,composer){
     const data=view.data,draft=cooperationDraft(view);
-    const kind=cooperationComposers[data.state]||(data.can_follow_up?'followup':'');
+    const kind=data.capability_wait?'':cooperationComposers[data.state]||(data.can_follow_up?'followup':'');
     if(composer.dataset.kind!==kind){
       const previous=composer.querySelector('textarea[name=note]');
       const caret=previous&&document.activeElement===previous?[previous.selectionStart,previous.selectionEnd]:null;
@@ -1062,6 +1089,21 @@
     const error=form.querySelector('[data-cooperation-action-error]');
     if(error.textContent!==view.actionError)error.textContent=view.actionError||'';
     error.hidden=!view.actionError;
+  }
+  function paintCooperationCapabilityWait(view,host){
+    const wait=view.data.capability_wait;
+    host.hidden=!wait;
+    if(!wait){if(host.firstElementChild)host.replaceChildren();delete host.dataset.signature;return;}
+    const signature=JSON.stringify(wait);
+    if(host.dataset.signature===signature)return;
+    host.innerHTML=`<section class="wi-chat-card wi-capability-wait" aria-label="等待补充条件">
+      <h2>等待补充条件</h2><p>方案准备已结束。请补充以下条件的处理方式，再让负责人重新规划。</p>
+      <ol>${wait.requests.map((request,index)=>`<li><p>${h(request)}</p>${wait.bindings?.[index]
+        ?`<span>已保存：${h(wait.bindings[index].name)}</span>`:'<span>待处理</span>'}</li>`).join('')}</ol>
+      <a class="wi-capability-wait-link" href="${h(wait.details_href||teamworkHref(view.data))}">处理补充条件</a>
+      <p class="sp-note">可补充资源或环境信息、安排人工配合，或选择工具预设。重新规划沿用原任务和派发授权。</p>
+    </section>`;
+    host.dataset.signature=signature;
   }
   function paintCooperationProposal(view,host){
     const proposal=view.proposal;
@@ -1209,7 +1251,7 @@
             </aside>
             <div class="sp-page wi-cooperation-chat">
               <div class="wi-chat-scroll"><div data-cooperation-transcript></div><div data-cooperation-brief></div>
-                <div data-cooperation-proposal></div>
+                <div data-cooperation-proposal></div><div data-cooperation-capability-wait hidden></div>
                 <p class="wi-chat-status" data-cooperation-status role="status" hidden></p>
                 <p class="wi-chat-error" data-cooperation-problem role="alert" hidden></p><p data-cooperation-discussion-run hidden></p>
                 <div class="wd-reading-position" data-cooperation-reading hidden><span class="wd-reading-announcement" role="status" aria-live="polite"></span><button type="button" class="wd-reading-latest" data-cooperation-latest>回到最新</button></div>
@@ -1225,7 +1267,7 @@
         getData:()=>view.data,isCurrent:()=>activeCooperation(view),refresh:()=>refreshCooperation(view)});
     }
     const problem=page.querySelector('[data-cooperation-problem]');
-    const error=view.error||data?.problem||'';
+    const error=view.error||(data?.capability_wait?'':data?.problem)||'';
     if(problem.textContent!==error)problem.textContent=error;
     problem.hidden=!error;
     if(!data){
@@ -1287,6 +1329,7 @@
       brief.querySelector('button').disabled=view.submitting||!!data.pending;
     }else if(brief.firstElementChild)brief.innerHTML='';
     paintCooperationProposal(view,page.querySelector('[data-cooperation-proposal]'));
+    paintCooperationCapabilityWait(view,page.querySelector('[data-cooperation-capability-wait]'));
     paintCooperationComposer(view,page.querySelector('[data-cooperation-composer]'));
     const status=page.querySelector('[data-cooperation-status]');
     const queued=data.followup_pending;
@@ -1295,7 +1338,7 @@
       RUNNING:'PDCA 进行中，阶段完成后会在这里显示结果。',
       PLAN_READY:'方案已保存，可在任务详情查看。',
       COMPLETED:data.handoff?'':'本次合作已完成。',
-      PAUSED:'工作已暂停。'
+      PAUSED:data.capability_wait?'':'工作已暂停。'
     }[data.state]))||'';
     if(status.textContent!==label)status.textContent=label;
     status.hidden=!label;
@@ -2862,6 +2905,10 @@
     act(async()=>{
       const preparation=activePreparation(item).record.reference;
       if(action==='continue'){
+        const seq=v.seq;
+        if(!await S.confirm('按补充说明重新规划并继续',
+          '使用 1 次新的准备回合，沿用原成员、权限、累计上限和派发截止。原任务和方案回复会保留；补充说明交给负责人核对并重新规划。',item.title))return;
+        if(seq!==v.seq||current().id!==item.id)return;
         await S.command('work-item.'+preparationMode(item)+'-prepare',{id:item.id,revision:item.revision,continue_from:preparation});
       }else{
         await S.command('work-item.'+preparationMode(item)+'-prepare-'+action,{
@@ -2871,15 +2918,30 @@
       await load();
     });
   });
-  function resolveFixedCapability(index,selection){
+  function resolveFixedCapability(index,selection,draftKey){
     const item=v.data.work_items[0];
+    const preparation=activePreparation(item).record.reference;
+    const submittedDraft=draftKey&&capabilityConditionDrafts.get(draftKey);
     return act(async()=>{
       await S.command('work-item.'+preparationMode(item)+'-capability-resolve',{
-        id:item.id,preparation:activePreparation(item).record.reference,request_index:Number(index),...selection
+        id:item.id,preparation,request_index:Number(index),...selection
       });
+      if(draftKey&&capabilityConditionDrafts.get(draftKey)===submittedDraft)capabilityConditionDrafts.delete(draftKey);
       await load();
     });
   }
+  function captureCapabilityCondition(event){
+    const form=event.target.form;
+    if(!current().active||form?.dataset.fixedCapability!=='condition'||!$('#main').contains(form))return;
+    const values=new FormData(form);
+    capabilityConditionDrafts.set(form.dataset.conditionDraft,{kind:String(values.get('kind')||''),note:String(values.get('note')||'')});
+    const row=activePreparation(v.data.work_items[0]).record,unsaved=unsavedCapabilityConditions(row);
+    const button=$('#main [data-fixed-action="continue"]');
+    if(button)button.disabled=v.busy||button.dataset.conditionsReady!=='true'||unsaved;
+    const notice=$('#main [data-condition-unsaved]');if(notice)notice.hidden=!unsaved;
+  }
+  document.addEventListener('input',captureCapabilityCondition);
+  document.addEventListener('change',captureCapabilityCondition);
   const localBundlePreviews=new WeakMap();
   function localBundlePreview(preview){
     const servers=Object.entries(preview.mcp);
@@ -2911,6 +2973,7 @@
     if(!button||!current().active||!$('#main').contains(button))return;
     const form=button.closest('form'),saved=localBundlePreviews.get(form);
     if(!saved||JSON.stringify(Object.fromEntries(new FormData(form)))!==saved.values)return;
+    const item=v.data.work_items[0];
     act(async()=>{
       await S.command('work-item.'+preparationMode(item)+'-capability-resolve',{...saved.payload,preview_version:saved.version});
       await load();
@@ -2935,6 +2998,14 @@
     if(!current().active||!form.dataset.fixedCapability||!$('#main').contains(form))return;
     event.preventDefault();
     const values=new FormData(form);
+    if(form.dataset.fixedCapability==='condition'){
+      const kind=String(values.get('kind')||''),note=String(values.get('note')||'').trim();
+      if(!capabilityConditionKinds.some(([value])=>value&&value===kind)||!note){
+        act(async()=>{throw Error('请选择处理方式并填写补充说明。');});return;
+      }
+      resolveFixedCapability(form.dataset.index,{condition:{kind,note}},form.dataset.conditionDraft);
+      return;
+    }
     if(form.dataset.fixedCapability==='public'){
       const skill=publicSkillOptions.get(form)?.find(skill=>skill.name===values.get('skill'));
       const item=v.data.work_items[0];
@@ -2970,7 +3041,8 @@
   document.addEventListener('click',event=>{
     const button=event.target.closest('[data-fixed-capability-clear]');
     if(!current().active||!button||!$('#main').contains(button))return;
-    resolveFixedCapability(button.dataset.fixedCapabilityClear,{preset:null});
+    const row=activePreparation(v.data.work_items[0]).record;
+    resolveFixedCapability(button.dataset.fixedCapabilityClear,{preset:null},capabilityDraftKey(current().id,row,button.dataset.fixedCapabilityClear));
   });
   document.addEventListener('input',event=>{
     const input=event.target;
