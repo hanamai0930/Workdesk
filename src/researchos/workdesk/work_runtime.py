@@ -39,7 +39,7 @@ class WorkRuntime:
                             for o in native_ops if o['operation']=='plugins.workspace'
                             and o['attempt_id']==a['id'] and o['owner']==a['owner']),None)
             activation=next(({k:o.get(k) for k in ('id','state','result','error','ended_at')}
-                        for o in native_ops if (o.get('params') or {}).get('_workspace_selection')
+                            for o in native_ops if (o.get('params') or {}).get('_workspace_selection')
                             and o['attempt_id']==a['id'] and o['owner']==a['owner']),None)
             usage=self.s.store.usage(task=task['id'],db=db)
             reasons=blockers(self.s,db,task,a)

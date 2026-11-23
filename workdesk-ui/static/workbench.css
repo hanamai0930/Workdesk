@@ -376,7 +376,7 @@ body.workdesk .ctl-dialog{max-height:88dvh;border-radius:14px}
  body.workdesk .wk-work-type button{min-height:40px}
  body.workdesk .wk-mode-tabs a{min-height:40px;display:flex;align-items:center}
 }
-
+  
 
 /* Shared sidebar sizing. Page-specific record typography stays in its module. */
 @media(min-width:701px){

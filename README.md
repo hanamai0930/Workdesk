@@ -111,6 +111,8 @@ Workdesk 组织对话和任务。Chat 通过模型服务返回回复，Work 通�
 
 ### 从源码开发
 
+已有完整本地运行组件时，可双击根目录的 `Workdesk.cmd` 启动，用户资料默认保存在 `%USERPROFILE%\.workdesk`。源码维护者可使用根目录的 `GitHub同步.cmd` 保存本地进展并同步公开源码，操作见[源码同步说明](docs/GITHUB_SYNC.md)。
+
 可以[下载当前源码](https://github.com/hanamai0930/Workdesk/archive/refs/heads/main.zip)，或克隆本仓库。
 
 准备 **Windows 11 x64、Python 3.12、Node.js 22 和 pnpm 11**。取得源码后，在项目根目录运行以下命令。命令与[开发说明](docs/DEVELOPMENT.md)一致。

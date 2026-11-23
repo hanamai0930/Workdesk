@@ -43,8 +43,8 @@ class Client:
                               '--base',str(self.locations.base),'--data',str(self.locations.data)]
             if self.locations.user:command+=['--user-root',str(self.locations.user)]
             backend=subprocess.Popen(command,
-                                     cwd=self.locations.base,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                             cwd=self.locations.base,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                             creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
             # A clean first launch also writes the implementation snapshot.
             deadline=time.monotonic()+15
             while time.monotonic()<deadline:
