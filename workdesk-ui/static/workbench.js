@@ -183,6 +183,13 @@
       else{
         if(!scenes[v.scene])v.scene='research';v.input='';v.files='';v.attachments=[];v.formDraft={};v.workAccess=defaultAccess(v.provider);
         const restored=features.restore('work');
+        const instance=document.documentElement.dataset;
+        const developmentProject=!restored&&!v.project&&v.type==='independent'&&instance.workdeskChannel==='development'?
+          v.data.projects.find(row=>row.id===instance.workdeskDefaultProject&&!row.removed):null;
+        if(developmentProject){
+          v.project=developmentProject.id;
+          if(scenes[developmentProject.scene])v.scene=developmentProject.scene;
+        }
         if(v.type==='independent'&&!v.input&&!v.files&&!v.attachments.length&&!v.formDraft.resourceSelection){
           const defaults=v.data.execution_resources?.connections||[];
           const available=connections||Object.fromEntries(defaults.filter(row=>row.is_default&&row.available).map(row=>[row.provider,true]));

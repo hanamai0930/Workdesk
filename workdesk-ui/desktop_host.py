@@ -5,7 +5,9 @@ from pathlib import Path
 import subprocess
 
 
-def launch(url, base, user_root, report=None):
+def launch(url, base, user_root, report=None, title=None):
+    if title not in (None, 'Workdesk · 工作台', 'Workdesk · 开发'):
+        raise ValueError('桌面窗口标题不支持。')
     executable=Path(base)/'runtime/workdesk-desktop/Workdesk.Desktop.exe'
     pointer=executable.parent/'current.json'
     if pointer.is_file():
@@ -17,7 +19,14 @@ def launch(url, base, user_root, report=None):
         except (ValueError,KeyError,TypeError,OSError):return False
     if os.name!='nt' or not executable.is_file():return False
     report=Path(report) if report else Path(user_root)/'runtime/desktop/native-status.json'
-    subprocess.Popen([str(executable),'--url',url,'--user-root',str(user_root),'--report',str(report)],
+    command=[str(executable),'--url',url,'--user-root',str(user_root),'--report',str(report)]
+    if title is not None:command+=['--title',title]
+    process=subprocess.Popen(command,
                      cwd=executable.parent,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                      creationflags=subprocess.CREATE_NO_WINDOW)
+    from researchos.workdesk.paths import atomic_json,process_identity
+    identity=process_identity(process.pid)
+    atomic_json(Path(user_root)/'runtime/desktop/launch-identity.json',{
+        'pid':process.pid,'creation':identity['creation'],'executable':str(executable.resolve()),
+        'user_root':str(Path(user_root).resolve()),'title':title or 'Workdesk · 工作台'})
     return True

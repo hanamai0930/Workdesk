@@ -11,6 +11,9 @@ import sys
 def default_user_root():
     # Stable across packaged Codex and standalone Workdesk launches. Packaged
     # Windows apps can virtualize LOCALAPPDATA into their own disposable cache.
+    from .instance import load_profile
+    profile=load_profile()
+    if profile:return Path(profile['user_root'])
     return Path(os.environ['WORKDESK_HOME']) if os.environ.get('WORKDESK_HOME') else Path.home()/'.workdesk'
 
 
@@ -43,6 +46,13 @@ class Locations:
     @classmethod
     def resolve(cls, base=None, data=None, user=None):
         base = Path(base or Path(__file__).resolve().parents[3]).resolve()
+        from .instance import load_profile,validate_locations
+        profile=load_profile(base)
+        if profile:
+            selected_user=Path(user).resolve() if user is not None else Path(profile['user_root'])
+            selected_data=Path(data).resolve() if data is not None else Path(profile['data_root'])
+            validate_locations(base,selected_data,selected_user,profile)
+            return cls(base,selected_data,selected_user)
         if user is None and data is None:
             user=default_user_root()
         if user is not None:
@@ -138,6 +148,12 @@ class Locations:
         return home
     @property
     def python(self):
+        from .instance import load_profile
+        profile=load_profile(self.base)
+        if profile:
+            executable=Path(profile['python_executable'])
+            if not executable.is_file():raise ValueError('登记的开发解释器缺失；不回落系统解释器。')
+            return executable
         return Path(sys.executable)
     @property
     def node(self): return self.runtime/'node-v22.23.3-win-x64/node.exe'

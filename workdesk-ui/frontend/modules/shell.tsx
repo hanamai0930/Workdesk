@@ -8,6 +8,56 @@ import { formatMoney } from '../lib/format';
 const quotaNumber=new Intl.NumberFormat('zh-CN');
 const quotaTime=new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Shanghai'});
 
+type InstanceIdentity={
+  schema:number;channel:string;instance_id:string;process_instance:string;
+  program_root:string;user_root:string;data_root:string;
+  source_revision:string;source_dirty:boolean;implementation_revision:string;protocol:number;
+};
+
+function DevelopmentIdentity(){
+  const development=document.documentElement.dataset.workdeskChannel==='development';
+  const [instance,setInstance]=useState<InstanceIdentity|null>(null);
+  const [failed,setFailed]=useState(false);
+  const [revision,reload]=useState(0);
+  const panel=useRef<HTMLDialogElement>(null);
+  useEffect(()=>{
+    if(!development)return;
+    const controller=new AbortController();
+    setFailed(false);
+    fetch('api/v1/instance',{signal:controller.signal,cache:'no-store'})
+      .then(response=>{if(!response.ok)throw Error();return response.json() as Promise<InstanceIdentity>;})
+      .then(result=>{
+        if(result.schema!==1||result.channel!=='development'||typeof result.program_root!=='string')throw Error();
+        if(!controller.signal.aborted)setInstance(result);
+      })
+      .catch(()=>{if(!controller.signal.aborted)setFailed(true);});
+    return ()=>controller.abort();
+  },[development,revision]);
+  useEffect(()=>{if(development)document.title='Workdesk · 开发';},[development]);
+  if(!development)return null;
+  const fields=instance?[
+    ['程序位置',instance.program_root],['用户资料',instance.user_root],['活动资料库',instance.data_root],
+    ['源码版本',instance.source_revision+(instance.source_dirty?' · 含未提交修改':'')],
+    ['实例身份',instance.instance_id],['当前服务',instance.process_instance],
+    ['运行实现',instance.implementation_revision],['控制协议',String(instance.protocol)],
+  ]:[];
+  return <>
+    <section className="wd-instance-bar" data-instance-channel="development" aria-label="开发实例">
+      <Button type="button" variant="outline" size="xs" aria-haspopup={instance?'dialog':undefined} aria-controls={instance?'wd-instance-dialog':undefined}
+        disabled={!instance&&!failed} onClick={()=>instance?panel.current?.showModal():reload(value=>value+1)}>开发<span className="wd-instance-more">{instance?' · 实例详情':failed?' · 重试核对':''}</span></Button>
+      {instance?<span className="wd-instance-location" title={instance.program_root}>开发源码目录：{instance.program_root}</span>:
+        <span role="status">{failed?'暂未核对实例身份，点击开发重试。':'正在核对开发实例…'}</span>}
+    </section>
+    {instance&&<dialog id="wd-instance-dialog" ref={panel} className="wd-instance-dialog" aria-labelledby="wd-instance-title">
+      <header><h2 id="wd-instance-title">Workdesk · 开发实例</h2>
+        <Button type="button" variant="ghost" size="sm" onClick={()=>panel.current?.close()} aria-label="关闭实例详情">关闭</Button>
+      </header>
+      <dl>{fields.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value||'尚未取得'}</dd></div>)}</dl>
+      <p>任务执行位置以任务中选择的工作目录为准。</p>
+    </dialog>}
+  </>;
+}
+
 function QuotaPopup(){
   const panel=useRef<HTMLDivElement>(null);
   const [open,setOpen]=useState(false);
@@ -125,6 +175,7 @@ export function Shell() {
         <div className="wk-header-actions" id="wb-header-actions"><Button variant="ghost" size="icon" className="wk-icon" data-wb="new" aria-label="新建对话"><Plus/></Button></div>
       </div>
     </div>
+    <DevelopmentIdentity/>
     <div className="wk-shell">
       <nav className="wk-rail" aria-label="功能分区">
         <div className="wk-rail-group">

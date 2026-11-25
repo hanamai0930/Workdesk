@@ -47,17 +47,19 @@ internal sealed partial class WorkdeskHost : Form {
 
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [STAThread] static void Main(string[] args) {
-        string url = null, root = null, report = null, probe = null;
+        string url = null, root = null, report = null, probe = null, title = "Workdesk · 工作台";
         for (int i=0; i+1<args.Length; i+=2) {
             if (args[i]=="--url") url=args[i+1];
             else if (args[i]=="--user-root") root=args[i+1];
             else if (args[i]=="--report") report=args[i+1];
             else if (args[i]=="--probe-base") probe=args[i+1];
+            else if (args[i]=="--title") title=args[i+1];
             else return;
         }
         Uri uri;
         if (!Uri.TryCreate(url, UriKind.Absolute, out uri) || uri.Scheme!="http" || uri.Host!="127.0.0.1" || !String.IsNullOrEmpty(uri.UserInfo) || !uri.AbsolutePath.StartsWith("/s/")) return;
         if (String.IsNullOrEmpty(root) || !Path.IsPathRooted(root)) return;
+        if (title!="Workdesk · 工作台" && title!="Workdesk · 开发") return;
         if (probe!=null) {
             Uri p;
             if (!Uri.TryCreate(probe,UriKind.Absolute,out p) || p.Scheme!="http" || p.Host!="127.0.0.1" || p.Port!=uri.Port) return;
@@ -65,12 +67,12 @@ internal sealed partial class WorkdeskHost : Form {
         try {SetProcessDpiAwarenessContext(new IntPtr(-4));} catch (EntryPointNotFoundException) {}
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.Run(new WorkdeskHost(uri,root,report,probe));
+        Application.Run(new WorkdeskHost(uri,root,report,probe,title));
     }
 
-    WorkdeskHost(Uri url, string root, string report, string probe) {
+    WorkdeskHost(Uri url, string root, string report, string probe, string title) {
         shellUrl=url;userRoot=root;reportPath=report;probeBase=probe;
-        Text="Workdesk · 工作台";AutoScaleMode=AutoScaleMode.None;
+        Text=title;AutoScaleMode=AutoScaleMode.None;
         Size=new Size(1440,900);MinimumSize=new Size(780,560);
         StartPosition=FormStartPosition.CenterScreen;
         shell.Dock=DockStyle.Fill;Controls.Add(shell);
@@ -260,7 +262,7 @@ internal sealed partial class WorkdeskHost : Form {
         try {
             var views=new Dictionary<string,object>();foreach(var pair in chats)views[pair.Key]=new {status=pair.Value.Status,host=pair.Value.Host,visible=pair.Value.View.Visible};
             Directory.CreateDirectory(Path.GetDirectoryName(reportPath));
-            File.WriteAllText(reportPath,json.Serialize(new {engine="WebView2",active=selected,chat_visible=wantsChat,views=views,width=ClientSize.Width,height=ClientSize.Height,window_width=Width,window_height=Height,pid=Process.GetCurrentProcess().Id,updated=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()/1000.0,remote_host_objects=false,remote_web_messages=false}));
+            File.WriteAllText(reportPath,json.Serialize(new {engine="WebView2",title=Text,active=selected,chat_visible=wantsChat,views=views,width=ClientSize.Width,height=ClientSize.Height,window_width=Width,window_height=Height,pid=Process.GetCurrentProcess().Id,updated=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()/1000.0,remote_host_objects=false,remote_web_messages=false}));
         }catch(IOException) {}
     }
 }

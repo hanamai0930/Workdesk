@@ -20,6 +20,8 @@ BASE=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(BASE/'src'))
 from researchos.workdesk.client import Client as BackendClient
 from researchos.workdesk.paths import default_user_root
+from researchos.workdesk.instance import configure_environment,load_profile
+PROFILE=configure_environment(BASE)
 from researchos.workdesk import desktop_preferences, workspace as work_files
 from researchos.workdesk.setup_qwen import GUIDE as QWEN_SIGN_IN_GUIDE
 
@@ -122,7 +124,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if urlsplit(self.path).path == '/health' and self.valid_host():
-            self.reply(200, {'app': APP_ID, 'revision': self.server.revision, 'instance': self.server.instance}); return
+            profile=load_profile(BASE) if isinstance(self.server.backend,BackendClient) else None
+            self.reply(200, {'app': APP_ID, 'revision': self.server.revision, 'instance': self.server.instance,
+                'instance_id':profile['instance_id'] if profile else None,
+                'channel':'development' if profile else 'daily','program_root':str(BASE),
+                'user_root':str(default_user_root()),
+                'data_root':profile['data_root'] if profile else
+                    (str(self.server.backend.locations.data) if isinstance(self.server.backend,BackendClient) else None)}); return
         if not self.authorize(): return
         parsed = urlsplit(self.path)
         route = parsed.path[len(self.server.prefix):]
@@ -130,7 +138,14 @@ class Handler(BaseHTTPRequestHandler):
             if route == '':
                 if not (DIST / 'index.html').is_file():
                     self.reply(503, {'error': 'React 界面尚未构建，请在 workdesk-ui 执行 pnpm install 和 pnpm build。'}); return
-                self.reply(200, (DIST / 'index.html').read_bytes(), 'text/html; charset=utf-8'); return
+                html=(DIST / 'index.html').read_bytes()
+                if PROFILE and isinstance(self.server.backend,BackendClient):
+                    default_project=PROFILE.get('default_project_id','')
+                    import uuid
+                    if default_project:uuid.UUID(default_project)
+                    marker=(' data-workdesk-channel="development" data-workdesk-default-project="'+default_project+'"').encode()
+                    html=html.replace(b'<html',b'<html'+marker,1)
+                self.reply(200, html, 'text/html; charset=utf-8'); return
             if route.startswith('assets/'):
                 asset = (DIST / route).resolve()
                 if not asset.is_relative_to((DIST / 'assets').resolve()) or asset.suffix not in {'.js', '.css'} or not asset.is_file():
@@ -173,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
         if new_route not in SETUP_POST | {'api/stop','api/v1/command','api/v1/profile-check','api/v1/resource-quota-check',
                 'api/v1/settings-qwen-quota','api/v1/settings-qwen-quota-login','api/v1/settings-qwen-quota-cancel','api/v1/coordinator-text-rework-recovery',
                 'api/v1/fixed-public-skills','api/v1/fixed-capability-preview','api/open-chat','api/pick-directory',
-                'api/preferences','api/preferences/recover','api/open-project-file'}:
+                'api/preferences','api/preferences/recover','api/open-project-file','api/dev-exit'}:
             self.reply(404, {'error': '此界面没有任务派发入口。'}); return
         try:
             length = int(self.headers.get('Content-Length', '0'))
@@ -182,6 +197,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(400, {'error': '请求格式不支持。'}); return
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict): raise ValueError('请求格式不支持。')
+            if new_route=='api/dev-exit':
+                if not PROFILE or data!={'instance_id':PROFILE['instance_id']}:
+                    raise ValueError('仅允许关闭本次已核对的开发实例。')
+                if self.server.backend.discover() is not None:
+                    raise ValueError('开发控制服务尚未安全退出；界面保持可用。')
+                self.reply(200,{'stopping':True,'instance_id':PROFILE['instance_id']})
+                threading.Thread(target=self.server.shutdown,daemon=True).start()
+                return
             if new_route=='api/v1/connection-setup/account-start':
                 result=self.server.backend.request('connection-setup/account-start',data)
                 if result.get('state')=='OPENED':
@@ -257,7 +280,8 @@ class Handler(BaseHTTPRequestHandler):
 def open_window(url, *, workdesk=False):
     if workdesk:
         from desktop_host import launch
-        if launch(url,BASE,default_user_root()):return
+        if launch(url,BASE,default_user_root(),**({'title':'Workdesk · 开发'} if PROFILE else {})):return
+        if PROFILE:raise OSError('开发桌面组件缺失；请先构建开发宿主，未改用日用浏览器资料。')
     if not workdesk:
         # Official Chat login flows use the user's regular browser window,
         # rather than an app-mode window with hidden navigation controls.
@@ -297,13 +321,16 @@ def existing(state, revision):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--open', action='store_true')
-    parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--port', type=int, default=None)
     args = parser.parse_args()
+    if PROFILE and args.port is not None and args.port!=PROFILE['ui_port']:
+        raise ValueError('开发端口与实例配置不符。')
     RUNTIME.mkdir(parents=True, exist_ok=True)
     revision = build_id()
-    state = RUNTIME / f'instance-{revision}.json'
+    identity=PROFILE['instance_id'] if PROFILE else revision
+    state = RUNTIME / f'instance-{identity}.json'
     # OS lock prevents double-click races; releases automatically on process exit.
-    lock = open(RUNTIME / f'instance-{revision}.lock', 'a+b')
+    lock = open(RUNTIME / f'instance-{identity}.lock', 'a+b')
     lock.seek(0); lock.write(b'0'); lock.flush(); lock.seek(0)
     try:
         if os.name == 'nt':
@@ -320,9 +347,14 @@ def main():
                 return
             time.sleep(.15)
         raise RuntimeError('新版界面服务正在启动或需要重开；未转到旧版。')
-    server = Server(('127.0.0.1', args.port))
+    server = Server(('127.0.0.1', PROFILE['ui_port'] if PROFILE else (args.port or 0)))
     value = {'app': APP_ID, 'revision': revision, 'port': server.server_port,
              'token': server.token, 'instance': server.instance, 'pid': os.getpid()}
+    if PROFILE:
+        from researchos.workdesk.paths import process_identity
+        value.update(instance_id=PROFILE['instance_id'],channel='development',program_root=str(BASE),
+                     user_root=PROFILE['user_root'],data_root=PROFILE['data_root'],
+                     creation=process_identity(os.getpid())['creation'])
     temp = state.with_suffix('.tmp'); temp.write_text(json.dumps(value), encoding='utf-8'); temp.replace(state)
     url = server.origin + server.prefix
     try:

@@ -27,6 +27,21 @@ body.workdesk > #root { display:contents; }
   --radius-xl: 16px;
 }
 
+@scope (body.workdesk) {
+  .wd-instance-bar { flex:none;display:flex;align-items:center;gap:10px;min-height:34px;padding:3px 14px;border-block:1px solid var(--wk-line);background:var(--wk-soft);color:var(--wk-text);font-size:12px; }
+  .wd-instance-bar [data-slot="button"] { flex:none;color:var(--wk-text);font-weight:600; }
+  .wd-instance-location { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0; }
+  .wd-instance-dialog { width:min(620px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;padding:20px;border:1px solid var(--wk-line);border-radius:12px;background:var(--wk-bg);color:var(--wk-text);box-shadow:0 10px 36px var(--wk-shadow);overflow:auto;font:inherit; }
+  .wd-instance-dialog::backdrop { background:var(--wk-scrim); }
+  .wd-instance-dialog header { display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px; }
+  .wd-instance-dialog h2 { margin:0;font-size:16px; }
+  .wd-instance-dialog dl { margin:0;display:flex;flex-direction:column;gap:12px; }
+  .wd-instance-dialog dt { color:var(--wk-muted);font-size:12px; }
+  .wd-instance-dialog dd { margin:2px 0 0;overflow-wrap:anywhere;user-select:text; }
+  .wd-instance-dialog p { margin-top:18px;color:var(--wk-muted);font-size:12px; }
+  @media (max-width:640px) { .wd-instance-bar { padding-inline:8px;gap:8px; }.wd-instance-more { display:none; } }
+}
+
 /* Legacy pages use a 13px root and retain their own controls. Shared React
    controls size one text line plus padding, rather than assuming a 16px root. */
 @scope (body.workdesk) {

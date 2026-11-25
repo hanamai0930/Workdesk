@@ -44,13 +44,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed=urlsplit(self.path)
         if parsed.path=='/health':
+            from .instance import load_profile
+            profile=load_profile(self.server.service.locations.base)
             self.reply(200,{'app':APP,'protocol':1,'instance':self.server.service.instance,
                            'program_base':str(self.server.service.locations.base),
+                           'data_root':str(self.server.service.locations.data),
+                           'profile_id':profile['instance_id'] if profile else None,
                            'implementation':self.server.service.implementation});return
         if not self.auth():self.reply(403,{'error':'需要本地控制服务凭据。'});return
         args=parse_qs(parsed.query)
         try:
-            if parsed.path=='/api/v1/connection-setup':
+            if parsed.path=='/api/v1/instance':
+                from .instance import snapshot
+                value=snapshot(self.server.service.locations,self.server.service.instance,self.server.service.implementation)
+            elif parsed.path=='/api/v1/connection-setup':
                 from .setup_keys import status
                 value=status(self.server.service)
             elif parsed.path=='/api/v1/workspace':value=self.server.service.catalog(args.get('view',[None])[0])
@@ -216,5 +223,9 @@ def main():
 if __name__=='__main__':
     try:main()
     except Exception:
-        path=Locations.resolve().data;path.mkdir(parents=True,exist_ok=True)
-        (path/'startup-error.txt').write_text(traceback.format_exc(),encoding='utf-8');raise
+        # Invalid development configuration must not create a daily diagnostic directory.
+        try:
+            path=Locations.resolve().data;path.mkdir(parents=True,exist_ok=True)
+            (path/'startup-error.txt').write_text(traceback.format_exc(),encoding='utf-8')
+        except (ValueError,OSError):pass
+        raise

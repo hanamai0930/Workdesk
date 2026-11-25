@@ -1,6 +1,10 @@
 @echo off
 setlocal
 set "WORKDESK_ROOT=%~dp0"
+if exist "%WORKDESK_ROOT%.venv\Scripts\pythonw.exe" (
+  start "" "%WORKDESK_ROOT%.venv\Scripts\pythonw.exe" "%WORKDESK_ROOT%workdesk-ui\server.py" --open
+  exit /b 0
+)
 set "PYTHONW=%ProgramFiles%\Python312\pythonw.exe"
 if not exist "%PYTHONW%" (
   for /f "delims=" %%I in ('where pythonw.exe 2^>nul') do if not defined PYTHONW_FOUND set "PYTHONW_FOUND=%%I"

@@ -27,13 +27,23 @@ class Client:
             if not all(isinstance(state.get(k),str) and len(state[k])==43 for k in ('control','viewer')):return None
             with urlopen('http://127.0.0.1:'+str(state['port'])+'/health',timeout=.7) as response:health=json.load(response)
             if health.get('app')=='workdesk-control-v1' and health.get('instance')==state['instance'] and health.get('protocol')==1:
+                from .instance import load_profile
+                profile=load_profile(self.locations.base)
+                if profile and (health.get('profile_id')!=profile['instance_id'] or
+                    Path(health.get('program_base','')).resolve()!=self.locations.base or
+                    Path(health.get('data_root','')).resolve()!=self.locations.data):
+                    raise ValueError('开发控制服务归属不符；未发送命令，也未接管该服务。')
                 state['_health']=health
                 return state
-        except (OSError,ValueError,KeyError,TypeError):pass
+        except (OSError,KeyError,TypeError,json.JSONDecodeError):pass
         return None
     def ensure(self):
         with self.lock:
             if self.dynamic_data:self.locations=Locations.resolve(self.locations.base)
+            from .instance import load_profile
+            profile=load_profile(self.locations.base)
+            if profile and (Path(profile['user_root'])/'runtime/development-stop.json').exists():
+                raise ConnectionError('开发实例正在停止；请从开发启动入口重新打开。')
             state=self.discover()
             if state:return state
             env=clean_env();env['PYTHONPATH']=str(self.locations.base/'src')

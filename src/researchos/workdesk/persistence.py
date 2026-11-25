@@ -305,6 +305,8 @@ class Persistence:
         with data_owner_lock(target):return self.activate_locked(db,p,restore,target)
 
     def activate_locked(self,db,p,restore,target):
+        from .instance import validate_locations
+        if not self.s.engine:validate_locations(self.s.locations.base,target,self.s.locations.user)
         if self.s.locations.data==target:raise ValueError('恢复目标已是当前数据目录。')
         preimage=target/'activation-original.sqlite3';journal=target/'activation-recovery.json'
         # Recover any SQLite hot journal before checking the application image.

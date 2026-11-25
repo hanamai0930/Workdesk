@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
+from datetime import datetime
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
+import uuid
 
 
 SPEC = importlib.util.spec_from_file_location('workdesk_sync_github',
@@ -30,6 +36,189 @@ def identity(directory):
 
 
 class GitHubSyncTests(unittest.TestCase):
+    def test_explicit_api_transport_preserves_git_objects_and_rejects_race(self):
+        with tempfile.TemporaryDirectory(prefix='workdesk-api-sync-') as tmp:
+            base = Path(tmp)
+            remote, root, auth = base / 'remote.git', base / 'root', base / 'auth'
+            remote.mkdir(); root.mkdir(); auth.mkdir()
+            git(remote, 'init', '--bare', '--initial-branch=main'); identity(remote)
+            git(root, 'init', '--initial-branch=main'); identity(root)
+            (root / '.gitignore').write_text('.maintenance/\n', encoding='utf-8')
+            (root / 'README.md').write_text('daily\n', encoding='utf-8')
+            (root / 'asset.bin').write_bytes(b'\x00\xff\x01')
+            (root / 'src').mkdir(); (root / 'src/old.py').write_text('VALUE = 1\n', encoding='utf-8')
+            git(root, 'add', '.'); git(root, 'commit', '-m', 'Public seed')
+            git(root, 'push', str(remote), 'main')
+            public_url = 'https://github.com/example/workdesk-api-test.git'
+            git(base, 'clone', str(remote), str(auth / 'github-publish'))
+            git(auth / 'github-publish', 'remote', 'set-url', 'origin', public_url)
+            daily = git(remote, 'rev-parse', 'main')
+            config = {'repository': public_url, 'branch': 'main', 'files': ['README.md', 'asset.bin'],
+                      'trees': [{'path': 'src', 'suffixes': ['.py']}]}
+            with self.assertRaisesRegex(sync.SyncError, '开发通道'):
+                sync.Synchronizer(root, config=config, authenticate=False, transport='github-api')
+            git(root, 'switch', '-c', 'codex/v2-dev')
+            user = base / 'user'
+            profile = {'schema': 1, 'channel': 'development', 'instance_id': str(uuid.uuid4()),
+                       'development_root': str(base), 'program_root': str(root), 'user_root': str(user),
+                       'data_root': str(user / 'libraries/main'), 'ui_port': 18766,
+                       'python_executable': sys.executable, 'sync_branch': 'codex/v2-dev', 'auth_root': str(auth)}
+            profile_path = base / 'instance.json'
+            profile_path.write_text(json.dumps(profile), encoding='utf-8')
+            git(root, 'config', '--local', 'workdesk.channel', 'development')
+            git(root, 'config', '--local', 'workdesk.instanceConfig', str(profile_path))
+            (root / 'README.md').write_text('development\n', encoding='utf-8')
+            (root / 'asset.bin').write_bytes(b'\x00\xff\x02')
+            (root / 'src/old.py').rename(root / 'src/new.py')
+            (root / 'docs').mkdir(); (root / 'docs/internal.md').write_text('private\n', encoding='utf-8')
+
+            def input_git(args, body=None, env=None):
+                result = subprocess.run(['git', '-C', str(remote), *args], input=body,
+                                        capture_output=True, env=env)
+                self.assertEqual(0, result.returncode, result.stderr)
+                return result.stdout.decode('utf-8').strip()
+
+            class LocalAPI(sync.Synchronizer):
+                race = False
+                writes = []
+
+                def api_request(inner, method, path, value=None, *, missing=False):
+                    if method == 'GET':
+                        branch = path.removeprefix('git/ref/heads/')
+                        result = subprocess.run(['git', '-C', str(remote), 'rev-parse', '--verify',
+                                                 'refs/heads/' + branch], capture_output=True, text=True)
+                        return None if result.returncode else {'ref': 'refs/heads/' + branch,
+                                                               'object': {'sha': result.stdout.strip()}}
+                    if path == 'git/blobs':
+                        return {'sha': input_git(['hash-object', '-w', '--stdin'], base64.b64decode(value['content']))}
+                    if path == 'git/trees':
+                        env = {**os.environ, 'GIT_INDEX_FILE': str(base / 'api-index')}
+                        input_git(['read-tree', value['base_tree']], env=env)
+                        rows = ''.join((entry['mode'] + ' ' + entry['sha'] if entry['sha']
+                                        else '0 ' + '0' * 40) + '\t' + entry['path'] + '\n' for entry in value['tree'])
+                        input_git(['update-index', '--index-info'], rows.encode(), env=env)
+                        return {'sha': input_git(['write-tree'], env=env)}
+                    if path == 'git/commits':
+                        rows = ['tree ' + value['tree'], *['parent ' + parent for parent in value['parents']]]
+                        for field in ('author', 'committer'):
+                            person = value[field]; date = datetime.fromisoformat(person['date'])
+                            rows.append(f"{field} {person['name']} <{person['email']}> {int(date.timestamp())} {date.strftime('%z')}")
+                        body = ('\n'.join(rows) + '\n\n' + value['message']).encode()
+                        sha = input_git(['hash-object', '-t', 'commit', '-w', '--stdin'], body)
+                        if inner.race:
+                            inner.race = False
+                            previous = git(remote, 'rev-parse', 'codex/v2-dev')
+                            competing = input_git(['commit-tree', git(remote, 'rev-parse', previous + '^{tree}'),
+                                                   '-p', previous], b'Other maintainer\n')
+                            git(remote, 'update-ref', 'refs/heads/codex/v2-dev', competing, previous)
+                        return {'sha': sha}
+                    self.assertIn(path, ('git/refs', 'git/refs/heads/codex/v2-dev'))
+                    inner.writes.append((method, path, value))
+                    if method == 'POST':
+                        self.assertEqual('refs/heads/codex/v2-dev', value['ref'])
+                        git(remote, 'update-ref', value['ref'], value['sha'], '0' * 40)
+                    else:
+                        self.assertIs(value['force'], False)
+                        previous = git(remote, 'rev-parse', 'codex/v2-dev')
+                        git(remote, 'merge-base', '--is-ancestor', previous, value['sha'])
+                        git(remote, 'update-ref', 'refs/heads/codex/v2-dev', value['sha'], previous)
+                    return {}
+
+            worker = LocalAPI(root, config=config, authenticate=False, transport='github-api')
+            worker.synchronize('Prepare API', no_push=True)
+            first = worker.synchronize('Publish API')
+            self.assertTrue(first['pushed'])
+            self.assertEqual(first['commit'], git(remote, 'rev-parse', 'codex/v2-dev'))
+            self.assertEqual(daily, git(remote, 'rev-parse', 'main'))
+            self.assertFalse((worker.checkout / 'docs/internal.md').exists())
+            self.assertFalse((worker.checkout / 'src/old.py').exists())
+            self.assertEqual(b'\x00\xff\x02', (worker.checkout / 'asset.bin').read_bytes())
+            (root / 'README.md').write_text('next development\n', encoding='utf-8')
+            worker.race = True
+            with self.assertRaisesRegex(sync.SyncError, '发生变化'):
+                worker.synchronize('Concurrent API')
+            self.assertEqual(1, len(worker.writes))
+            self.assertEqual(daily, git(remote, 'rev-parse', 'main'))
+
+    def test_development_publication_is_separate_from_main(self):
+        with tempfile.TemporaryDirectory(prefix='workdesk-dev-sync-') as tmp:
+            base = Path(tmp)
+            remote, root = base / 'remote.git', base / 'root'
+            remote.mkdir(); root.mkdir()
+            git(remote, 'init', '--bare', '--initial-branch=main')
+            git(root, 'init', '--initial-branch=main'); identity(root)
+            (root / '.gitignore').write_text('.maintenance/\n', encoding='utf-8')
+            (root / 'README.md').write_text('daily baseline\n', encoding='utf-8')
+            git(root, 'add', '.gitignore', 'README.md'); git(root, 'commit', '-m', 'Daily baseline')
+            git(root, 'push', str(remote), 'main')
+            daily = git(remote, 'rev-parse', 'main')
+            git(root, 'switch', '-c', 'codex/v2-dev')
+            profile_path = base / 'instance.json'
+            user = base / 'user'
+            profile = {'schema': 1, 'channel': 'development', 'instance_id': str(uuid.uuid4()),
+                       'program_root': str(root), 'user_root': str(user), 'development_root': str(base),
+                       'data_root': str(user / 'libraries/main'), 'ui_port': 18766,
+                       'python_executable': sys.executable, 'sync_branch': 'codex/v2-dev'}
+            profile_path.write_text(json.dumps(profile), encoding='utf-8')
+            git(root, 'config', '--local', 'workdesk.channel', 'development')
+            git(root, 'config', '--local', 'workdesk.instanceConfig', str(profile_path))
+            config = {'repository': str(remote), 'branch': 'main',
+                      'files': ['README.md'], 'trees': []}
+            (root / 'README.md').write_text('development candidate\n', encoding='utf-8')
+            (root / 'docs').mkdir()
+            (root / 'docs/internal.md').write_text('internal development design\n', encoding='utf-8')
+            source_before = git(root, 'rev-parse', 'HEAD')
+            with self.assertRaisesRegex(sync.SyncError, '通道不一致'):
+                sync.Synchronizer(root, config=config, authenticate=False, branch='main')
+            profile['sync_branch'] = 'main'
+            profile_path.write_text(json.dumps(profile), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'codex/v2-dev'):
+                sync.Synchronizer(root, config=config, authenticate=False)
+            profile['sync_branch'] = 'codex/v2-dev'
+            profile_path.write_text(json.dumps(profile), encoding='utf-8')
+            self.assertEqual(source_before, git(root, 'rev-parse', 'HEAD'))
+
+            # Explicit account references take precedence over inherited tokens.
+            auth = base / 'auth'
+            (auth / 'tools/gh/bin').mkdir(parents=True)
+            (auth / 'tools/gh/bin/gh.exe').write_text('not executed', encoding='utf-8')
+            (auth / 'gh-config').mkdir()
+            profile['auth_root'] = str(auth)
+            profile_path.write_text(json.dumps(profile), encoding='utf-8')
+            overrides = ('GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN')
+            with mock.patch('os.environ', {**os.environ, **{name: 'synthetic-test-token' for name in overrides}}):
+                authenticated = sync.Synchronizer(root, config={**config,
+                    'repository': 'https://github.com/example/workdesk-sync-test.git'})
+                self.assertTrue(all(name not in authenticated.environment for name in overrides))
+                self.assertEqual(str(auth / 'gh-config'), authenticated.environment['GH_CONFIG_DIR'])
+
+            worker = sync.Synchronizer(root, config=config, authenticate=False)
+            preview = worker.synchronize('Preview development', check=True)
+            self.assertEqual('development', preview['channel'])
+            self.assertEqual('codex/v2-dev', preview['public_branch'])
+            self.assertFalse(worker.checkout.exists())
+            pending = worker.synchronize('Prepare development', no_push=True)
+            self.assertTrue(pending['pending_push'])
+            self.assertEqual(daily, git(remote, 'rev-parse', 'main'))
+            absent = subprocess.run(['git', '-C', str(remote), 'show-ref', '--verify', '--quiet',
+                                     'refs/heads/codex/v2-dev']).returncode
+            self.assertEqual(1, absent)
+            self.assertFalse((worker.checkout / 'docs/internal.md').exists())
+            self.assertIn('docs/internal.md', git(root, 'ls-files'))
+            first = worker.synchronize('Publish development')
+            self.assertTrue(first['pushed'])
+            self.assertEqual(first['commit'], git(remote, 'rev-parse', 'codex/v2-dev'))
+            self.assertEqual(daily, git(remote, 'rev-parse', 'main'))
+
+            # A new filtered checkout finds the existing development branch.
+            reopened = sync.Synchronizer(root, checkout=root / '.maintenance/reopened',
+                                         config=config, authenticate=False)
+            again = reopened.synchronize('No new development')
+            self.assertFalse(again['pushed'])
+            self.assertFalse(again['local_saved'])
+            self.assertEqual(first['commit'], again['commit'])
+            self.assertEqual(daily, git(remote, 'rev-parse', 'main'))
+
     def test_temporary_remote_full_chain(self):
         with tempfile.TemporaryDirectory(prefix='workdesk-sync-') as tmp:
             base = Path(tmp)

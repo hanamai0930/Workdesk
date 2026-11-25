@@ -99,7 +99,10 @@ async function route(){
     try{connectionStatus=await api('v1/connection-setup');}catch{/* Render the setup retry page. */}
     if(request!==routeRequest)return;
     connectionRequired=!connectionStatus?.ready;
-    if(connectionRequired&&!localResources){
+    // A registered development instance can inspect local projects/settings
+    // without importing a daily login. Dispatch still validates real credentials.
+    const developmentLocal=document.documentElement.dataset.workdeskChannel==='development'&&!!connectionStatus;
+    if(connectionRequired&&!localResources&&!developmentLocal){
       document.body.dataset.connectionRequired='true';
       if(requested!=='connect')connectionReturn=requested;
       current='connect';
