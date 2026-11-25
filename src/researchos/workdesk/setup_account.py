@@ -91,6 +91,10 @@ class AccountSetup:
         self._login = None
         self._closed = False
 
+    def active(self):
+        with self._lock:
+            return bool(self._login and self._login.state == 'PENDING')
+
     def _selected_home(self):
         locations = self.s.locations
         refs = locations.credential_references()

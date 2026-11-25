@@ -394,6 +394,7 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
         return {'receipt':receipt,'replayed':not fresh,'command_id':command_id}
 
     def _reload(self,db,payload):
+        if self.account_setup.active():raise ValueError('账号登录仍在等待，请先完成或取消后再停止服务。')
         if self.resources.active():raise ValueError('额度查询仍在途，不能重载。')
         if self.native_controls.active():raise ValueError('原生控制操作仍在途，不能重载。')
         if self.ui_features.chats.api.active():raise ValueError('API聊天仍在途，不能重载。')

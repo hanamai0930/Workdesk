@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from uuid import uuid4
+from types import SimpleNamespace
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from researchos.workdesk.instance import load_profile,configure_environment,validate_locations
@@ -19,6 +20,17 @@ from researchos.workdesk.client import Client
 
 
 class InstanceTests(unittest.TestCase):
+    def test_pending_login_prevents_idle_stop_before_any_state_change(self):
+        from researchos.workdesk.setup_account import AccountSetup
+        from researchos.workdesk.service import Service
+        account=AccountSetup(None)
+        self.assertFalse(account.active())
+        account._login=SimpleNamespace(state='PENDING')
+        self.assertTrue(account.active())
+        with self.assertRaisesRegex(ValueError,'账号登录'):
+            Service._reload(SimpleNamespace(account_setup=account),None,{})
+        account._login.state='CANCELLED'
+        self.assertFalse(account.active())
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory(prefix='workdesk-instance-');self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.repo=self.root/'repo';self.repo.mkdir()

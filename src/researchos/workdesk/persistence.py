@@ -69,6 +69,7 @@ class Persistence:
         'project.relocate.commit':self.relocate_commit}
 
     def idle(self,db):
+        if self.s.account_setup.active():raise ValueError('账号登录仍在等待，请先完成或取消后再备份或恢复。')
         resources=getattr(self.s,'resources',None)
         if resources and resources.active():raise ValueError('额度查询仍在途，请等待结束再切换凭据、备份或恢复。')
         controls=getattr(self.s,'native_controls',None)
