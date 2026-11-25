@@ -70,6 +70,7 @@
     shared:{scripts:['app.js','appearance.js','ui-modules.js','ui-dialogs.js','support-common.js','settings-preferences.js'],styles:['style.css','workbench.css','appearance.css','management-navigation.css','../frontend/modules/conversation-scroll.css'],
       sources:['../index.html','../package.json','../pnpm-lock.yaml','../pnpm-workspace.yaml','../components.json','../tsconfig.json','../vite.config.ts',
         '../frontend/main.tsx','../frontend/bridge.d.ts','../frontend/styles.css','../frontend/lib/utils.ts','../frontend/lib/render.tsx',
+        '../frontend/core/client.ts','../frontend/core/legacy-loader.ts','../frontend/core/workspace.tsx','../frontend/core/workspace.css',
         '../frontend/modules/shell.tsx','../frontend/components/template.tsx','../frontend/lib/format.ts',
         '../frontend/modules/conversation-scroll.tsx',
         '../frontend/components/safe-markdown.tsx','../frontend/components/safe-markdown.css',

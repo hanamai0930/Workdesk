@@ -26,7 +26,7 @@ class Client:
             if type(state['port']) is not int or not 1024<=state['port']<=65535:return None
             if not all(isinstance(state.get(k),str) and len(state[k])==43 for k in ('control','viewer')):return None
             with urlopen('http://127.0.0.1:'+str(state['port'])+'/health',timeout=.7) as response:health=json.load(response)
-            if health.get('app')=='workdesk-control-v1' and health.get('instance')==state['instance'] and health.get('protocol')==1:
+            if health.get('app')=='workdesk-control-v1' and health.get('instance')==state['instance'] and health.get('protocol') in (1,2):
                 from .instance import load_profile
                 profile=load_profile(self.locations.base)
                 if profile and (health.get('profile_id')!=profile['instance_id'] or
@@ -46,6 +46,16 @@ class Client:
                 raise ConnectionError('开发实例正在停止；请从开发启动入口重新打开。')
             state=self.discover()
             if state:return state
+            from .core_runtime import selection, start as start_core
+            if selection(self.locations) is not None:
+                backend=start_core(self.locations,profile)
+                deadline=time.monotonic()+25
+                while time.monotonic()<deadline:
+                    state=self.discover()
+                    if state:return state
+                    if backend.poll() is not None:break
+                    time.sleep(.1)
+                raise ConnectionError('Go核心尚未确认启动；保留诊断，未回落旧核心。')
             env=clean_env();env['PYTHONPATH']=str(self.locations.base/'src')
             executable=self.locations.python
             if os.name=='nt' and executable.with_name('pythonw.exe').exists():executable=executable.with_name('pythonw.exe')

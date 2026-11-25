@@ -36,6 +36,31 @@ def identity(directory):
 
 
 class GitHubSyncTests(unittest.TestCase):
+    def test_go_sources_and_contracts_are_public_but_runtime_and_design_are_not(self):
+        root = Path(__file__).resolve().parents[1]
+        config = json.loads((root / 'tools/github-public-files.json').read_text(encoding='utf-8'))
+        public = sync.PublicFiles(config)
+        for name in ('core/cmd/workdesk-core/main.go', 'core/internal/storage/store.go',
+                     'core/go.mod', 'core/go.sum', 'contracts/core-protocol.json',
+                     'tools/build_core.ps1', 'tests/test_core_bridge.py'):
+            self.assertTrue(public.manages(name), name)
+        for name in ('core/workdesk-core.exe', 'core/runtime/config.json',
+                     'core/auth.json', '.maintenance/private.go',
+                     'docs/WORKDESK_V2_STAGE1_ARCHITECTURE_DESIGN_20261125.md'):
+            self.assertFalse(public.manages(name), name)
+        self.assertTrue({'.go', '.mod', '.sum'} <= sync.TEXT_SUFFIXES)
+        with tempfile.TemporaryDirectory(prefix='workdesk-go-filter-') as temporary:
+            temporary = Path(temporary)
+            (temporary / 'core').mkdir()
+            (temporary / 'core/main.go').write_text('package main\n', encoding='utf-8')
+            self.assertIn('core/main.go', public.collect(temporary))
+            for name in ('main.go', 'go.mod', 'go.sum'):
+                path = temporary / 'core' / name
+                path.write_text('synthetic secret ' + 'ghp_' + 'a' * 36, encoding='utf-8')
+                with self.assertRaisesRegex(sync.SyncError, '疑似凭据'):
+                    public.collect(temporary)
+                path.unlink()
+
     def test_explicit_api_transport_preserves_git_objects_and_rejects_race(self):
         with tempfile.TemporaryDirectory(prefix='workdesk-api-sync-') as tmp:
             base = Path(tmp)

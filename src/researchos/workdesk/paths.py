@@ -236,6 +236,9 @@ def _implementation_content(locations):
 
 def implementation_revision(locations):
     """Read current product code identity without creating a frozen snapshot."""
+    from .core_runtime import expected_implementation
+    selected=expected_implementation(locations)
+    if selected is not None:return selected
     from hashlib import sha256
     manifest={name:sha256(raw).hexdigest() for name,raw in sorted(_implementation_content(locations).items())}
     return sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()
@@ -243,6 +246,11 @@ def implementation_revision(locations):
 
 def freeze_implementation(locations):
     """Freeze only explicitly named code and verify existing snapshots before use."""
+    from .core_runtime import bound_revision, snapshot_matches
+    selected=bound_revision(locations)
+    if selected is not None:
+        if not snapshot_matches(locations,selected):raise ValueError('Go组合执行快照不匹配，拒绝派发。')
+        return selected
     from hashlib import sha256
     content=_implementation_content(locations)
     manifest={name:sha256(raw).hexdigest() for name,raw in sorted(content.items())}
@@ -261,6 +269,9 @@ def freeze_implementation(locations):
 
 
 def implementation_matches(locations, revision):
+    from .core_runtime import bound_revision, snapshot_matches
+    selected=bound_revision(locations)
+    if selected is not None:return selected==revision and snapshot_matches(locations,revision)
     from hashlib import sha256
     from .workspace import io_path
     root=io_path(locations.data/'implementations'/revision)

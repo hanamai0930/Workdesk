@@ -134,6 +134,8 @@ $env:WORKDESK_HOME = Join-Path (Get-Location) '.workdesk-dev'
 
 首次启动打开本地界面，在连接页保存自己的 API Key。新建开发资料默认写入 `.workdesk-dev`，实际位置可在设置中核对，项目原件保存在你选择的文件夹。官网内嵌视图、官方工作端和额度查询所需组件，按[开发说明中的准备步骤](docs/DEVELOPMENT.md#可选的桌面与工作端组件)配置。
 
+`codex/v2-dev` 开发分支同时包含 Go 应用核心。准备官方 Go 工具链后，可在源码根目录运行 `powershell -File tools/build_core.ps1 -GoExecutable "C:\path\to\go.exe"`；也可使用开发根目录 `toolchains/go-toolchain.json` 中登记的工具链。脚本读取 `core/go.mod` 和 `core/go.sum` 构建候选程序，输出位置可通过 `-Output` 指定。构建只生成候选及摘要清单，实例切换和资料格式迁移单独执行。
+
 提交改动前的检查方法见[本地检查](docs/DEVELOPMENT.md#本地检查)，协作方式见[贡献说明](CONTRIBUTING.md)。
 
 ## 文档入口

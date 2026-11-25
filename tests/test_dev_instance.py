@@ -3,12 +3,14 @@ from contextlib import closing, ExitStack
 from hashlib import sha256
 import importlib.util
 import json
+from io import BytesIO
 from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 import uuid
+from urllib.error import HTTPError
 
 
 SPEC = importlib.util.spec_from_file_location('workdesk_dev_instance',
@@ -18,6 +20,17 @@ SPEC.loader.exec_module(dev)
 
 
 class DevelopmentToolsTests(unittest.TestCase):
+    def test_internal_unknown_receipt_is_not_an_explicit_rejection(self):
+        address = 'http://127.0.0.1:12345/api/v1/command'
+        unknown = HTTPError(address, 503, 'Unavailable', {}, BytesIO(b'{"state":"UNKNOWN","no_resend":true}'))
+        with patch.object(dev, 'urlopen', side_effect=unknown):
+            with self.assertRaises(dev.RequestUncertain):
+                dev.request_json(address, payload={'id': str(uuid.uuid4())})
+        rejected = HTTPError(address, 409, 'Conflict', {}, BytesIO(b'{"state":"REJECTED","explicit_rejection":true}'))
+        with patch.object(dev, 'urlopen', side_effect=rejected):
+            with self.assertRaises(dev.RequestRejected):
+                dev.request_json(address, payload={'id': str(uuid.uuid4())})
+
     def profile(self, root):
         user = root / 'user'
         data = user / 'libraries/main'

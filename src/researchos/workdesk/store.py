@@ -21,28 +21,36 @@ def uid(): return str(uuid.uuid4())
 
 
 class Store:
-    def __init__(self, root):
-        self.root = Path(root); self.root.mkdir(parents=True,exist_ok=True)
+    def __init__(self, root, *, offline=False):
+        self.root = Path(root)
         self.path = self.root/'tasks.sqlite3'; self.lock = threading.RLock()
+        from .bridge import manages, binding
+        self.managed = manages(self.root)
+        self.offline_v2 = bool(offline and binding() and not self.managed)
+        if self.offline_v2 and not self.root.resolve().is_relative_to(Path(binding()['data']).resolve().parent):
+            raise ValueError('离线恢复库必须保留在本开发实例的资料库目录中。')
+        self.root.mkdir(parents=True,exist_ok=True)
         # Additive business objects have their own version. Preserve a consistent
         # pre-migration copy of existing data without rewriting execution rows.
-        if self.path.exists():
+        if self.path.exists() and not self.managed:
             with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True)) as prior:
                 has_meta=prior.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone()
                 if has_meta:
                     core=dict(prior.execute('SELECT key,value FROM meta'))
-                    if any(core.get(name,'1')!='1' for name in ('schema','collaboration_schema','persistence_schema')):
+                    if (core.get('schema','1') not in ({'1','2'} if self.offline_v2 else {'1'}) or
+                            any(core.get(name,'1')!='1' for name in ('collaboration_schema','persistence_schema'))):
                         raise ValueError('不支持的后端数据版本；未覆盖或迁移已有库。')
                 version=prior.execute("SELECT value FROM meta WHERE key='work_objects_schema'").fetchone() if has_meta else None
                 if version and version[0]!='1':raise ValueError('不支持的工作对象数据版本。')
                 if not version:
                     folder=self.root/'migrations';folder.mkdir(exist_ok=True)
                     with closing(sqlite3.connect(folder/('pre-work-objects-'+uid()+'.sqlite3'))) as backup:prior.backup(backup)
-        if self.path.exists():
+        if self.path.exists() and not self.managed:
             with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True)) as prior:
                 present=prior.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
                 metadata=dict(prior.execute('SELECT key,value FROM meta')) if present else {}
-                if metadata.get('schema','1')!='1' or metadata.get('collaboration_schema','1')!='1' or metadata.get('persistence_schema','1')!='1':
+                if (metadata.get('schema','1') not in ({'1','2'} if self.offline_v2 else {'1'}) or
+                        metadata.get('collaboration_schema','1')!='1' or metadata.get('persistence_schema','1')!='1'):
                     raise ValueError('不支持的后端数据版本；未覆盖或迁移已有库。')
                 if present and 'persistence_schema' not in metadata:
                     folder=self.root/'migrations';folder.mkdir(exist_ok=True)
@@ -104,8 +112,9 @@ class Store:
             for statement in schema.split(';'):
                 if statement.strip():db.execute(statement)
             prior = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-            if prior and prior[0] != '1': raise ValueError('不支持的后端数据版本；未覆盖已有库。')
-            db.execute("INSERT OR IGNORE INTO meta VALUES('schema','1')")
+            if prior and prior[0] not in ({'1','2'} if self.managed or self.offline_v2 else {'1'}):
+                raise ValueError('不支持的后端数据版本；未覆盖已有库。')
+            db.execute("INSERT OR IGNORE INTO meta VALUES('schema',?)",('2' if self.managed else '1',))
             db.execute("INSERT OR IGNORE INTO meta VALUES('collaboration_schema','1')")
             db.execute("INSERT OR IGNORE INTO meta VALUES('persistence_schema','1')")
             db.execute("INSERT OR IGNORE INTO meta VALUES('store_id',?)",(uid(),))
@@ -113,6 +122,12 @@ class Store:
 
     @contextmanager
     def read(self):
+        if self.managed:
+            from .bridge.database import Connection
+            db = Connection(write=False)
+            try: yield db
+            finally: db.close()
+            return
         db = sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True,timeout=5)
         db.row_factory = sqlite3.Row; db.execute('PRAGMA query_only=ON'); db.execute('PRAGMA trusted_schema=OFF')
         db.execute('BEGIN')
@@ -122,6 +137,17 @@ class Store:
     @contextmanager
     def write(self):
         with self.lock:
+            if self.managed:
+                from .bridge.database import Connection
+                db = Connection(write=True)
+                try:
+                    yield db
+                    if db.in_transaction: db.commit()
+                except Exception:
+                    if db.in_transaction: db.rollback()
+                    raise
+                finally: db.close()
+                return
             db = sqlite3.connect(self.path,timeout=5,isolation_level=None)
             db.row_factory = sqlite3.Row
             try:

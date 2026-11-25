@@ -22,7 +22,8 @@ from . import work_coordinator_handoff_text_rework_contracts as c
 
 def require_service_db(service, db):
     from .service import Service
-    if type(service) is not Service or type(db) is not sqlite3.Connection or not db.in_transaction:
+    from .bridge.database import trusted_connection
+    if type(service) is not Service or not trusted_connection(db) or not db.in_transaction:
         raise ValueError('返工须使用真实Service的实际SQLite事务。')
     main = [row for row in db.execute('PRAGMA database_list') if row[1] == 'main']
     if len(main) != 1 or not main[0][2] or Path(main[0][2]).resolve() != Path(service.store.path).resolve():

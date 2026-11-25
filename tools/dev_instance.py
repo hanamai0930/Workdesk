@@ -58,9 +58,13 @@ def request_json(url, *, token=None, payload=None, origin=None, timeout=3):
     except HTTPError as exc:
         # The request URL may contain an entry token. Never print it.
         try:
-            error = json.loads(exc.read(65536)).get('error', '本地服务拒绝请求。')
+            rejected = json.loads(exc.read(65536))
+            error = rejected.get('error', '本地服务拒绝请求。')
         except (ValueError, AttributeError):
+            rejected = {}
             error = '本地服务拒绝请求。'
+        if exc.code >= 500 or (rejected.get('no_resend') is True and rejected.get('explicit_rejection') is not True):
+            raise RequestUncertain('本地服务回执未知；保留原命令与停止意图，未自动重发。') from None
         raise RequestRejected('HTTP ' + str(exc.code) + '：' + str(error)) from None
     except (OSError, ValueError) as exc:
         raise RequestUncertain('本地服务连接或回执异常（' + type(exc).__name__ + '）；未自动重发。') from None
@@ -78,7 +82,7 @@ def checked_backend(profile):
     if not path.is_file():
         return None
     state = read_json(path)
-    if (state.get('app') != 'workdesk-control-v1' or state.get('protocol') != 1
+    if (state.get('app') != 'workdesk-control-v1' or state.get('protocol') not in (1, 2)
             or type(state.get('port')) is not int or not 1024 <= state['port'] <= 65535
             or type(state.get('pid')) is not int
             or any(not isinstance(state.get(k), str) or len(state[k]) != 43 for k in ('control', 'viewer'))):
@@ -90,7 +94,7 @@ def checked_backend(profile):
         if process_identity(state['pid'])['alive'] is False:
             return None
         raise ValueError('开发服务健康状态未知；保留原进程，未发送控制命令。') from None
-    if (health.get('app') != state['app'] or health.get('protocol') != 1
+    if (health.get('app') != state['app'] or health.get('protocol') != state.get('protocol')
             or health.get('instance') != state.get('instance')
             or not same_path(health.get('program_base'), profile['program_root'])):
         raise ValueError('开发控制服务身份不符；未发送控制命令。')
@@ -177,6 +181,23 @@ def start(profile, *, open_window=True):
         # A fresh, explicit start is the only operation which clears the fence.
         marker.unlink()
     configure_environment(profile['program_root'])
+    from researchos.workdesk.client import Client
+    from researchos.workdesk.core_runtime import selection
+    client = Client(profile['program_root'])
+    if selection(client.locations) is not None:
+        client.ensure()
+        ui = checked_ui(profile)
+        if ui is None:
+            raise ValueError('Go核心已连接但界面身份未核对。')
+        if open_window:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location('workdesk_core_window', Path(profile['program_root']) / 'workdesk-ui/server.py')
+            module = importlib.util.module_from_spec(spec)
+            ui_dir = str(Path(profile['program_root']) / 'workdesk-ui')
+            if ui_dir not in sys.path:sys.path.insert(0,ui_dir)
+            spec.loader.exec_module(module)
+            module.open_window(ui['origin'] + '/s/' + ui['state']['token'] + '/', workdesk=True)
+        return {'state': 'STARTED', 'instance_id': profile['instance_id'], 'ui_origin': ui['origin'], 'core_engine': 'go'}
     python = Path(profile['python_executable'])
     if not python.is_file():
         raise ValueError('登记的开发 Python 解释器不存在。')
@@ -289,7 +310,8 @@ def stop(profile):
                 time.sleep(.1)
             else:
                 raise RequestUncertain('开发控制服务仍未退出；保留停止意图，不关闭未知后台。')
-        if ui:
+        if ui and not (backend and ui['state']['pid'] == backend['state']['pid']
+                       and backend['state'].get('core_engine') == 'go'):
             request_json(ui['origin'] + '/s/' + ui['state']['token'] + '/api/dev-exit',
                          payload={'instance_id': profile['instance_id']}, origin=ui['origin'])
             deadline = time.monotonic() + 5

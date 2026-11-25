@@ -319,6 +319,15 @@ def existing(state, revision):
 
 
 def main():
+    # The original double-click entry remains valid after the explicit Go cutover.
+    from researchos.workdesk.core_runtime import selection
+    connector = BackendClient(BASE)
+    if selection(connector.locations) is not None:
+        connector.ensure()
+        if '--open' in sys.argv:
+            state = json.loads((default_user_root() / 'runtime/ui/instance-core.json').read_text(encoding='utf-8'))
+            open_window('http://127.0.0.1:' + str(state['port']) + '/s/' + state['token'] + '/', workdesk=True)
+        return
     parser = argparse.ArgumentParser()
     parser.add_argument('--open', action='store_true')
     parser.add_argument('--port', type=int, default=None)

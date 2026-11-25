@@ -37,6 +37,29 @@ def safe_name(name):
     return path.as_posix()
 
 
+def core_tool_assets(db):
+    """Relative file versions remain valid when a verified library is staged elsewhere."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_tool_jobs'").fetchone():
+        return {}
+    required={}
+    for row in db.execute("SELECT id,data FROM core_tool_jobs WHERE state IN ('COMPLETED','FAILED','CANCELLED')"):
+        value=json.loads(row[1]);identity=row[0]
+        try:uuid.UUID(identity)
+        except (ValueError,TypeError,AttributeError):raise ValueError('工具成果运行身份无效。') from None
+        if value.get('id')!=identity:raise ValueError('工具成果记录身份不一致。')
+        for artifact in [*(value.get('artifacts') or []), *(value.get('logs') or [])]:
+            name=safe_name(artifact.get('relative_path'))
+            if not name.startswith('results/'):raise ValueError('工具成果未保存在资料库成果目录。')
+            size=artifact.get('bytes');fingerprint=artifact.get('sha256')
+            if (type(size) is not int or not 0<=size<=ORDINARY_FILE_LIMIT or
+                    not isinstance(fingerprint,str) or not re.fullmatch('[a-f0-9]{64}',fingerprint)):
+                raise ValueError('工具成果版本不支持。')
+            expected={'bytes':size,'sha256':fingerprint}
+            if name in required and required[name]!=expected:raise ValueError('工具成果文件有冲突版本。')
+            required[name]=expected
+    return required
+
+
 def location_fence(base,data,pointer=None):
     """Under the OS owner lock, reconcile a switch intent without replaying work."""
     data=Path(data);marker=data/'retired-target.json'
@@ -77,6 +100,10 @@ class Persistence:
         features=getattr(self.s,'ui_features',None)
         if features and features.chats.api.active():raise ValueError('API聊天仍在途，请先停止或等待结束，再切换凭据或保存位置。')
         if any(w['thread'].is_alive() for w in self.s.workers.values()):raise ValueError('仍有专属执行线程，先停止并核对，再快照/恢复/移动。')
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_tool_jobs'").fetchone():
+            blocked=('QUEUED','RUNNING','STOP_REQUESTED','ORPHANED_UNKNOWN','SEND_UNKNOWN','STOP_UNKNOWN','PAUSED')
+            if db.execute('SELECT 1 FROM core_tool_jobs WHERE state IN ('+','.join('?' for _ in blocked)+') LIMIT 1',blocked).fetchone():
+                raise ValueError('本地工具仍在途、暂停或状态待核对，先处理原运行再备份或恢复。')
         rows=db.execute('SELECT id,state FROM attempts a WHERE state IN ('+','.join('?' for _ in ACTIVE|UNKNOWN)+') AND started=(SELECT MAX(started) FROM attempts WHERE task_id=a.task_id)',tuple(ACTIVE|UNKNOWN)).fetchall()
         if rows or self.store.usage(db=db)['unknown_requests']:raise ValueError('存在在途/未知状态，先对账；不通过恢复替代旧执行。')
         latest=db.execute('SELECT * FROM attempts a WHERE started=(SELECT MAX(started) FROM attempts WHERE task_id=a.task_id)').fetchall()
@@ -108,11 +135,23 @@ class Persistence:
             for image in result.get('prepared_pdf_images',[]):names.add(base+'prepared-files/'+workspace.relative(image['file']))
         from .library_assets import required_assets
         names.update(required_assets(db,asset_root=self.s.locations.data))
+        names.update(core_tool_assets(db))
         implementations=set()
         for row in db.execute("SELECT payload FROM events WHERE kind='execution_reserved'"):
             revision=json.loads(row[0]).get('implementation_revision')
             if revision:implementations.add(revision)
         implementations.add(self.s.implementation)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_tool_jobs'").fetchone():
+            unversioned=False
+            for row in db.execute('SELECT data FROM core_tool_jobs'):
+                revision=json.loads(row[0]).get('implementation_revision')
+                if revision:implementations.add(revision)
+                else:unversioned=True
+            if unversioned:
+                # Early internal development probes predate the version field.
+                # Preserve their existing candidates instead of inventing provenance.
+                for folder in (self.s.locations.data/'implementations').iterdir():
+                    if folder.is_dir() and workspace.io_path(folder/'manifest.json').is_file():implementations.add(folder.name)
         for revision in implementations:
             if not isinstance(revision,str) or not re.fullmatch('[a-f0-9]{64}',revision):raise ValueError('实现引用不是合法冻结指纹。')
             base='implementations/'+revision+'/';manifest=json.loads(workspace.io_path(self.s.locations.data/base/'manifest.json').read_text(encoding='utf-8'))
@@ -147,9 +186,13 @@ class Persistence:
         def progress(*unused):
             if time.monotonic()>=deadline:raise TimeoutError('本地备份等待/复制超过时限，保留失败记录，未切换数据。')
         try:
-            source=sqlite3.connect(self.store.path,timeout=.05);target=sqlite3.connect(state/'tasks.sqlite3')
-            try:source.backup(target,pages=256,sleep=.01,progress=progress)
-            finally:source.close();target.close()
+            if self.store.managed:
+                from .bridge import call
+                call('db.backup',{'target':str(state/'tasks.sqlite3')})
+            else:
+                source=sqlite3.connect(self.store.path,timeout=.05);target=sqlite3.connect(state/'tasks.sqlite3')
+                try:source.backup(target,pages=256,sleep=.01,progress=progress)
+                finally:source.close();target.close()
             names=self.files(db)
             if len(names)>20000:raise ValueError('快照文件数超过有界上限。')
             for name in ['tasks.sqlite3',*names]:
@@ -195,6 +238,8 @@ class Persistence:
         from .library_assets import required_assets
         for name,expected in required_assets(db,asset_root=asset_root).items():
             if name not in manifest or any(manifest[name].get(k)!=v for k,v in expected.items()):raise ValueError('快照缺少成果或能力文件的准确版本。')
+        for name,expected in core_tool_assets(db).items():
+            if manifest.get(name)!=expected:raise ValueError('快照缺少Go工具成果或版本不一致。')
         required={}
         for row in db.execute('SELECT id,spec FROM tasks'):
             spec=json.loads(row[1]);prefix='tasks/'+row[0]+'/'
@@ -227,7 +272,8 @@ class Persistence:
             if any(secret in raw for secret in secrets):raise ValueError('快照包含指定凭据，拒绝导入。')
         with closing(sqlite3.connect('file:'+quote(str(workspace.io_path(root/'state/tasks.sqlite3')))+'?mode=ro',uri=True)) as source:
             if source.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('快照数据库损坏。')
-            if source.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0]!='1':raise ValueError('不支持的快照数据库版本。')
+            versions={'1','2'} if self.store.managed else {'1'}
+            if source.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] not in versions:raise ValueError('不支持的快照数据库版本。')
             if source.execute("SELECT 1 FROM sqlite_master WHERE type IN ('trigger','view') OR upper(sql) LIKE 'CREATE VIRTUAL TABLE%' LIMIT 1").fetchone():raise ValueError('状态快照不能包含触发器、视图或虚拟表。')
             for table,columns in [('tasks',['id','project_id']),('attempts',['id','task_id']),('projects',['id'])]:
                 for row in source.execute('SELECT '+','.join(columns)+' FROM '+table):
@@ -259,7 +305,7 @@ class Persistence:
             raw=workspace.io_path(workspace.plain(root/'state'/name,root/'state')).read_bytes()
             if len(raw)!=item['bytes'] or sha256(raw).hexdigest()!=item['sha256']:raise ValueError('快照在复制前发生变化，暂存不激活。')
             path=workspace.io_path(target/name);path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
-        restored=Store(target)
+        restored=Store(target,offline=True)
         with restored.write() as connection:
             self.c.put(connection,'backup',{'id':package['id'],'root':str(root),'manifest_hash':package['manifest_hash'],'created':package['created'],'state':'READY'})
             from .library_assets import rebind_catalog
@@ -329,7 +375,7 @@ class Persistence:
         activation={'state':'TARGET_PREPARED','source':str(self.s.locations.data),'restore_id':restore['id'],
                     'activation_id':self.s.command_identity,'before_db_sha256':restore['db_sha256'],'no_dispatch':True}
         atomic_json(journal,activation)
-        restored=Store(target);debts={}
+        restored=Store(target,offline=True);debts={}
         result={'restore_id':restore['id'],'state':'ACTIVATED','new_data':str(target),'retire_service':True,
                 'budget_not_reset':True,'grants_revoked':True,'no_model_dispatch':True}
         with restored.write() as connection:

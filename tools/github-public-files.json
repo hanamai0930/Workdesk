@@ -9,6 +9,8 @@
     ".gitignore",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
+    "core/go.mod",
+    "core/go.sum",
     "GitHub同步.cmd",
     "LICENSE",
     "README.md",
@@ -37,6 +39,8 @@
     "tests/test_chat_api.py",
     "tests/test_chat_basics.py",
     "tests/test_connection.py",
+    "tests/test_core_bridge.py",
+    "tests/test_core_runtime.py",
     "tests/test_cooperation_conversation.py",
     "tests/test_desktop_window.py",
     "tests/test_desktop_host_identity.py",
@@ -49,6 +53,12 @@
     "tools/DeepSeekRuntimeLauncher.cs",
     "tools/build_deepseek_runtime.ps1",
     "tools/build_desktop.ps1",
+    "tools/build_core.ps1",
+    "tools/check_core_client.cjs",
+    "tools/check_core_ui.cjs",
+    "tools/check_core_chain.py",
+    "tools/check_core_performance.py",
+    "tools/stage1_control.py",
     "tools/check_development_project_default.cjs",
     "tools/check_development_instance.cjs",
     "tools/dev_instance.py",
@@ -81,6 +91,14 @@
     "workdesk-ui/vite.config.ts"
   ],
   "trees": [
+    {
+      "path": "core",
+      "suffixes": [".go"]
+    },
+    {
+      "path": "contracts",
+      "suffixes": [".json"]
+    },
     {
       "path": "src/researchos",
       "suffixes": [

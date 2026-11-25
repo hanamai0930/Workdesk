@@ -39,7 +39,8 @@ class Profiles:
     @contextmanager
     def transaction(self,db):
         """Read metadata through this command's real transaction, without caching."""
-        if (type(db) is not sqlite3.Connection or not db.in_transaction or
+        from .bridge.database import trusted_connection
+        if (not trusted_connection(db) or not db.in_transaction or
                 self._transaction_db.get() is not None):
             raise ValueError('模型配置读取须绑定本次唯一真实事务。')
         main=[r for r in db.execute('PRAGMA database_list') if r[1]=='main']

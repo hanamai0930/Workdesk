@@ -22,21 +22,24 @@ from .task_execution import TaskExecutionCommands
 class Service(TaskDraftCommands, TaskExecutionCommands):
     def __init__(self, locations=None, engine=None):
         self.locations=locations or Locations.resolve();self.store=Store(self.locations.data)
+        from .bridge import binding
+        core = binding() if self.store.managed else None
         self.profiles=Profiles(self.locations,self.store);self.engine=engine
         from .independent import IndependentWork
         self.independent=IndependentWork(self)
-        self.implementation=freeze_implementation(self.locations)
-        self.instance=uid();self.workers={};self.lock=threading.RLock()
+        self.implementation=core['implementation'] if core else freeze_implementation(self.locations)
+        self.instance=core['process_instance'] if core else uid();self.workers={};self.lock=threading.RLock()
         # Startup is reconciliation only: no model call and no automatic replay.
-        with self.store.write() as db:
-            rows=db.execute('SELECT * FROM attempts WHERE state IN ('+','.join('?' for _ in ACTIVE)+')',tuple(ACTIVE)).fetchall()
-            for row in rows:
-                db.execute("UPDATE attempts SET state='ORPHANED_UNKNOWN' WHERE id=?",(row['id'],))
-                db.execute("UPDATE tasks SET state='ORPHANED_UNKNOWN',updated=? WHERE id=?",(time.time(),row['task_id']))
-                self.store.event(row['task_id'],row['id'],'restart_requires_reconciliation',
-                                 {'old_worker_instance':row['worker_instance'],'no_resend':True},db)
-                db.execute("UPDATE approvals SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state='PENDING'",(time.time(),row['id']))
-                db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),row['id']))
+        if not core:
+            with self.store.write() as db:
+                rows=db.execute('SELECT * FROM attempts WHERE state IN ('+','.join('?' for _ in ACTIVE)+')',tuple(ACTIVE)).fetchall()
+                for row in rows:
+                    db.execute("UPDATE attempts SET state='ORPHANED_UNKNOWN' WHERE id=?",(row['id'],))
+                    db.execute("UPDATE tasks SET state='ORPHANED_UNKNOWN',updated=? WHERE id=?",(time.time(),row['task_id']))
+                    self.store.event(row['task_id'],row['id'],'restart_requires_reconciliation',
+                                     {'old_worker_instance':row['worker_instance'],'no_resend':True},db)
+                    db.execute("UPDATE approvals SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state='PENDING'",(time.time(),row['id']))
+                    db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),row['id']))
         self.collaboration=Collaboration(self)
         from .work_records import WorkRecords
         self.work_records=WorkRecords(self)
@@ -122,16 +125,17 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
         self.work_file_handoff_applications=WorkFileHandoffRevisionApplications(self)
         from .work_coordinator_handoff_post_round_v3_restart import reconcile
         self.post_round_v3_restart=reconcile(self)
-        self.collaboration.start_scheduler()
+        if not core:self.collaboration.start_scheduler()
 
     def health(self):
-        return {'protocol':PROTOCOL_VERSION,'instance':self.instance,'service':'Workdesk task control',
+        return {'protocol':2 if self.store.managed else PROTOCOL_VERSION,'instance':self.instance,'service':'Workdesk task control',
                 'implementation':self.implementation,'program_base':str(self.locations.base),
                 'display_independent':True,'active_owned_workers':sum(w['thread'].is_alive() for w in self.workers.values())+self.ui_features.chats.api.active(),
                 'active_api_chats':self.ui_features.chats.api.active(),'active_native_controls':self.native_controls.active(),
                 'active_quota_readers':self.resources.active(),
                 'post_round_v3_restart':self.post_round_v3_restart,
-                'os_isolation':'NOT_PROVIDED','network_isolation_for_check_commands':'UNKNOWN'}
+                'os_isolation':'NOT_PROVIDED','network_isolation_for_check_commands':'UNKNOWN',
+                **({'core_engine':'go','legacy_bridge_protocol':1} if self.store.managed else {})}
 
     def catalog(self,view=None):
         if view not in (None,'workbench'):raise ValueError('未知工作区目录视图。')

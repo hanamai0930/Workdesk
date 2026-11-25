@@ -1,31 +1,28 @@
 import { ArrowLeft, ArrowRight, PanelLeft, House, LibraryBig, ClipboardList, Plug, MoreHorizontal, Search, SquarePen, Plus, Save, Bell, Settings, CircleHelp, Gauge, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Usage } from './settings-usage';
 import { formatMoney } from '../lib/format';
+import { coreClient, type InstanceIdentity } from '../core/client';
 
 const quotaNumber=new Intl.NumberFormat('zh-CN');
 const quotaTime=new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Shanghai'});
 
-type InstanceIdentity={
-  schema:number;channel:string;instance_id:string;process_instance:string;
-  program_root:string;user_root:string;data_root:string;
-  source_revision:string;source_dirty:boolean;implementation_revision:string;protocol:number;
-};
+const CoreWorkspace = lazy(() => import('../core/workspace'));
 
 function DevelopmentIdentity(){
   const development=document.documentElement.dataset.workdeskChannel==='development';
   const [instance,setInstance]=useState<InstanceIdentity|null>(null);
   const [failed,setFailed]=useState(false);
   const [revision,reload]=useState(0);
+  const [open,setOpen]=useState(false);
   const panel=useRef<HTMLDialogElement>(null);
   useEffect(()=>{
     if(!development)return;
     const controller=new AbortController();
     setFailed(false);
-    fetch('api/v1/instance',{signal:controller.signal,cache:'no-store'})
-      .then(response=>{if(!response.ok)throw Error();return response.json() as Promise<InstanceIdentity>;})
+    coreClient.loadIdentity(controller.signal)
       .then(result=>{
         if(result.schema!==1||result.channel!=='development'||typeof result.program_root!=='string')throw Error();
         if(!controller.signal.aborted)setInstance(result);
@@ -40,19 +37,22 @@ function DevelopmentIdentity(){
     ['源码版本',instance.source_revision+(instance.source_dirty?' · 含未提交修改':'')],
     ['实例身份',instance.instance_id],['当前服务',instance.process_instance],
     ['运行实现',instance.implementation_revision],['控制协议',String(instance.protocol)],
+    ...(instance.core_engine?[['应用核心',instance.core_engine==='go'?'Go':instance.core_engine],['资料格式',String(instance.storage_schema??'—')]]:[]),
   ]:[];
   return <>
     <section className="wd-instance-bar" data-instance-channel="development" aria-label="开发实例">
       <Button type="button" variant="outline" size="xs" aria-haspopup={instance?'dialog':undefined} aria-controls={instance?'wd-instance-dialog':undefined}
-        disabled={!instance&&!failed} onClick={()=>instance?panel.current?.showModal():reload(value=>value+1)}>开发<span className="wd-instance-more">{instance?' · 实例详情':failed?' · 重试核对':''}</span></Button>
+        disabled={!instance&&!failed} onClick={()=>{if(instance){setOpen(true);panel.current?.showModal();}else reload(value=>value+1);}}>开发<span className="wd-instance-more">{instance?' · 实例详情':failed?' · 重试核对':''}</span></Button>
       {instance?<span className="wd-instance-location" title={instance.program_root}>开发源码目录：{instance.program_root}</span>:
         <span role="status">{failed?'暂未核对实例身份，点击开发重试。':'正在核对开发实例…'}</span>}
     </section>
-    {instance&&<dialog id="wd-instance-dialog" ref={panel} className="wd-instance-dialog" aria-labelledby="wd-instance-title">
+    {instance&&<dialog id="wd-instance-dialog" ref={panel} className="wd-instance-dialog" aria-labelledby="wd-instance-title" onClose={()=>setOpen(false)}>
       <header><h2 id="wd-instance-title">Workdesk · 开发实例</h2>
         <Button type="button" variant="ghost" size="sm" onClick={()=>panel.current?.close()} aria-label="关闭实例详情">关闭</Button>
       </header>
-      <dl>{fields.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value||'尚未取得'}</dd></div>)}</dl>
+      <dl>{fields.slice(0,3).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value||'尚未取得'}</dd></div>)}</dl>
+      <details><summary>版本与服务身份</summary><dl>{fields.slice(3).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value||'尚未取得'}</dd></div>)}</dl></details>
+      {open&&<Suspense fallback={<p role="status">正在打开本地工具与记录…</p>}><CoreWorkspace instance={instance}/></Suspense>}
       <p>任务执行位置以任务中选择的工作目录为准。</p>
     </dialog>}
   </>;

@@ -13,6 +13,8 @@ import { SettingsPage } from './modules/settings';
 import { ManagementPage } from './modules/management';
 import { ConnectionSetup } from './modules/connection-setup';
 import { renderInto, renderTemplate, ownHost, release } from './lib/render';
+import { coreClient } from './core/client';
+import { loadLegacyModule, loadScript } from './core/legacy-loader';
 import './styles.css';
 import './modules/work-projects.css';
 import './modules/work-files.css';
@@ -39,6 +41,8 @@ import '../static/chat-detail-data.js';
 import '../static/work-detail-data.js';
 
 document.body.dataset.connectionRequired = 'checking';
+window.WorkdeskCore = coreClient;
+window.WorkdeskLegacyModules = loadLegacyModule;
 const WorkItemFilePreview = lazy(() => import('./modules/work-item-file-preview'));
 const ResourceSpace = lazy(async () => ({ default: (await import('./modules/resource-space')).ResourceSpace }));
 registerMarkdownElement();
@@ -85,11 +89,8 @@ for(const id of ['wb-sidebar','wb-header-actions','wb-dialog','wb-overlays','sea
 // Retain audited command/state controllers as classic scripts during the view
 // migration. They cannot render before React and the module boundary exist.
 async function boot() {
-  for(const name of ['ui-modules','app','appearance','ui-dialogs','support-common','cooperation-toolbar','files-page','records-page','results-page','monitor-page','projects-page','work-items-page','planning-page','libraries-page','settings-preferences','settings','management','control','collaboration','operations','extensions','chat-api','chat','chat-records','work-records','workbench-features','independent-work','workbench']) {
-    await new Promise<void>((resolve,reject)=>{
-      const script=document.createElement('script');script.src=name+'.js';
-      script.onload=()=>resolve();script.onerror=()=>reject(new Error('界面模块读取失败：'+name));document.head.append(script);
-    });
+  for(const name of ['ui-modules','app','appearance','ui-dialogs','support-common','settings-preferences','chat-api','chat','chat-records','work-records','workbench-features','independent-work','workbench']) {
+    await loadScript(name);
   }
   await window.WorkdeskLegacy.startPreferences();
   window.WorkdeskLegacy.start();

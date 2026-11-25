@@ -40,7 +40,7 @@ function theme(value){
 }
 systemTheme.addEventListener('change',()=>{if(state.themePreference==='system')theme('system');});
 function toast(message){const el=$('#toast');el.textContent=message;el.dataset.placement=!location.hash||/^#(?:chat|work|home)(?:\/|$)|^#work-items\/(?:conversation|view-chat|view-work)\//.test(location.hash)?'conversation':'page';el.classList.add('visible');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.remove('visible'),message==='已复制。'?2200:4500);}
-async function api(route,options){const response=await fetch('api/'+route,{cache:'no-store',credentials:'omit',...options});const data=await response.json();if(!response.ok){const error=new Error(data.error||'记录读取失败，状态未知。');error.status=response.status;throw error;}return data;}
+async function api(route,options){if(window.WorkdeskCore)return window.WorkdeskCore.request(route,options);const response=await fetch('api/'+route,{cache:'no-store',credentials:'omit',...options});const data=await response.json();if(!response.ok){const error=new Error(data.error||'记录读取失败，状态未知。');error.status=response.status;throw error;}return data;}
 const provider=id=>state.data.providers.find(p=>p.id===id)||{name:id,mark:'?',engine:'未知',auth:'未知'};
 const mark=id=>`<span class="provider-mark ${esc(id)}">${esc(provider(id).mark)}</span>`;
 const badge=row=>`<span class="status ${esc(row.tone)}" title="${esc(row.state_label)}；后台当前存活未知">${esc(row.display_status||row.state_label)}</span>`;
@@ -117,6 +117,11 @@ async function route(){
     }
   }
   const parts=current.split('/');
+  try{await window.WorkdeskLegacyModules?.(parts[0]);}catch(error){
+    if(request===routeRequest){window.WorkdeskModules.activate(parts[0]);$('#main').innerHTML=errorPage(error.message);}
+    return;
+  }
+  if(request!==routeRequest)return;
   document.body.dataset.activePage=parts[0];
   window.WorkdeskSupport?.renderManagementNavigation(location.hash);
   window.WorkdeskSettingsPreferences?.remember(current);

@@ -33,7 +33,7 @@ TOKEN_PATTERN = re.compile(
     rb'|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)')
 TEXT_SUFFIXES = {'.py', '.mjs', '.tsx', '.ts', '.css', '.js', '.html', '.json',
                  '.cs', '.manifest', '.md', '.svg', '.toml', '.yaml', '.yml',
-                 '.ps1', '.cmd', '.iss', '.txt'}
+                 '.ps1', '.cmd', '.iss', '.txt', '.go', '.mod', '.sum'}
 
 
 def safe_name(name: str) -> bool:

@@ -64,10 +64,11 @@
     if(el.dataset.settings==='reload'){
       stateSettings.busy=true;
       try{
-        if(!await window.WorkdeskDialogs.confirm({title:'重载空闲控制服务',message:'仅重载空闲服务以载入当前代码。活动任务或扩展会阻止重载，不会终止任务或发送模型请求。'}))return;
+        const identity=await api('v1/instance'),goCore=identity.core_engine==='go';
+        if(!await window.WorkdeskDialogs.confirm({title:goCore?'停止后重新打开开发工作台':'重载空闲控制服务',message:goCore?'本次会停止开发工作台，请随后从“Workdesk-开发”入口重新打开。原记录保留；活动任务或扩展会阻止停止。':'仅重载空闲服务以载入当前代码。活动任务或扩展会阻止重载，不会终止任务或发送模型请求。'}))return;
         const id=crypto.randomUUID();stateSettings.pending=id;
         await api('v1/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,kind:'service.reload',payload:{}})});
-        toast('已登记重载。刷新状态可连接当前版本。');
+        toast(goCore?'已停止开发工作台，请从“Workdesk-开发”入口重新打开。':'已登记重载。刷新状态可连接当前版本。');
       }catch(error){toast(error.message+'；未自动重发，请查询操作回执。');}
       finally{stateSettings.busy=false;if(isSettings())paint();}
     }
