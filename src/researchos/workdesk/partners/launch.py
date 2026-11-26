@@ -53,6 +53,14 @@ def _environment(home: Path, entry: list[str]):
     return env
 
 
+def _module_uri(name: str):
+    helper_path = str(Path(__file__).with_name(name).resolve())
+    # Frozen Windows snapshots use the extended-length path prefix.
+    if helper_path.startswith("\\\\?\\"):
+        helper_path = helper_path[4:]
+    return Path(helper_path).as_uri()
+
+
 def build_launch(config: dict) -> LaunchSpec:
     partner, mode, route = config["partner_id"], config.get("mode", "run"), config.get("route", "account")
     if partner not in PARTNERS or mode not in {"run", "login", "inspect"} or route not in {"api", "account"}:
@@ -73,6 +81,16 @@ def build_launch(config: dict) -> LaunchSpec:
     (home / native_folder).mkdir(parents=True, exist_ok=True)
     env = _environment(home, entry)
     options = config.get("options") or {}
+    auth_options = config.get("auth_options") or {}
+    allowed_auth = {"codex": {"auth_method": {"chatgpt", "chatgptDeviceCode"}},
+                   "claude": {"auth_method": {"claudeai", "console", "sso"}},
+                   "grok": {"auth_method": {"device_auth", "oauth"}},
+                   "qwen": {"auth_method": {"qwen-oauth"}},
+                   "gemini": {"auth_method": {"oauth-personal"}},
+                   "kimi": {"region": {"mainland-cn", "global"}},
+                   "glm": {"provider": {"bigmodel", "zai"}}, "deepseek": {}}[partner]
+    if not isinstance(auth_options, dict) or any(k not in allowed_auth or v not in allowed_auth[k] for k, v in auth_options.items()):
+        raise ValueError("Unsupported official account option")
     # Optional shell selection is an explicit dependency reference, not PATH discovery.
     if options.get("shell_path"):
         shell = Path(options["shell_path"])
@@ -146,34 +164,32 @@ def build_launch(config: dict) -> LaunchSpec:
                 "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []},
                 "defaultModelSelection": {"providerId": "workdesk_deepseek", "modelId": model}}})
     if partner == "codex":
-        if mode == "login":
-            argv += ["login", "--device-auth"]
-            protocol = "login-text"
-        else:
-            argv += ["app-server", "--listen", "stdio://"]
-            protocol = "codex"
+        argv += ["app-server", "--listen", "stdio://"]
+        protocol = "codex"
     elif partner == "deepseek":
         if mode == "login":
             argv += ["--profile", "web", "--host", "127.0.0.1", "--port", "0", "--no-open"]
+            overlay = home / ".dsh/.workdesk/login-state.patch.yml"
+            _write(overlay, json.dumps([{"insert": [{"id": "workdesk-login-state", "name": _module_uri("deepseek_login.mjs")}]}]))
+            argv += ["--patch", str(overlay)]
+            env["WORKDESK_AUTH_EVENT_TOKEN"] = uuid.uuid4().hex
             protocol = "login-text"
             limitations.append("Official Web profile provides account login; process stays open until explicitly stopped")
         else:
             argv += ["--profile", "sdk"]
             protocol = "deepseek"
             if route == "account":
-                helper = Path(__file__).with_name("deepseek_account.mjs").resolve()
-                helper_path = str(helper)
-                if helper_path.startswith("\\\\?\\"):
-                    helper_path = helper_path[4:]
                 overlay = home / ".dsh/.workdesk/account-selection.patch.yml"
                 _write(overlay, json.dumps([{"insert": [{"id": "workdesk-account-selection",
-                    "name": Path(helper_path).as_uri()}]}]))
+                    "name": _module_uri("deepseek_account.mjs")}]}]))
                 argv += ["--patch", str(overlay)]
     elif partner == "qwen":
         argv += ["--acp"]
     elif partner == "claude":
         if mode == "login":
             argv += ["auth", "login"]
+            if auth_options.get("auth_method"):
+                argv += ["--" + auth_options["auth_method"]]
             protocol = "login-text"
         elif mode == "inspect":
             argv += ["auth", "status", "--json"]
@@ -187,7 +203,7 @@ def build_launch(config: dict) -> LaunchSpec:
             protocol = "claude"
     elif partner == "grok":
         if mode == "login":
-            argv += ["login", "--device-auth"]
+            argv += ["login", "--oauth" if auth_options.get("auth_method") == "oauth" else "--device-auth"]
             protocol = "login-text"
         else:
             argv += ["agent", "--no-leader", "stdio"]
@@ -200,12 +216,14 @@ def build_launch(config: dict) -> LaunchSpec:
             # The installed server advertises terminal-auth: run its exact
             # official login command, rather than inventing authenticate RPC.
             argv += ["login"]
+            if auth_options.get("region"):
+                argv += ["--region", auth_options["region"]]
             protocol = "login-text"
         else:
             argv += ["acp"]
     elif partner == "glm":
         if mode == "login":
-            argv += ["login", "--no-browser"]
+            argv += ["login", auth_options.get("provider", "zai"), "--no-browser", "--json"]
             protocol = "login-text"
         else:
             argv += ["app-server"]

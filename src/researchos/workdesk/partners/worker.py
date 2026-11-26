@@ -6,6 +6,7 @@ All subprocesses remain descendants; closing a stream is not remote-stop proof.
 from __future__ import annotations
 
 import json
+import codecs
 import io
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ import uuid
 
 from .gateway import RunGateway
 from .launch import build_launch
+from .auth import LoginOutput, redact_login_chunk
 
 MAX_FRAME = 32 * 1024 * 1024
 SENSITIVE_NAMES = {"api_key", "apikey", "access_token", "refresh_token", "authorization", "auth_token", "id_token", "password", "credential", "credentials"}
@@ -133,6 +135,14 @@ class PartnerWorker:
         self.session_revision = None
         self.deepseek_account_selection = None
         self.deepseek_account_ready = threading.Event()
+        self.login_output = None
+        self.login_lock = threading.RLock()
+        self.login_request = None
+        self.login_output_suppressed = False
+        self.stderr_thread = None
+        self.codex_login_id = None
+        self.codex_login_receipt = None
+        self.codex_login_ready = threading.Event()
 
     def clean(self, value):
         if isinstance(value, dict):
@@ -163,29 +173,96 @@ class PartnerWorker:
             self.config.update(gateway_url=self.gateway.url, gateway_token=self.gateway.token)
             self.secret_values.append(self.gateway.token)
         self.spec = build_launch(self.config)
-        self.process = subprocess.Popen(self.spec.argv, cwd=self.spec.cwd, env=self.spec.env, stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if self.config.get("mode") == "login":
+            event_token = self.spec.env.get("WORKDESK_AUTH_EVENT_TOKEN", "")
+            self.login_output = LoginOutput(self.config["partner_id"], event_token)
+        if os.name == "nt" and self.config["partner_id"] == "claude" and self.config.get("mode") == "login":
+            from .terminal import WindowsLoginProcess
+            self.process = WindowsLoginProcess(self.spec.argv, cwd=self.spec.cwd, env=self.spec.env)
+        else:
+            self.process = subprocess.Popen(self.spec.argv, cwd=self.spec.cwd, env=self.spec.env, stdin=subprocess.PIPE,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.emit(type="event", kind="native_process_started", pid=self.process.pid, native_protocol=self.spec.protocol,
                   limitations=self.spec.limitations, route=self.spec.route)
-        threading.Thread(target=self._stderr, daemon=True).start()
+        self.stderr_thread = threading.Thread(target=self._stderr, daemon=True)
+        self.stderr_thread.start()
         self.run_thread = threading.Thread(target=self._run, daemon=True)
         self.run_thread.start()
 
     def _stderr(self):
+        if self.config.get("mode") == "login":
+            self._read_login_pipe(self.process.stderr, "stderr")
+            return
         while self.process and self.process.stderr:
             block = self.process.stderr.readline(MAX_FRAME + 1)
             if not block:
                 break
             text = block.decode("utf8", "replace").rstrip()
             self.emit(type="event", kind="native_diagnostic", message=text)
-            if self.config.get("mode") == "login":
-                self._login_text(text)
 
     def _login_text(self, text):
-        urls = re.findall(r"https?://[^\s\x1b<>]+", text)
-        if urls:
-            self.emit(type="login", login_url=urls[0].rstrip(".,)"), instructions=text)
+        with self.login_lock:
+            if self.login_output is None:
+                self.login_output = LoginOutput(self.config["partner_id"])
+            self._login_events(self.login_output.feed(self.clean(text), "stderr"))
+
+    def _auth_status(self, state, verification, **extra):
+        fields = {"auth_state": state, "verification": verification, "model_requests": 0, **extra}
+        if state in {"AUTHENTICATED", "UNAUTHENTICATED"}:
+            fields.update(authenticated=state == "AUTHENTICATED", fact_scope="OFFICIAL_ACCOUNT_RECEIPT")
+        self.emit(type="auth_status", **fields)
+        return fields
+
+    def _read_login_pipe(self, stream, source):
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        pending = ""
+        while True:
+            block = stream.read1(4096) if hasattr(stream, "read1") else stream.read(4096)
+            if not block:
+                with self.login_lock:
+                    if self.login_output_suppressed:
+                        return
+                    text, _ = redact_login_chunk(decoder.decode(b"", final=True), pending, self.secret_values, final=True)
+                    self._login_events(self.login_output.feed(text, source, final=True))
+                return
+            # Register returned authorization codes before writing stdin; any
+            # native echo is removed before it reaches parsing or persistence.
+            with self.login_lock:
+                if self.login_output_suppressed:
+                    # Terminal wrapping/editing can split a returned code with
+                    # ANSI/CRLF. After submission, drain without parsing any
+                    # terminal content; only official auth status is published.
+                    pending = ""
+                    continue
+                text, pending = redact_login_chunk(decoder.decode(block), pending, self.secret_values)
+                self._login_events(self.login_output.feed(text, source))
+
+    def _login_events(self, events):
+        for event in events:
+            kind = event["kind"]
+            if kind == "account-state":
+                state = event["state"]
+                auth_state = state.get("auth_state")
+                if auth_state in {"AUTHENTICATED", "UNAUTHENTICATED", "UNKNOWN"}:
+                    fields = self._auth_status(auth_state, state.get("verification", "OFFICIAL_DSH_ACCOUNT_STATE"),
+                                               login_phase=state.get("phase"))
+                    if (auth_state == "AUTHENTICATED" and self.config.get("mode") == "login"
+                            and self.config["partner_id"] == "deepseek"
+                            and not self.completed and not self.stop_requested.is_set()):
+                        self.completed = True
+                        self.emit(type="result", **fields)
+                        # The owner may now close this login wrapper (with its
+                        # normal grace period) and release the account for Work.
+                        self.done.set()
+            elif kind == "code-prompt":
+                if self.login_request is None:
+                    self.login_request = "login-code-" + uuid.uuid4().hex
+                    self.emit(type="input", request_id=self.login_request, sensitive=True, input_type="password",
+                              message="在官方页面完成登录后，将页面给出的授权码填到这里", purpose="OFFICIAL_LOGIN_CODE")
+            else:
+                data = {k: v for k, v in event.items() if k != "kind" and v is not None}
+                self.emit(type="login", instructions="在官方页面完成登录授权", **data)
 
     def _run(self):
         try:
@@ -205,33 +282,74 @@ class PartnerWorker:
         except Exception as exc:
             if not self.stop_requested.is_set():
                 self.failed = True
+                if self.config.get("mode") in {"login", "inspect"}:
+                    self._auth_status("UNKNOWN", "OFFICIAL_AUTH_OPERATION_NOT_CONFIRMED")
                 self.emit(type="error", error=str(exc), error_class=type(exc).__name__,
                           receipt_unknown=isinstance(exc, ReceiptUnknown), no_resend=True)
             self.done.set()
 
     def _plain(self):
+        if self.spec.protocol == "login-text":
+            self._read_login_pipe(self.process.stdout, "stdout")
+            code = self.process.wait()
+            if self.stderr_thread:
+                self.stderr_thread.join(timeout=3)
+            if self.stop_requested.is_set() or self.completed:
+                return
+            self.login_request = None
+            if code:
+                message = (None if self.login_output_suppressed else self.login_output.failure) or "Official login command exited with code " + str(code)
+                raise NativeRejected(self.clean(message))
+            partner = self.config["partner_id"]
+            if partner == "claude":
+                fields = self._claude_status()
+            elif self.login_output.success:
+                fields = self._auth_status("AUTHENTICATED", "OFFICIAL_LOGIN_COMMAND_COMPLETION")
+            else:
+                fields = self._auth_status("UNKNOWN", "LOGIN_COMMAND_EXITED_AUTH_NOT_CONFIRMED")
+            self.emit(type="result", **fields)
+            self.completed = True
+            self.done.set()
+            return
         chunks = []
         for raw in self.process.stdout:
             line = raw.decode("utf8", "replace").rstrip()
             chunks.append(line)
-            self._login_text(line)
             self.emit(type="event", kind="official_login_output", message=line)
         code = self.process.wait()
         if self.stop_requested.is_set():
             return
-        if code:
-            raise NativeRejected("Official login/status command exited with code " + str(code))
-        authenticated = False
+        fields = None
         if self.spec.protocol == "auth-status":
             try:
                 data = json.loads("\n".join(chunks))
-                authenticated = data.get("loggedIn") is True or data.get("authenticated") is True
+                fields = self._claude_status_fields(data)
             except ValueError:
                 pass
-        self.emit(type="result", authenticated=authenticated, verification="OFFICIAL_STATUS" if authenticated else "LOGIN_COMMAND_EXITED_AUTH_NOT_CONFIRMED",
-                  text="\n".join(chunks), model_requests=0)
+        if fields is None:
+            if code:
+                raise NativeRejected("Official status command exited with code " + str(code))
+            fields = self._auth_status("UNKNOWN", "OFFICIAL_STATUS_UNRECOGNIZED")
+        self.emit(type="result", **fields)
         self.completed = True
         self.done.set()
+
+    def _claude_status_fields(self, data):
+        value = data.get("loggedIn", data.get("authenticated"))
+        if isinstance(value, bool):
+            return self._auth_status("AUTHENTICATED" if value else "UNAUTHENTICATED", "OFFICIAL_STATUS")
+        return self._auth_status("UNKNOWN", "OFFICIAL_STATUS_UNRECOGNIZED")
+
+    def _claude_status(self):
+        # Same official home, after the login process has exited. No generation.
+        result = subprocess.run(self.config["entry"] + ["auth", "status", "--json"], cwd=self.spec.cwd,
+                                env=self.spec.env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        try:
+            return self._claude_status_fields(json.loads(result.stdout))
+        except (ValueError, TypeError):
+            return self._auth_status("UNKNOWN", "OFFICIAL_STATUS_UNRECOGNIZED")
 
     def _acp(self):
         initialized = self.rpc.request("initialize", {"protocolVersion": 1, "clientInfo": {"name": "workdesk", "version": "2.0"},
@@ -239,13 +357,13 @@ class PartnerWorker:
         methods = initialized.get("authMethods", [])
         self.emit(type="ready", native=initialized, auth_methods=methods)
         if self.config.get("mode") == "inspect":
-            self.emit(type="result", authenticated=initialized.get("authenticated") is True,
-                      verification="OFFICIAL_INITIALIZE_ONLY", model_requests=0, auth_methods=methods)
+            fields = self._auth_status("UNKNOWN", "OFFICIAL_INITIALIZE_ONLY")
+            self.emit(type="result", **fields, auth_methods=methods)
             self.completed = True
             self.done.set()
             return
         if self.config.get("mode") == "login":
-            selected = (self.config.get("options") or {}).get("auth_method")
+            selected = (self.config.get("auth_options") or {}).get("auth_method") or (self.config.get("options") or {}).get("auth_method")
             # Qwen 0.28.4's initialize advertises only openai, while its official
             # authenticate implementation and user docs retain qwen-oauth.
             if not selected and self.spec.partner_id == "qwen":
@@ -275,7 +393,8 @@ class PartnerWorker:
             if selected not in {m["id"] for m in methods} and not reviewed_qwen_oauth:
                 raise NativeRejected("Authentication method not advertised by this official version")
             result = self.rpc.request("authenticate", {"methodId": selected}, timeout=900)
-            self.emit(type="result", authenticated=True, native=result, verification="OFFICIAL_AUTHENTICATE_RECEIPT", model_requests=0)
+            fields = self._auth_status("AUTHENTICATED", "OFFICIAL_AUTHENTICATE_RECEIPT")
+            self.emit(type="result", **fields)
             self.completed = True
             self.done.set()
             return
@@ -306,10 +425,36 @@ class PartnerWorker:
         result = self.rpc.request("initialize", {"clientInfo": {"name": "workdesk", "version": "2.0"}, "capabilities": {"experimentalApi": True}})
         self.rpc.send({"method": "initialized", "params": {}})
         self.emit(type="ready", native=result)
+        if self.config.get("mode") == "login":
+            method = (self.config.get("auth_options") or {}).get("auth_method", "chatgpt")
+            if method not in {"chatgpt", "chatgptDeviceCode"}:
+                raise NativeRejected("Unsupported official Codex account login method")
+            receipt = self.rpc.request("account/login/start", {"type": method})
+            self.codex_login_id = receipt["loginId"]
+            self.emit(type="login", login_url=receipt.get("authUrl", receipt.get("verificationUrl")),
+                      user_code=receipt.get("userCode"), instructions="在官方页面登录并完成授权")
+            while not self.done.wait(.1):
+                if self.codex_login_ready.is_set():
+                    break
+            if self.stop_requested.is_set():
+                return
+            completed = self.codex_login_receipt or {}
+            if completed.get("loginId") != self.codex_login_id or completed.get("success") is not True:
+                raise NativeRejected("Official Codex login was not completed for this login attempt")
+            account = self.rpc.request("account/read", {"refreshToken": False}).get("account")
+            if not isinstance(account, dict) or account.get("type") != "chatgpt":
+                raise NativeRejected("Official Codex account status did not confirm ChatGPT authentication")
+            fields = self._auth_status("AUTHENTICATED", "OFFICIAL_CODEX_LOGIN_COMPLETED_AND_ACCOUNT_READ")
+            self.emit(type="result", **fields)
+            self.completed = True
+            self.done.set()
+            return
         if self.config.get("mode") == "inspect":
             result = self.rpc.request("account/read", {"refreshToken": False})
             account = result.get("account")
-            self.emit(type="result", authenticated=isinstance(account, dict) and account.get("type") == "chatgpt", native=result, model_requests=0)
+            state = "AUTHENTICATED" if isinstance(account, dict) and account.get("type") == "chatgpt" else "UNAUTHENTICATED" if account is None else "UNKNOWN"
+            fields = self._auth_status(state, "OFFICIAL_CODEX_ACCOUNT_READ")
+            self.emit(type="result", **fields)
             self.completed = True
             self.done.set()
             return
@@ -345,10 +490,11 @@ class PartnerWorker:
             facts = self.deepseek_account_selection or {}
             self.emit(type="ready", account_selection=facts)
             if self.config.get("mode") == "inspect":
-                self.emit(type="result", authenticated=facts.get("authenticated") is True,
-                          verification="OFFICIAL_ACCOUNT_CATALOG", state=facts.get("state"),
+                state = "AUTHENTICATED" if facts.get("authenticated") is True else "UNAUTHENTICATED" if facts.get("state") == "NOT_AUTHENTICATED" else "UNKNOWN"
+                fields = self._auth_status(state, facts.get("verification", "OFFICIAL_ACCOUNT_CATALOG"))
+                self.emit(type="result", **fields, state=facts.get("state"),
                           models=facts.get("models", []), selection=facts.get("selection"),
-                          selection_source=facts.get("source"), model_requests=0)
+                          selection_source=facts.get("source"))
                 self.completed = True
                 self.done.set()
                 return
@@ -397,7 +543,8 @@ class PartnerWorker:
             # This is a protocol call, not a probe prompt or token-file inference.
             result = self.rpc.request("session/list", {})
             self.emit(type="ready", native=result)
-            self.emit(type="result", authenticated=False, verification="MODEL_CATALOG_NOT_LOGIN_PROOF", model_requests=0)
+            fields = self._auth_status("UNKNOWN", "MODEL_CATALOG_NOT_LOGIN_PROOF")
+            self.emit(type="result", **fields)
             self.completed = True
             self.done.set()
             return
@@ -428,6 +575,9 @@ class PartnerWorker:
             return
         self.emit(type="event", kind="native_event", native=message)
         method, params = message.get("method", ""), message.get("params") or {}
+        if self.spec.protocol == "codex" and method == "account/login/completed":
+            self.codex_login_receipt = params
+            self.codex_login_ready.set()
         if self.spec.protocol == "deepseek" and method == "workdesk.accountSelection":
             self.deepseek_account_selection = params
             self.deepseek_account_ready.set()
@@ -537,8 +687,11 @@ class PartnerWorker:
             if self.rpc and not self.rpc.closed:
                 if self.spec.protocol == "acp":
                     self.rpc.send({"method": "session/cancel", "params": {"sessionId": self.session_id}})
-                elif self.spec.protocol == "codex" and self.turn_id:
-                    self.rpc.request("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id}, timeout=5)
+                elif self.spec.protocol == "codex":
+                    if self.config.get("mode") == "login" and self.codex_login_id:
+                        self.rpc.request("account/login/cancel", {"loginId": self.codex_login_id}, timeout=5)
+                    elif self.turn_id:
+                        self.rpc.request("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id}, timeout=5)
                 elif self.spec.protocol == "deepseek":
                     self.rpc.request("shutdown", timeout=5)
                 elif self.spec.protocol == "zcode":
@@ -547,6 +700,28 @@ class PartnerWorker:
                     self.rpc.send({"type": "control_request", "request_id": "workdesk-stop", "request": {"subtype": "interrupt"}})
             self.emit(type="stopped", remote_state="STOP_REQUESTED_UNTIL_NATIVE_RECEIPT", local_exit_confirmed=False)
             self.done.set()
+        elif action == "login-input":
+            with self.login_lock:
+                text = command.get("text")
+                if self.config.get("mode") != "login" or not self.login_request or command.get("request_id") != self.login_request:
+                    raise NativeRejected("The sensitive official login request is absent or already resolved")
+                if not isinstance(text, str) or not text.strip() or len(text) > 16384 or any(c in text for c in "\r\n\0"):
+                    raise NativeRejected("Only one official authorization code may be supplied")
+                if self.spec.protocol != "login-text" or self.config["partner_id"] != "claude" or not self.process or self.process.poll() is not None:
+                    raise NativeRejected("This native login process cannot accept an authorization code")
+                self.secret_values.append(text)
+                self.login_request = None
+                self.login_output_suppressed = True
+                stream = self.process.stdin
+            # Synchronous terminal input/output must remain independent. Never
+            # hold the parser lock while a full input pipe waits for the child.
+            try:
+                stream.write((text + "\n").encode("utf-8"))
+                stream.flush()
+            except (OSError, BrokenPipeError) as exc:
+                raise ReceiptUnknown("Official authorization-code receipt is unknown; do not resend") from exc
+        elif action == "input" and self.login_request and command.get("request_id") == self.login_request:
+            raise NativeRejected("Official authorization codes require the dedicated sensitive login input")
         elif action == "input" and command.get("request_id") == "auth-method":
             self.config["selected_auth_method"] = self._auth_method_selection(command.get("auth_method") or command.get("text"))
         elif action in {"approval", "input"} and command.get("request_id"):
@@ -658,9 +833,13 @@ class PartnerWorker:
                     self.process.wait(timeout=3)
         if self.gateway:
             self.gateway.close()
+        if self.process and hasattr(self.process, "close_transport"):
+            self.process.close_transport()
 
 
 def main():
+    # The Go wire is UTF-8 even when Windows' interactive locale is CP936.
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     lock = threading.Lock()
     def emit(data):
         with lock:
@@ -691,7 +870,8 @@ def main():
                         raise ValueError("Control frame exceeds transport limit")
                     worker.control(json.loads(raw))
                 except Exception as exc:
-                    worker.emit(type="event", kind="control_rejected", error=str(exc))
+                    worker.emit(type="event", kind="control_rejected", error=str(exc),
+                                receipt_unknown=isinstance(exc, ReceiptUnknown), no_resend=isinstance(exc, ReceiptUnknown))
         threading.Thread(target=controls, daemon=True).start()
         worker.done.wait()
         return 1 if worker.failed else 0

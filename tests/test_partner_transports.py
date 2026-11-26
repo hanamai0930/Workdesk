@@ -6,6 +6,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import queue
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
@@ -49,8 +51,185 @@ for raw in sys.stdin:
  if 'id' in m:send({'id':m['id'],'result':result})
 '''
 
+LOGIN_FAKE = r'''
+import sys,json,os
+case=sys.argv[1]
+def send(v):print(json.dumps(v),flush=True)
+if case.startswith('claude'):
+ if 'status' in sys.argv:
+  send({'loggedIn':case!='claude-unauthenticated'})
+  sys.exit(1 if case=='claude-unauthenticated' else 0)
+ assert 'login' in sys.argv
+ if os.name=='nt':assert sys.stdin.isatty() and sys.stdout.isatty(), 'Official manual-code flow requires a real terminal'
+ print('Open https://claude.ai/oauth/authorize?state=LOCAL-FIXTURE',flush=True)
+ os.write(2,b'Paste code here > ')
+ value=sys.stdin.readline().rstrip('\n')
+ assert value=='https://claude.ai/oauth-return?code=LOCAL-RETURNED-CODE'
+ cut=len(value)//2
+ os.write(2,value[:cut].encode());os.write(2,value[cut:].encode()+b'\n')
+ print('Login successful',flush=True)
+ sys.exit(0)
+for raw in sys.stdin:
+ m=json.loads(raw);method=m.get('method')
+ if method=='initialize':result={}
+ elif method=='account/login/start':
+  assert m['params']['type']=='chatgpt'
+  result={'type':'chatgpt','loginId':'official-login','authUrl':'https://auth.openai.com/authorize?state=LOCAL'}
+  send({'id':m['id'],'result':result})
+  send({'method':'account/login/completed','params':{'loginId':'official-login','success':True}})
+  continue
+ elif method=='account/read':result={'account':{'type':'chatgpt'}}
+ elif method=='initialized':continue
+ else:raise AssertionError('Login must not generate or start an Agent turn: '+str(method))
+ send({'id':m['id'],'result':result})
+'''
+
 
 class Transports(unittest.TestCase):
+    def _fake_login(self, case, mode='login'):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);fake=root/'login.py';fake.write_text(LOGIN_FAKE,encoding='utf8')
+            partner='claude' if case.startswith('claude') else 'codex'
+            config={'partner_id':partner,'route':'account','mode':mode,'entry':[sys.executable,str(fake),case],
+                    'home':str(root/'home'),'workspace':tmp}
+            env=dict(os.environ);env['PYTHONPATH']=str(Path(__file__).resolve().parents[1]/'src')
+            process=subprocess.Popen([sys.executable,'-B','-m','researchos.workdesk.partners'],env=env,
+                                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            events=[];lines=queue.Queue()
+            def read():
+                for raw in process.stdout:lines.put(json.loads(raw))
+                lines.put(None)
+            reader=threading.Thread(target=read,daemon=True);reader.start()
+            try:
+                process.stdin.write((json.dumps({'action':'start','config':config})+'\n').encode());process.stdin.flush()
+                deadline=time.monotonic()+10
+                while True:
+                    try:event=lines.get(timeout=max(.1,deadline-time.monotonic()))
+                    except queue.Empty:self.fail(('Login fixture did not finish',events,process.poll()))
+                    if event is None:break
+                    events.append(event)
+                    if event.get('sensitive'):
+                        # Ordinary input cannot enter the sensitive channel.
+                        for action in ('input','login-input'):
+                            process.stdin.write((json.dumps({'action':action,'request_id':event['request_id'],
+                                'text':'https://claude.ai/oauth-return?code=LOCAL-RETURNED-CODE'})+'\n').encode())
+                        process.stdin.flush()
+                self.assertEqual(process.wait(timeout=2),0,(events,process.stderr.read()))
+                return events
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=2)
+                process.stdin.close();reader.join(timeout=2);process.stdout.close();process.stderr.close()
+
+    def test_codex_browser_login_uses_official_receipt_without_turn(self):
+        events=self._fake_login('codex')
+        self.assertTrue(next(e for e in events if e['type']=='auth_status')['authenticated'])
+        result=next(e for e in events if e['type']=='result')
+        self.assertEqual(result['fact_scope'],'OFFICIAL_ACCOUNT_RECEIPT')
+
+    def test_deepseek_login_closes_after_official_authentication(self):
+        from researchos.workdesk.partners.worker import PartnerWorker
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);fake=root/'web.py'
+            fake.write_text("""import os,sys,json,pathlib
+print('Official Web: http://127.0.0.1:12345/',flush=True)
+print(json.dumps({'workdeskAuth':1,'event_token':os.environ['WORKDESK_AUTH_EVENT_TOKEN'],
+ 'auth_state':'AUTHENTICATED','verification':'OFFICIAL_DSH_SIGN_IN_SUCCEEDED','phase':'succeeded'}),flush=True)
+sys.stdin.read()
+pathlib.Path(os.environ['DSH_HOME'],'fixture-web-exited.json').write_text(json.dumps({'pid':os.getpid(),'exit_code':7}))
+sys.exit(7)
+""",encoding='utf8')
+            config={'partner_id':'deepseek','route':'account','mode':'login','entry':[sys.executable,str(fake)],
+                    'home':str(root/'home'),'workspace':tmp}
+            env=dict(os.environ);env['PYTHONPATH']=str(Path(__file__).resolve().parents[1]/'src')
+            process=subprocess.Popen([sys.executable,'-B','-m','researchos.workdesk.partners'],env=env,
+                                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            lines=queue.Queue();events=[]
+            def read():
+                for raw in process.stdout:lines.put(json.loads(raw))
+                lines.put(None)
+            reader=threading.Thread(target=read,daemon=True);reader.start()
+            try:
+                process.stdin.write((json.dumps({'action':'start','config':config})+'\n').encode());process.stdin.flush()
+                while True:
+                    event=lines.get(timeout=6)
+                    if event is None:break
+                    events.append(event)
+                self.assertEqual(process.wait(timeout=2),0,(events,process.stderr.read()))
+                results=[e for e in events if e['type']=='result']
+                self.assertEqual(len(results),1)
+                self.assertTrue(results[0]['authenticated'])
+                self.assertEqual(results[0]['fact_scope'],'OFFICIAL_ACCOUNT_RECEIPT')
+                self.assertFalse([e for e in events if e['type']=='error'])
+                self.assertEqual(json.loads((root/'home/.dsh/fixture-web-exited.json').read_text())['exit_code'],7)
+            finally:
+                if process.poll() is None:process.kill();process.wait(timeout=2)
+                process.stdin.close();reader.join(timeout=2);process.stdout.close();process.stderr.close()
+        # A late authoritative fact may be recorded after a stop intention,
+        # but it cannot manufacture a successful login-attempt completion.
+        events=[];worker=PartnerWorker({'partner_id':'deepseek','mode':'login'},events.append)
+        worker.stop_requested.set()
+        worker._login_events([{'kind':'account-state','state':{'auth_state':'AUTHENTICATED','verification':'OFFICIAL_DSH_SIGN_IN_SUCCEEDED'}}])
+        self.assertTrue(next(e for e in events if e['type']=='auth_status')['authenticated'])
+        self.assertFalse([e for e in events if e['type']=='result'])
+        self.assertFalse(worker.completed)
+
+    def test_claude_unterminated_prompt_sensitive_code_and_status(self):
+        events=self._fake_login('claude')
+        self.assertTrue(any(e.get('sensitive') and e.get('input_type')=='password' for e in events))
+        self.assertTrue(any(e.get('kind')=='control_rejected' for e in events))
+        self.assertTrue(next(e for e in events if e['type']=='result')['authenticated'])
+        self.assertNotIn('LOCAL-RETURNED-CODE',json.dumps(events))
+        unauthenticated=self._fake_login('claude-unauthenticated',mode='inspect')
+        self.assertFalse(next(e for e in unauthenticated if e['type']=='result')['authenticated'])
+
+    def test_login_parser_device_codes_and_strict_completion(self):
+        from researchos.workdesk.partners.auth import LoginOutput, redact_login_chunk
+        parser=LoginOutput('grok')
+        self.assertEqual(parser.feed('To sign in, open https://auth.x.ai/dev'),[])
+        events=parser.feed('ice\nThen enter this code:\nABCD-EFGH\nWaiting for authorization...\n')
+        self.assertTrue(any(e.get('user_code')=='ABCD-EFGH' for e in events))
+        self.assertFalse(parser.success)
+        parser.feed('\x1b[2KSigned in as fixture\n');self.assertTrue(parser.success)
+        parser=LoginOutput('glm');parser.feed('{"status":"ready","credentialsPath":"private"}\n')
+        self.assertTrue(parser.success)
+        parser=LoginOutput('deepseek','private-nonce')
+        self.assertEqual(parser.feed('{"workdeskAuth":1,"event_token":"wrong","auth_state":"AUTHENTICATED"}\n'),[])
+        values=parser.feed('{"workdeskAuth":1,"event_token":"private-nonce","auth_state":"AUTHENTICATED"}\n')
+        self.assertEqual(values[0]['kind'],'account-state')
+        text,pending=redact_login_chunk('echo SECRET','',['SECRET-CODE'])
+        self.assertEqual(text,'echo ')
+        text,pending=redact_login_chunk('-CODE\n',pending,['SECRET-CODE'])
+        self.assertEqual(text,'[REDACTED]\n');self.assertFalse(pending)
+
+    def test_sensitive_login_input_rejects_wrong_ids_and_newlines(self):
+        from researchos.workdesk.partners.worker import PartnerWorker, NativeRejected
+        worker=PartnerWorker({'partner_id':'claude','mode':'login'},lambda _:None)
+        worker.login_request='login-code-fixture'
+        for request,text in [('wrong','code'),('login-code-fixture','a\nb'),('login-code-fixture','a\rb'),('login-code-fixture','a\0b')]:
+            with self.assertRaises(NativeRejected):worker.control({'action':'login-input','request_id':request,'text':text})
+        self.assertEqual(worker.login_request,'login-code-fixture')
+
+    def test_acp_inspection_reports_unknown_without_authentication_claim(self):
+        from researchos.workdesk.partners.worker import PartnerWorker
+        for partner in ('qwen','gemini','grok','kimi'):
+            events=[];worker=PartnerWorker({'partner_id':partner,'mode':'inspect'},events.append)
+            worker.spec=type('Spec',(),{'protocol':'acp','partner_id':partner})()
+            worker.rpc=type('Rpc',(),{'request':lambda _,*args,**kw:{'authMethods':[]}})()
+            worker._acp()
+            result=next(e for e in events if e['type']=='result')
+            self.assertEqual(result['auth_state'],'UNKNOWN');self.assertNotIn('authenticated',result)
+
+    def test_login_launch_uses_native_account_sites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for partner,options,expected in [('codex',{},'app-server'),('deepseek',{},'login-state.patch.yml'),
+                    ('qwen',{},'--acp'),('gemini',{},'--experimental-acp'),('claude',{'auth_method':'claudeai'},'--claudeai'),
+                    ('grok',{'auth_method':'oauth'},'--oauth'),('kimi',{'region':'mainland-cn'},'mainland-cn'),
+                    ('glm',{'provider':'bigmodel'},'bigmodel')]:
+                spec=build_launch({'partner_id':partner,'mode':'login','route':'account','entry':[sys.executable],
+                                  'home':str(Path(tmp)/partner),'workspace':tmp,'auth_options':options})
+                self.assertIn(expected,' '.join(spec.argv))
+                self.assertNotIn('DEEPSEEK_API_KEY',spec.env)
+                if partner=='glm':self.assertIn('--json',spec.argv)
     def test_gemini_tool_identity_and_rejection(self):
         value = gemini_request({'contents': [
             {'role': 'model', 'parts': [{'functionCall': {'id': 'first', 'name': 'read', 'args': {'path': 'a'}}},

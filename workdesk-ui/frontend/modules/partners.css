@@ -1,5 +1,17 @@
 @scope ([data-ui-module="settings"]) {
   .wd-partners { display:grid; gap:16px; min-width:0; }
+  .wd-partners-endpoint { width:min(100%,420px); }
+  .wd-partners-toolbar { align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .wd-partners-account-status,.wd-partners-api-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .wd-partners-api-form,.wd-partners-management-body { display:grid; gap:14px; min-width:0; }
+  .wd-partners-auth-input,.wd-partners-add-account { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:end; }
+  .wd-partners-secondary,.wd-partners-management { font-size:13px; min-width:0; }
+  .wd-partners-secondary summary,.wd-partners-management summary { cursor:pointer; color:var(--wk-muted); }
+  .wd-partners-secondary[open]>summary,.wd-partners-management[open]>summary { margin-bottom:14px; }
+  .wd-partners-management { padding:14px 16px; border:1px solid var(--wk-line); border-radius:10px; }
+  .wd-partners-login-link { display:inline-flex; align-items:center; gap:6px; color:var(--wk-action); text-decoration:underline; justify-self:start; }
+  .wd-partners-device-code { margin:0; font-size:14px; }
+  .wd-partners-operation { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .wd-partners .wd-settings-section-header { margin:0; }
   .wd-partners-note,.wd-partners-empty { margin:0; color:var(--wk-muted); font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
   .wd-partners-picker { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }

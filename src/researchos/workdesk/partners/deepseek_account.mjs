@@ -2,6 +2,8 @@
 // or generation request is created. The official SDK and Agent loop stay intact.
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
+import {readFileSync} from 'node:fs';
+import {dirname, join} from 'node:path';
 
 export const inject = ['llm', 'profileContext'];
 
@@ -14,9 +16,19 @@ export function apply(ctx) {
         // readiness cannot wait on itself. All official providers settle first.
         await ctx.get('loader')?.await();
         if (disposed) return;
-        const state = await ctx.get('deepseekAccount')?.getState();
+        const account = ctx.get('deepseekAccount');
+        const state = await account?.getState();
         if (state?.status !== 'credential-stored') {
           publish({state:'NOT_AUTHENTICATED', authenticated:false, models:[], selection:null});
+          return;
+        }
+        const require = createRequire(ctx.profileContext.installAnchor);
+        const modulePath = require.resolve('@deepseek-ai/dsh-deepseek-account');
+        const version = JSON.parse(readFileSync(join(dirname(modulePath), '..', 'package.json'), 'utf8')).version;
+        const profile = await account.getProfile({version, locale:'zh-CN', timezoneOffsetSeconds:-new Date().getTimezoneOffset()*60});
+        if (profile?.status !== 'ready') {
+          publish({state:'ACCOUNT_VERIFICATION_UNKNOWN', models:[], selection:null,
+                   verification:'OFFICIAL_DSH_PROFILE_UNCONFIRMED'});
           return;
         }
         const models = (await ctx.llm.listModels('deepseek-account')).map(model => ({
@@ -24,11 +36,10 @@ export function apply(ctx) {
           ...(model.description ? {description:model.description} : {}),
         }));
         if (models.length === 0) {
-          publish({state:'NOT_AUTHENTICATED', authenticated:false, models:[], selection:null,
-                   reason:'The official account route advertises no usable models'});
+          publish({state:'ACCOUNT_CATALOG_EMPTY', authenticated:true, models:[], selection:null,
+                   verification:'OFFICIAL_DSH_PROFILE_READY', reason:'The official account route advertises no usable models'});
           return;
         }
-        const require = createRequire(ctx.profileContext.installAnchor);
         const boot = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')).href);
         // Web login saves this profile's default; SDK is a separate profile.
         // Use the vendor's own profile reader/composer, never parse credentials.
@@ -51,6 +62,7 @@ export function apply(ctx) {
         }
         publish({state:source === 'SAVED_ACCOUNT_DEFAULT_NOT_ADVERTISED' ? 'MODEL_SELECTION_REQUIRED' : 'ACCOUNT_CATALOG_AVAILABLE',
                  authenticated:true, models, selection, source,
+                 verification:'OFFICIAL_DSH_PROFILE_READY',
                  profile_source:'profiles/web/cordis.patch.yml#agent-default-model'});
       } catch (error) {
         // Native configuration errors can include secrets. Publish classification

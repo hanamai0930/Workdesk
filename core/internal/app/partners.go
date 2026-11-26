@@ -22,9 +22,10 @@ import (
 // Partner records share the core transaction and receipt ledger. Native history
 // remains native; these objects bind it to this instance/project/version.
 type partnerProcess struct {
-	mu     sync.Mutex
-	input  io.WriteCloser
-	cancel context.CancelFunc
+	mu      sync.Mutex
+	input   io.WriteCloser
+	cancel  context.CancelFunc
+	secrets []string
 }
 
 func (p *partnerProcess) send(v any) error {
@@ -33,7 +34,37 @@ func (p *partnerProcess) send(v any) error {
 	if p.input == nil {
 		return errors.New("原运行输入尚未就绪")
 	}
+	if frame, ok := v.(map[string]any); ok && str(frame["action"]) == "login-input" {
+		if secret := str(frame["text"]); secret != "" {
+			p.secrets = append(p.secrets, secret)
+		}
+	}
 	return json.NewEncoder(p.input).Encode(v)
+}
+func (p *partnerProcess) redact(text string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, secret := range p.secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	return text
+}
+func (p *partnerProcess) redactValue(value any) any {
+	switch value := value.(type) {
+	case string:
+		return p.redact(value)
+	case map[string]any:
+		for key, item := range value {
+			value[key] = p.redactValue(item)
+		}
+	case []any:
+		for i, item := range value {
+			value[i] = p.redactValue(item)
+		}
+	}
+	return value
 }
 func (a *App) componentManager() *components.Manager {
 	return components.New(filepath.Join(a.Profile.DevelopmentRoot, "components"))
@@ -79,7 +110,163 @@ func putPartner(s *storage.Session, kind string, m map[string]any) error {
 	return e
 }
 func (a *App) savePartner(kind string, m map[string]any) error {
-	return a.write(func(s *storage.Session) error { return putPartner(s, kind, m) })
+	return a.write(func(s *storage.Session) error {
+		if kind == "run" {
+			return a.putPartnerRun(s, m)
+		}
+		return putPartner(s, kind, m)
+	})
+}
+
+func partnerAuthOptions(partner string, value any) (map[string]any, error) {
+	allowed := map[string]map[string][]string{
+		"codex":  {"auth_method": {"chatgpt", "chatgptDeviceCode"}},
+		"qwen":   {"auth_method": {"qwen-oauth"}},
+		"gemini": {"auth_method": {"oauth-personal"}},
+		"claude": {"auth_method": {"claudeai", "console", "sso"}},
+		"grok":   {"auth_method": {"device_auth", "oauth"}},
+		"kimi":   {"region": {"mainland-cn", "global"}},
+		"glm":    {"provider": {"bigmodel", "zai"}},
+	}
+	options, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("官方登录选项须为站点或登录方式")
+	}
+	out := map[string]any{}
+	for key, value := range options {
+		accepted := false
+		for _, option := range allowed[partner][key] {
+			if text, ok := value.(string); ok && text == option {
+				accepted = true
+			}
+		}
+		if !accepted {
+			return nil, errors.New("所选伙伴不支持该官方站点或登录方式")
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+func applyPartnerAuthOptions(account, options map[string]any) {
+	previous, _ := account["auth_options"].(map[string]any)
+	siteKey := ""
+	if account["partner_id"] == "kimi" {
+		siteKey = "region"
+	}
+	if account["partner_id"] == "glm" {
+		siteKey = "provider"
+	}
+	before, after := str(previous[siteKey]), str(options[siteKey])
+	if account["partner_id"] == "glm" {
+		if before == "" {
+			before = "zai"
+		}
+		if after == "" {
+			after = "zai"
+		}
+	}
+	if siteKey != "" && before != after {
+		account["auth_state"], account["state"] = "UNKNOWN", "WAITING_LOGIN"
+		account["authentication_context_changed"] = true
+	}
+	account["auth_options"] = options
+}
+
+// Progress belongs to the original attempt; authentication remains an
+// independently observed official fact, including while a web login stays open.
+func (a *App) putPartnerRun(s *storage.Session, run map[string]any) error {
+	mode := str(run["mode"])
+	if (mode == "login" || mode == "inspect") && str(run["account_id"]) != "" {
+		account, err := partnerObject(s, "account", str(run["account_id"]))
+		if err != nil {
+			return err
+		}
+		if str(account["kind"]) == "official_login" && str(account["partner_id"]) == str(run["partner_id"]) {
+			if mode == "login" && (str(account["login_run_id"]) == "" || account["login_run_id"] == run["id"]) {
+				account["login_run_id"], account["login_release_id"], account["login_state"] = run["id"], run["release_id"], run["state"]
+				account["login_updated"] = now()
+				if str(account["state"]) != "AUTHENTICATED" && str(account["state"]) != "DISCONNECTED" && str(account["auth_state"]) != "UNAUTHENTICATED" {
+					switch str(run["state"]) {
+					case "QUEUED", "RUNNING":
+						account["state"] = "WAITING_LOGIN"
+					case "WAITING_INPUT", "WAITING_APPROVAL":
+						account["state"] = "WAITING_USER"
+					default:
+						account["state"] = "LOGIN_NOT_CONFIRMED"
+					}
+				}
+			} else if mode == "inspect" {
+				account["inspection_run_id"], account["inspection_state"] = run["id"], run["state"]
+			}
+			if err = putPartner(s, "account", account); err != nil {
+				return err
+			}
+		}
+	}
+	return putPartner(s, "run", run)
+}
+
+func (a *App) observePartnerAuth(s *storage.Session, run, event map[string]any) error {
+	if str(run["account_id"]) == "" {
+		return nil
+	}
+	account, err := partnerObject(s, "account", str(run["account_id"]))
+	if err != nil {
+		return err
+	}
+	if str(account["kind"]) != "official_login" || str(account["partner_id"]) != str(run["partner_id"]) {
+		return nil
+	}
+	state := "UNKNOWN"
+	verification, scope := str(event["verification"]), str(event["fact_scope"])
+	if str(event["run_id"]) == str(run["id"]) && str(event["partner_id"]) == str(run["partner_id"]) {
+		if scope == "OFFICIAL_ACCOUNT_RECEIPT" {
+			if str(event["auth_state"]) == "AUTHENTICATED" && event["authenticated"] == true {
+				state = "AUTHENTICATED"
+			}
+			if str(event["auth_state"]) == "UNAUTHENTICATED" && event["authenticated"] == false {
+				state = "UNAUTHENTICATED"
+			}
+		} else if event["authenticated"] == true && (verification == "OFFICIAL_STATUS" || verification == "OFFICIAL_AUTHENTICATE_RECEIPT" || verification == "OFFICIAL_ACCOUNT_CATALOG") {
+			state = "AUTHENTICATED"
+		}
+	}
+	observation := map[string]any{"auth_state": state, "run_id": run["id"], "release_id": run["release_id"], "at": now(), "verification": verification, "fact_scope": scope}
+	account["auth_observation"], run["auth_observation"] = observation, observation
+	if state != "UNKNOWN" && str(account["state"]) != "DISCONNECTED" {
+		account["auth_state"], run["auth_state"] = state, state
+		if state == "AUTHENTICATED" {
+			account["state"], account["authenticated_run"], account["authenticated_at"], account["authenticated_release_id"] = state, run["id"], now(), run["release_id"]
+			account["authenticated_options"] = run["auth_options"]
+			delete(account, "authentication_context_changed")
+		} else {
+			account["state"] = "LOGIN_REQUIRED"
+		}
+	} else if str(account["auth_state"]) == "" {
+		account["auth_state"] = "UNKNOWN"
+	}
+	return putPartner(s, "account", account)
+}
+
+func (a *App) currentAccountLogin(s *storage.Session, accountID, releaseID string) (map[string]any, error) {
+	rows, err := s.Execute(`SELECT data FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.account_id')=? AND json_extract(data,'$.release_id')=? AND json_extract(data,'$.mode')='login' ORDER BY updated DESC`, []any{accountID, releaseID})
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows.Rows {
+		var run map[string]any
+		if err = json.Unmarshal([]byte(str(row[0])), &run); err != nil {
+			return nil, err
+		}
+		a.mu.Lock()
+		active := a.partnerProcesses[str(run["id"])] != nil
+		a.mu.Unlock()
+		if active || (str(run["state"]) == "QUEUED" && run["process_instance"] == a.Process && !terminalPartner(str(run["state"]))) {
+			return run, nil
+		}
+	}
+	return nil, nil
 }
 func terminalPartner(state string) bool {
 	return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "STOPPED_RUNTIME" || state == "FAILED_NO_SEND"
@@ -215,7 +402,12 @@ func (a *App) recoverPartners() error {
 			if !terminalPartner(str(m["state"])) {
 				m["state"] = "ORPHANED_UNKNOWN"
 				m["error"] = "重启后须核对原运行或组件操作；未自动重发"
-				if e = putPartner(s, str(row[0]), m); e != nil {
+				if str(row[0]) == "run" {
+					e = a.putPartnerRun(s, m)
+				} else {
+					e = putPartner(s, str(row[0]), m)
+				}
+				if e != nil {
 					return e
 				}
 			}
@@ -233,6 +425,9 @@ func (a *App) partnersView(path string) (any, error) {
 		rows, e := a.partnerObjects(k)
 		if e != nil {
 			return nil, e
+		}
+		if k == "account" {
+			e = a.decoratePartnerAccounts(rows, nil)
 		}
 		if k == "run" || k == "connection" {
 			accounts, err := a.partnerObjects("account")
@@ -362,7 +557,11 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 	if !uuidPattern.MatchString(id) || !ok {
 		return nil, errors.New("操作须有准确命令ID和对象参数")
 	}
-	raw, e := json.Marshal(p)
+	fingerprintPayload := p
+	if kind == "account.login-input" {
+		fingerprintPayload = map[string]any{"run_id": p["run_id"], "request_id": p["request_id"], "sensitive_input_omitted": true}
+	}
+	raw, e := json.Marshal(fingerprintPayload)
 	if e != nil {
 		return nil, e
 	}
@@ -392,6 +591,15 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				return errors.New("请选择伙伴、账号类型并填写标签")
 			}
 			m := map[string]any{"id": ID(), "partner_id": partner, "label": label, "kind": k, "state": "NOT_CONFIGURED", "created": now()}
+			if options, supplied := p["auth_options"]; supplied {
+				if k != "official_login" {
+					return errors.New("官方登录选项仅用于账号路线")
+				}
+				m["auth_options"], e = partnerAuthOptions(partner, options)
+				if e != nil {
+					return e
+				}
+			}
 			if e = putPartner(s, "account", m); e != nil {
 				return e
 			}
@@ -637,6 +845,19 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if e = releaseEnabled(s, str(release["id"])); e != nil {
 				return e
 			}
+			if kind == "account.inspect" {
+				if _, supplied := p["auth_options"]; supplied {
+					return errors.New("请在官方登录时选择站点，核对沿用原登录设置")
+				}
+				original, err := a.currentAccountLogin(s, str(account["id"]), str(release["id"]))
+				if err != nil {
+					return err
+				}
+				if original != nil {
+					receipt = map[string]any{"run_id": original["id"], "account_id": account["id"], "release_id": release["id"], "state": original["state"], "reused_existing_login": true}
+					break
+				}
+			}
 			if mode == "run" && str(connection["route"]) == "api" && str(account["secret_version"]) == "" {
 				return errors.New("等待 Human 最后输入 DeepSeek API Key，未发送模型请求")
 			}
@@ -645,6 +866,15 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			}
 			if e = a.protectAccount(s, str(account["id"])); e != nil {
 				return e
+			}
+			if kind == "account.login" {
+				if options, supplied := p["auth_options"]; supplied {
+					validated, err := partnerAuthOptions(str(account["partner_id"]), options)
+					if err != nil {
+						return err
+					}
+					applyPartnerAuthOptions(account, validated)
+				}
 			}
 			project := str(p["project_id"])
 			if project == "" {
@@ -658,23 +888,35 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				return errors.New("请选择已登记项目")
 			}
 			run := map[string]any{"id": ID(), "partner_id": account["partner_id"], "account_id": account["id"], "secret_version": account["secret_version"], "connection_id": connection["id"], "connection_revision": connection["revision"], "connection_snapshot": connection, "release_id": release["id"], "release_snapshot": release, "mode": mode, "state": "QUEUED", "project_id": project, "workspace": r.Rows[0][0], "prompt": p["prompt"], "created": now(), "owner_epoch": a.Epoch, "process_instance": a.Process, "implementation_revision": a.Implementation, "data_root": a.Profile.DataRoot}
+			if str(connection["route"]) == "account" {
+				run["auth_options"] = account["auth_options"]
+			}
 			var coreIdentity map[string]any
 			if e = a.Legacy.Call(context.Background(), "partner.process.inspect", map[string]any{"pid": os.Getpid()}, &coreIdentity); e != nil {
 				return e
 			}
 			run["owner_core_identity"] = coreIdentity
 			run["owner_core_pid"] = os.Getpid()
-			if e = putPartner(s, "run", run); e != nil {
+			if mode == "login" {
+				account["login_run_id"], account["login_release_id"] = run["id"], run["release_id"]
+				if e = putPartner(s, "account", account); e != nil {
+					return e
+				}
+			}
+			if e = a.putPartnerRun(s, run); e != nil {
 				return e
 			}
 			receipt = map[string]any{"run_id": run["id"], "account_id": account["id"], "state": "QUEUED"}
 			after = func() { go a.runPartner(run) }
-		case "partner.stop", "partner.input", "partner.approve":
+		case "partner.stop", "partner.input", "partner.approve", "account.login-input":
 			run, e := partnerObject(s, "run", str(p["run_id"]))
 			if e != nil {
 				return e
 			}
 			rid := str(run["id"])
+			if kind == "account.login-input" && (str(run["mode"]) != "login" || run["stop_requested"] == true || terminalPartner(str(run["state"])) || str(p["text"]) == "" || len(str(p["text"])) > 16384 || strings.ContainsAny(str(p["text"]), "\r\n\x00")) {
+				return errors.New("登录回填须对应当前未停止的官方登录请求")
+			}
 			a.mu.Lock()
 			proc := a.partnerProcesses[rid]
 			a.mu.Unlock()
@@ -682,7 +924,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				if kind == "partner.stop" && str(run["state"]) == "QUEUED" {
 					run["state"] = "CANCELLED"
 					run["stop_requested"] = true
-					if e = putPartner(s, "run", run); e != nil {
+					if e = a.putPartnerRun(s, run); e != nil {
 						return e
 					}
 					receipt = map[string]any{"run_id": rid, "state": "CANCELLED"}
@@ -705,6 +947,12 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 						if str(q["kind"]) != want {
 							return errors.New("原生请求类型不符")
 						}
+						if kind == "account.login-input" && q["sensitive"] != true {
+							return errors.New("此请求不接受敏感登录回填")
+						}
+						if kind != "account.login-input" && q["sensitive"] == true {
+							return errors.New("敏感登录内容须使用专用回填入口")
+						}
 						found = true
 					} else {
 						remaining = append(remaining, item)
@@ -719,14 +967,16 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				run["pending_requests"] = remaining
 			}
 			action := map[string]any{"action": "input", "text": p["text"], "request_id": p["request_id"]}
-			if kind == "partner.stop" {
+			if kind == "account.login-input" {
+				action["action"] = "login-input"
+			} else if kind == "partner.stop" {
 				action = map[string]any{"action": "stop"}
 				run["state"] = "STOP_REQUESTED"
 				run["stop_requested"] = true
 			} else if kind == "partner.approve" {
 				action = map[string]any{"action": "approval", "request_id": p["request_id"], "decision": p["decision"]}
 			}
-			if e = putPartner(s, "run", run); e != nil {
+			if e = a.putPartnerRun(s, run); e != nil {
 				return e
 			}
 			receipt = map[string]any{"run_id": rid, "state": run["state"]}
@@ -806,7 +1056,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				m["unresolved_requests"] = m["pending_requests"]
 				m["pending_requests"] = []any{}
 			}
-			if e = putPartner(s, "run", m); e != nil {
+			if e = a.putPartnerRun(s, m); e != nil {
 				return e
 			}
 			remote := str(m["remote_state"])
@@ -1005,7 +1255,7 @@ func (a *App) partnerFailure(id string, err error) {
 		}
 		m["state"] = "ORPHANED_UNKNOWN"
 		m["error"] = err.Error()
-		return putPartner(s, "run", m)
+		return a.putPartnerRun(s, m)
 	})
 }
 func (a *App) failPartnerBeforeStart(id string, err error) {
@@ -1019,7 +1269,7 @@ func (a *App) failPartnerBeforeStart(id string, err error) {
 		}
 		m["state"] = "FAILED_NO_SEND"
 		m["error"] = err.Error()
-		return putPartner(s, "run", m)
+		return a.putPartnerRun(s, m)
 	})
 }
 func (a *App) runPartner(run map[string]any) {
@@ -1034,6 +1284,9 @@ func (a *App) runPartner(run map[string]any) {
 	for _, k := range []string{"account_id", "secret_version", "connection_id", "connection_revision", "session_id"} {
 		config[k] = run[k]
 	}
+	if str(connection["route"]) == "account" {
+		config["auth_options"] = run["auth_options"]
+	}
 	key := ""
 	if str(run["mode"]) == "run" && str(connection["route"]) == "api" {
 		var secret map[string]any
@@ -1043,6 +1296,7 @@ func (a *App) runPartner(run map[string]any) {
 		}
 		key = str(secret["key"])
 		config["api_key"] = key
+		proc.secrets = append(proc.secrets, key)
 	}
 	if _, err := a.componentManager().Verify(ctx, str(run["release_id"])); err != nil {
 		a.failPartnerBeforeStart(rid, err)
@@ -1095,7 +1349,7 @@ func (a *App) runPartner(run map[string]any) {
 		a.partnerFailure(rid, e)
 		return
 	}
-	cmd.Stderr = &partnerDiagnostic{a: a, id: rid, key: key}
+	cmd.Stderr = &partnerDiagnostic{a: a, id: rid, process: proc}
 	owner, e := startOwnedCommand(cmd)
 	if e != nil {
 		a.admission.Unlock()
@@ -1121,13 +1375,11 @@ func (a *App) runPartner(run map[string]any) {
 	scanner.Buffer(make([]byte, 65536), 16*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if key != "" {
-			line = strings.ReplaceAll(line, key, "[redacted]")
-		}
 		var event map[string]any
 		if e = json.Unmarshal([]byte(line), &event); e != nil {
 			event = map[string]any{"type": "diagnostic", "text": line}
 		}
+		event = proc.redactValue(event).(map[string]any)
 		if e = a.partnerEvent(rid, event); e != nil {
 			cancel()
 			break
@@ -1162,7 +1414,7 @@ func (a *App) runPartner(run map[string]any) {
 		if !owner.ExitConfirmed() {
 			m["state"] = "STOP_UNKNOWN"
 			m["error"] = "本地子进程树退出尚未核对；保留原运行"
-			return putPartner(s, "run", m)
+			return a.putPartnerRun(s, m)
 		}
 		m["local_exit_confirmed"] = true
 		if m["stop_requested"] == true {
@@ -1192,19 +1444,20 @@ func (a *App) runPartner(run map[string]any) {
 				}
 			}
 		}
-		return putPartner(s, "run", m)
+		return a.putPartnerRun(s, m)
 	})
 }
 
 type partnerDiagnostic struct {
 	a       *App
-	id, key string
+	id      string
+	process *partnerProcess
 }
 
 func (p *partnerDiagnostic) Write(b []byte) (int, error) {
 	text := string(b)
-	if p.key != "" {
-		text = strings.ReplaceAll(text, p.key, "[redacted]")
+	if p.process != nil {
+		text = p.process.redact(text)
 	}
 	if len(text) > 8192 {
 		text = text[len(text)-8192:]
@@ -1218,6 +1471,7 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 		if e != nil {
 			return e
 		}
+		originalState := str(m["state"])
 		raw, e := json.Marshal(event)
 		if e != nil {
 			return e
@@ -1232,6 +1486,11 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 			m["model_selection_source"] = event["selection_source"]
 		}
 		typ := str(event["type"])
+		if typ == "auth_status" || (str(m["mode"]) != "run" && (typ == "result" || typ == "error")) {
+			if e = a.observePartnerAuth(s, m, event); e != nil {
+				return e
+			}
+		}
 		switch typ {
 		case "result":
 			m["state"] = "RESULT_RECEIVED"
@@ -1260,6 +1519,15 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 			m["request_id"] = event["request_id"]
 		case "input":
 			m["state"] = "WAITING_INPUT"
+		case "auth_status":
+			observation, _ := m["auth_observation"].(map[string]any)
+			if str(observation["auth_state"]) == "AUTHENTICATED" && str(m["mode"]) == "login" {
+				m["state"] = "RUNNING"
+				for _, key := range []string{"login_url", "user_code", "instructions", "request_id"} {
+					delete(m, key)
+				}
+				m["pending_requests"] = []any{}
+			}
 		}
 		if typ == "approval" || typ == "input" || (typ == "login" && str(event["request_id"]) != "") {
 			requestID := str(event["request_id"])
@@ -1280,30 +1548,22 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 					if message == nil {
 						message = event["instructions"]
 					}
-					m["pending_requests"] = append(pending, map[string]any{"id": requestID, "kind": requestKind, "message": message, "options": event["options"], "details": event["native"]})
+					m["pending_requests"] = append(pending, map[string]any{"id": requestID, "kind": requestKind, "message": message, "options": event["options"], "details": event["native"], "sensitive": event["sensitive"], "input_type": event["input_type"]})
 				}
 			}
 		}
 		if session := str(event["session_id"]); session != "" {
 			m["session_id"] = session
 		}
-		if str(m["mode"]) != "run" && (typ == "result" || typ == "error") {
-			account, e := partnerObject(s, "account", str(m["account_id"]))
-			if e != nil {
-				return e
-			}
-			if event["authenticated"] == true {
-				account["state"] = "AUTHENTICATED"
-			} else {
-				account["state"] = "LOGIN_NOT_CONFIRMED"
-			}
-			account["inspection"] = event
-			if e = putPartner(s, "account", account); e != nil {
-				return e
+		if str(m["mode"]) != "run" {
+			if terminalPartner(originalState) {
+				m["state"] = originalState
+			} else if m["stop_requested"] == true && typ != "stopped" {
+				m["state"] = "STOP_REQUESTED"
 			}
 		}
 
-		return putPartner(s, "run", m)
+		return a.putPartnerRun(s, m)
 	})
 }
 

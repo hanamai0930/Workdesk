@@ -9,7 +9,7 @@ import (
 // Read decoration keeps both management and work views on the same run IDs.
 func (a *App) decoratePartnerRuns(runs, accounts []map[string]any) error {
 	if len(runs) == 0 {
-		return nil
+		return a.decoratePartnerAccounts(accounts, nil)
 	}
 	marks := make([]string, len(runs))
 	args := make([]any, len(runs))
@@ -48,12 +48,57 @@ func (a *App) decoratePartnerRuns(runs, accounts []map[string]any) error {
 				continue
 			}
 			run["account_label"] = account["label"]
-			if str(run["mode"]) != "run" {
-				for _, key := range []string{"login_url", "user_code", "instructions"} {
-					if run[key] != nil {
-						account[key] = run[key]
-					}
+		}
+	}
+	return a.decoratePartnerAccounts(accounts, runs)
+}
+
+func (a *App) decoratePartnerAccounts(accounts, runs []map[string]any) error {
+	for _, account := range accounts {
+		for _, key := range []string{"login_url", "user_code", "instructions"} {
+			delete(account, key)
+		}
+		if str(account["kind"]) != "official_login" {
+			continue
+		}
+		var selected map[string]any
+		id := str(account["login_run_id"])
+		for _, run := range runs {
+			if id != "" && run["id"] == id {
+				selected = run
+				break
+			}
+		}
+		if selected == nil {
+			query := `SELECT data FROM core_partner_objects WHERE kind='run' AND id=?`
+			args := []any{id}
+			if id == "" {
+				query = `SELECT data FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.account_id')=? AND json_extract(data,'$.mode')='login' ORDER BY COALESCE(json_extract(data,'$.created'),updated) DESC LIMIT 1`
+				args = []any{account["id"]}
+			}
+			rows, err := a.query(query, args...)
+			if err != nil {
+				return err
+			}
+			if len(rows) == 1 {
+				if err = json.Unmarshal([]byte(str(rows[0]["data"])), &selected); err != nil {
+					return err
 				}
+			}
+		}
+		if selected == nil || str(selected["mode"]) != "login" || selected["account_id"] != account["id"] || selected["partner_id"] != account["partner_id"] {
+			continue
+		}
+		if expected := str(account["login_release_id"]); expected != "" && selected["release_id"] != expected {
+			continue
+		}
+		account["login_run_id"], account["login_state"], account["login_release_id"] = selected["id"], selected["state"], selected["release_id"]
+		if terminalPartner(str(selected["state"])) || selected["stop_requested"] == true || str(selected["auth_state"]) == "AUTHENTICATED" || account["authenticated_run"] == selected["id"] {
+			continue
+		}
+		for _, key := range []string{"login_url", "user_code", "instructions"} {
+			if selected[key] != nil {
+				account[key] = selected[key]
 			}
 		}
 	}

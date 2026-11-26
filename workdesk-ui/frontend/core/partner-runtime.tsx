@@ -4,7 +4,7 @@ import { Textarea } from '../components/ui/textarea';
 import { NativeSelect } from '../components/ui/native-select';
 import { coreClient } from './client';
 
-type PendingRequest = { id: string; kind: string; message?: string; options?: unknown; details?: unknown; native?: unknown; params?: unknown };
+type PendingRequest = { id: string; kind: string; message?: string; options?: unknown; details?: unknown; native?: unknown; params?: unknown; sensitive?: boolean; input_type?: string };
 export type PartnerRun = {
   id: string; partner_id?: string; project_id?: string; workspace?: string; connection_id?: string; state: string; mode?: string;
   model?: string; account_label?: string; output?: string; error?: string; pending_requests?: PendingRequest[];

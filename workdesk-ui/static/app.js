@@ -92,7 +92,9 @@ const chatAccount=status=>['codex','deepseek','qwen'].find(id=>status.chat_accou
 const chatApi=status=>status.api_connections?.deepseek??status.connections.deepseek;
 async function route(){
   const request=++routeRequest;
-  const requested=location.hash.slice(1)||'chat';
+  const originalRequest=location.hash.slice(1)||'chat';
+  const requested=/^connect(?:\/|$)/.test(originalRequest)?'settings/accounts':originalRequest.replace(/^settings\/partners(?=\/|$)/,'settings/accounts');
+  if(requested!==originalRequest)history.replaceState(history.state,'','#'+requested);
   const localResources=/^resources(?:\/|$)/.test(requested);
   let current=requested,connectionStatus=null,connectionRequired=false;
   if(window.WorkdeskReact?.connectionSetup){
@@ -102,11 +104,12 @@ async function route(){
     // A registered development instance can inspect local projects/settings
     // without importing a daily login. Dispatch still validates real credentials.
     const developmentLocal=document.documentElement.dataset.workdeskChannel==='development'&&!!connectionStatus;
-    if(connectionRequired&&!localResources&&!developmentLocal){
+    const partnerAccess=/^settings\/accounts(?:\/|$)|^work\/partners(?:\/|$)/.test(requested);
+    if(connectionRequired&&!localResources&&!developmentLocal&&!partnerAccess){
       document.body.dataset.connectionRequired='true';
       if(requested!=='connect')connectionReturn=requested;
-      current='connect';
-      history.replaceState(history.state,'','#connect');
+      current='settings/accounts';
+      history.replaceState(history.state,'','#settings/accounts');
     }else{
       delete document.body.dataset.connectionRequired;
       if(requested==='connect'&&state.route&&state.route!=='connect')connectionReturn=state.route;

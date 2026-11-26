@@ -27,6 +27,7 @@
     "account.set-key",
     "account.login",
     "account.inspect",
+    "account.login-input",
     "account.disconnect",
     "connection.save",
     "connection.disable",
@@ -58,6 +59,7 @@
     },
     "controls": [
       "input",
+      "login-input",
       "approval",
       "stop"
     ]
@@ -72,5 +74,13 @@
     "accept_received_result": "EXPLICIT; CONFIRMED_LOCAL_EXIT; SAVED_MATCHING_OFFICIAL_NATIVE_TURN; NO_STOP_INTENT; NO_RESEND",
     "close_local_tracking": "EXPLICIT; CONFIRMED_LOCAL_EXIT; REMOTE_OUTCOME_REMAINS_UNKNOWN"
   },
-  "request_intent_count": "OBSERVED_GATEWAY_INTENTS; NOT_BILLING_COUNT"
+  "request_intent_count": "OBSERVED_GATEWAY_INTENTS; NOT_BILLING_COUNT",
+  "official_account_state": {
+    "auth_state": ["AUTHENTICATED", "UNAUTHENTICATED", "UNKNOWN"],
+    "login_attempt": "login_run_id; login_state; login_release_id; SEPARATE_FROM_AUTHENTICATION_FACT",
+    "unknown_observation": "DOES_NOT_REVOKE_EXISTING_AUTHENTICATION",
+    "inspect_active_login": "SAME_ACCOUNT_AND_RELEASE_REUSES_ORIGINAL_LOGIN_RUN; NO_NEW_PROCESS",
+    "login_options": "PARTNER_SPECIFIC_ALLOWLIST; SAVED_AFTER_ADMISSION_AND_FROZEN_WITH_RUN",
+    "sensitive_login_input": "EXACT_PENDING_REQUEST; TRANSIENT_STDIN_ONLY; NO_TEXT_OR_TEXT_DIGEST_IN_LEDGER; NO_ORDINARY_INPUT_FALLBACK"
+  }
 }
