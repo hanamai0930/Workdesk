@@ -326,7 +326,8 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 	}
 	if str(connection["route"]) == "api" {
 		version := str(run["secret_version"])
-		if str(account["kind"]) != "deepseek_api" || version == "" || str(account["secret_version"]) != version {
+		provider := accountAPIProvider(account)
+		if provider == "" || provider != connectionAPIProvider(connection) || version == "" || str(account["secret_version"]) != version {
 			return nil
 		}
 		account["state"] = "VERIFIED"
@@ -334,6 +335,7 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 		account["verified_at"] = now()
 		account["verified_version"] = version
 		account["verified_secret_version"] = version
+		account["verified_api_provider"] = provider
 		if err = putPartner(s, "account", account); err != nil {
 			return err
 		}
@@ -346,7 +348,7 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 	// A prior implementation already verified this exact run and incremented
 	// the connection revision, before recording its credential version. Reuse
 	// that same result only while its saved combination is still unchanged.
-	if !revisionMatches && str(current["state"]) == "VERIFIED" && current["verified_run"] == run["id"] && current["model"] == connection["model"] && current["route"] == connection["route"] {
+	if !revisionMatches && str(current["state"]) == "VERIFIED" && current["verified_run"] == run["id"] && current["model"] == connection["model"] && current["route"] == connection["route"] && (str(current["route"]) != "api" || connectionAPIProvider(current) == connectionAPIProvider(connection)) {
 		left, leftErr := json.Marshal(current["options"])
 		right, rightErr := json.Marshal(connection["options"])
 		revisionMatches = leftErr == nil && rightErr == nil && string(left) == string(right)
@@ -354,11 +356,15 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 	if !revisionMatches || str(current["account_id"]) != str(run["account_id"]) || str(current["partner_id"]) != str(run["partner_id"]) || str(current["release_id"]) != str(run["release_id"]) {
 		return nil
 	}
+	if str(current["route"]) == "api" && connectionAPIProvider(current) != connectionAPIProvider(connection) {
+		return nil
+	}
 	current["state"] = "VERIFIED"
 	current["verified_run"] = run["id"]
 	current["verified_at"] = now()
 	if str(connection["route"]) == "api" {
 		current["verified_secret_version"] = run["secret_version"]
+		current["verified_api_provider"] = connectionAPIProvider(connection)
 	}
 	return putPartner(s, "connection", current)
 }
@@ -416,9 +422,18 @@ func (a *App) recoverPartners() error {
 	})
 }
 func (a *App) partnersView(path string) (any, error) {
+	var apiProviders []map[string]any
+	var catalogHash string
+	if path == "/api/v2/partners" {
+		var err error
+		apiProviders, catalogHash, err = a.partnerAPICatalog()
+		if err != nil {
+			return nil, err
+		}
+	}
 	schema, _ := a.DB.Schema()
 	if schema != "3" {
-		return map[string]any{"partners": components.Catalog(), "components": []any{}, "accounts": []any{}, "connections": []any{}, "operations": []any{}, "runs": []any{}, "migration_required": true}, nil
+		return map[string]any{"partners": components.Catalog(), "api_providers": apiProviders, "api_catalog_sha256": catalogHash, "components": []any{}, "accounts": []any{}, "connections": []any{}, "operations": []any{}, "runs": []any{}, "migration_required": true}, nil
 	}
 	kinds := map[string]string{"/api/v2/accounts": "account", "/api/v2/connections": "connection", "/api/v2/component-operations": "operation", "/api/v2/partner-runs": "run"}
 	if k, ok := kinds[path]; ok {
@@ -486,22 +501,12 @@ func (a *App) partnersView(path string) (any, error) {
 		return nil, e
 	}
 	decoratePartnerConnections(connections, accounts)
+	byProvider := partnerAPIVerification(apiProviders, accounts, connections)
 	verification := "WAITING_HUMAN_KEY"
-	verified := map[string]bool{}
-	for _, account := range accounts {
-		if str(account["kind"]) == "deepseek_api" && account["key_ready"] == true {
-			verification = "PENDING_CHECKS"
-		}
+	if deepseek, ok := byProvider["deepseek"].(map[string]any); ok {
+		verification = str(deepseek["state"])
 	}
-	for _, connection := range connections {
-		if str(connection["route"]) == "api" && str(connection["state"]) == "VERIFIED" {
-			verified[str(connection["partner_id"])] = true
-		}
-	}
-	if len(verified) == len(components.Catalog()) {
-		verification = "VERIFIED"
-	}
-	return map[string]any{"partners": components.Catalog(), "components": visibleReleases, "accounts": accounts, "connections": connections, "operations": operations, "runs": runs, "storage_schema": 3, "api_verification": verification}, nil
+	return map[string]any{"partners": components.Catalog(), "api_providers": apiProviders, "api_catalog_sha256": catalogHash, "api_catalog_source": "FROZEN_IMPLEMENTATION", "components": visibleReleases, "accounts": accounts, "connections": connections, "operations": operations, "runs": runs, "storage_schema": 3, "api_verification": verification, "api_verification_by_provider": byProvider}, nil
 }
 
 func releaseEnabled(s *storage.Session, id string) error {
@@ -587,10 +592,25 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			partner := str(p["partner_id"])
 			k := str(p["kind"])
 			label := strings.TrimSpace(str(p["label"]))
-			if !validPartner(partner) || (k != "official_login" && k != "deepseek_api") || label == "" || len(label) > 120 {
+			if !validPartner(partner) || (k != "official_login" && k != "deepseek_api" && k != "api") || label == "" || len(label) > 120 {
 				return errors.New("请选择伙伴、账号类型并填写标签")
 			}
 			m := map[string]any{"id": ID(), "partner_id": partner, "label": label, "kind": k, "state": "NOT_CONFIGURED", "created": now()}
+			if k == "api" || k == "deepseek_api" {
+				provider := str(p["api_provider"])
+				if k == "deepseek_api" {
+					if provider != "" && provider != "deepseek" {
+						return errors.New("旧 DeepSeek 凭据不能改为其他 API 厂商")
+					}
+					provider = "deepseek"
+				}
+				if _, _, e = a.partnerAPIProvider(provider); e != nil {
+					return e
+				}
+				m["api_provider"] = provider
+			} else if str(p["api_provider"]) != "" {
+				return errors.New("官方账号路线不接受 API 厂商凭据")
+			}
 			if options, supplied := p["auth_options"]; supplied {
 				if k != "official_login" {
 					return errors.New("官方登录选项仅用于账号路线")
@@ -609,23 +629,22 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if e != nil {
 				return e
 			}
-			if str(m["kind"]) != "deepseek_api" {
-				return errors.New("所选账号不是 DeepSeek API 凭据")
+			provider := accountAPIProvider(m)
+			if provider == "" {
+				return errors.New("所选账号不是有效的 API 凭据")
 			}
-			targets := []map[string]any{m}
-			if p["apply_all_api"] == true {
-				rows, e := s.Execute(`SELECT data FROM core_partner_objects WHERE kind='account' AND json_extract(data,'$.kind')='deepseek_api' AND json_extract(data,'$.state')!='DISCONNECTED'`, nil)
-				if e != nil {
-					return e
-				}
-				targets = []map[string]any{}
-				for _, row := range rows.Rows {
-					var target map[string]any
-					if e = json.Unmarshal([]byte(str(row[0])), &target); e != nil {
-						return e
-					}
-					targets = append(targets, target)
-				}
+			if selected := str(p["api_provider"]); selected != "" && selected != provider {
+				return errors.New("API 厂商与本次准确账号不符，未保存凭据")
+			}
+			if _, _, e = a.partnerAPIProvider(provider); e != nil {
+				return e
+			}
+			if m["state"] == "DISCONNECTED" {
+				return errors.New("账号引用已断开")
+			}
+			targets, e := partnerAPICredentialTargets(s, m, p["apply_all_api"] == true)
+			if e != nil {
+				return e
 			}
 			for _, target := range targets {
 				if e = a.protectAccount(s, str(target["id"])); e != nil {
@@ -646,7 +665,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 					return e
 				}
 			}
-			receipt = map[string]any{"account_id": m["id"], "state": "KEY_SAVED_UNVERIFIED", "accounts_updated": len(targets)}
+			receipt = map[string]any{"account_id": m["id"], "api_provider": provider, "state": "KEY_SAVED_UNVERIFIED", "accounts_updated": len(targets)}
 		case "account.disconnect":
 			m, e := partnerObject(s, "account", str(p["account_id"]))
 			if e != nil {
@@ -682,12 +701,11 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if str(account["partner_id"]) != partner {
 				return errors.New("账号引用不属于此伙伴")
 			}
-			want := "official_login"
-			if route == "api" {
-				want = "deepseek_api"
-			}
-			if str(account["kind"]) != want {
+			if (route == "account" && str(account["kind"]) != "official_login") || (route == "api" && accountAPIProvider(account) == "") {
 				return errors.New("账号与连接路线不符")
+			}
+			if account["state"] == "DISCONNECTED" {
+				return errors.New("账号引用已断开")
 			}
 			m := map[string]any{}
 			cid := str(p["id"])
@@ -707,12 +725,16 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			}
 			m["id"] = cid
 			m["model"] = str(p["model"])
-			if route == "api" && m["model"] == "" {
-				m["model"] = "deepseek-flash"
-			}
 			m["driver_provider"] = partner
 			if route == "api" {
-				m["driver_provider"] = "deepseek"
+				m["api_provider"], m["driver_provider"] = p["api_provider"], p["driver_provider"]
+				if e = a.bindPartnerAPI(partner, account, m); e != nil {
+					return e
+				}
+			} else {
+				delete(m, "api_provider")
+				delete(m, "api_provider_snapshot")
+				delete(m, "api_catalog_sha256")
 			}
 			m["state"] = "SAVED_UNVERIFIED"
 			m["release_snapshot"] = release
@@ -842,6 +864,14 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if str(account["state"]) == "DISCONNECTED" {
 				return errors.New("账号引用已断开")
 			}
+			if str(connection["route"]) == "api" {
+				if str(account["partner_id"]) != str(connection["partner_id"]) {
+					return errors.New("账号引用不属于所选工作端")
+				}
+				if e = a.bindPartnerAPI(str(account["partner_id"]), account, connection); e != nil {
+					return e
+				}
+			}
 			if e = releaseEnabled(s, str(release["id"])); e != nil {
 				return e
 			}
@@ -859,7 +889,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				}
 			}
 			if mode == "run" && str(connection["route"]) == "api" && str(account["secret_version"]) == "" {
-				return errors.New("等待 Human 最后输入 DeepSeek API Key，未发送模型请求")
+				return errors.New("等待 Human 输入所选厂商的 API Key，未发送模型请求")
 			}
 			if mode == "run" && strings.TrimSpace(str(p["prompt"])) == "" {
 				return errors.New("请输入本次连接验证任务")
@@ -888,6 +918,10 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				return errors.New("请选择已登记项目")
 			}
 			run := map[string]any{"id": ID(), "partner_id": account["partner_id"], "account_id": account["id"], "secret_version": account["secret_version"], "connection_id": connection["id"], "connection_revision": connection["revision"], "connection_snapshot": connection, "release_id": release["id"], "release_snapshot": release, "mode": mode, "state": "QUEUED", "project_id": project, "workspace": r.Rows[0][0], "prompt": p["prompt"], "created": now(), "owner_epoch": a.Epoch, "process_instance": a.Process, "implementation_revision": a.Implementation, "data_root": a.Profile.DataRoot}
+			if str(connection["route"]) == "api" {
+				run["api_provider"], run["driver_provider"] = connectionAPIProvider(connection), connectionAPIProvider(connection)
+				run["api_provider_snapshot"], run["api_catalog_sha256"] = connection["api_provider_snapshot"], connection["api_catalog_sha256"]
+			}
 			if str(connection["route"]) == "account" {
 				run["auth_options"] = account["auth_options"]
 			}
@@ -1280,7 +1314,14 @@ func (a *App) runPartner(run map[string]any) {
 	defer func() { a.mu.Lock(); delete(a.partnerProcesses, rid); a.mu.Unlock() }()
 	connection, _ := run["connection_snapshot"].(map[string]any)
 	release, _ := run["release_snapshot"].(map[string]any)
-	config := map[string]any{"partner_id": run["partner_id"], "route": connection["route"], "mode": run["mode"], "entry": release["entry"], "home": filepath.Join(a.Profile.UserRoot, "providers", str(run["partner_id"]), "accounts", str(run["account_id"])), "workspace": run["workspace"], "model": connection["model"], "prompt": run["prompt"], "options": connection["options"], "run_id": rid, "instance_id": a.Profile.InstanceID, "owner_epoch": a.Epoch, "base_url": "https://api.deepseek.com"}
+	config := map[string]any{"partner_id": run["partner_id"], "route": connection["route"], "mode": run["mode"], "entry": release["entry"], "home": filepath.Join(a.Profile.UserRoot, "providers", str(run["partner_id"]), "accounts", str(run["account_id"])), "workspace": run["workspace"], "model": connection["model"], "prompt": run["prompt"], "options": connection["options"], "run_id": rid, "instance_id": a.Profile.InstanceID, "owner_epoch": a.Epoch}
+	if str(connection["route"]) == "api" {
+		config["api_provider"], config["driver_provider"] = connectionAPIProvider(connection), connectionAPIProvider(connection)
+		config["api_provider_snapshot"], config["api_catalog_sha256"] = connection["api_provider_snapshot"], connection["api_catalog_sha256"]
+		if provider, ok := connection["api_provider_snapshot"].(map[string]any); ok {
+			config["base_url"] = provider["base_url"]
+		}
+	}
 	for _, k := range []string{"account_id", "secret_version", "connection_id", "connection_revision", "session_id"} {
 		config[k] = run[k]
 	}

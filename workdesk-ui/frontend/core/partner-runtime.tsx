@@ -58,19 +58,20 @@ function NativeEvents({id}: {id: string}) {
   </details>;
 }
 
-export function PartnerRunList({runs,busy,blocked,perform,label}: {runs:PartnerRun[];busy:boolean;blocked:boolean;perform:PartnerPerform;label?:string}) {
-  return <div className="wd-partners-runs">{runs.map(run=><PartnerRunCard key={run.id} {...{run,busy,blocked,perform,label}}/>)}</div>;
+export function PartnerRunList({runs,busy,blocked,perform,label,apiProviders}: {runs:PartnerRun[];busy:boolean;blocked:boolean;perform:PartnerPerform;label?:string;apiProviders?:{id:string;name:string}[]}) {
+  return <div className="wd-partners-runs">{runs.map(run=><PartnerRunCard key={run.id} {...{run,busy,blocked,perform,label,apiProviders}}/>)}</div>;
 }
-function PartnerRunCard({run,busy,blocked,perform,label}: {run:PartnerRun;busy:boolean;blocked:boolean;perform:PartnerPerform;label?:string}) {
+function PartnerRunCard({run,busy,blocked,perform,label,apiProviders}: {run:PartnerRun;busy:boolean;blocked:boolean;perform:PartnerPerform;label?:string;apiProviders?:{id:string;name:string}[]}) {
   const [input,setInput] = useState<Record<string,string>>({}), [closing,setClosing] = useState(false);
   const connection=run.connection_snapshot||{}, version=run.release_snapshot?.version;
   const model=run.model||connection.model, name=label||names[run.partner_id||'']||run.partner_id||'官方工作端';
+  const apiProvider=connection.api_provider||connection.driver_provider||'deepseek',apiName=apiProviders?.find(provider=>provider.id===apiProvider)?.name||apiProvider;
   return <div className="wd-partners-run"><div className="wd-partners-run-heading"><strong>{name}{model?` ＋ ${model}`:''}</strong><span className="wd-partners-state" data-state={run.state}>{partnerStateLabel(run.state)}</span>
     {!terminal(run.state)&&!unknown(run.state)&&<Button variant="outline" className="wd-settings-button" disabled={blocked||run.state==='STOP_REQUESTED'} onClick={()=>void perform('partner.stop',{run_id:run.id},'已提交停止，请等待运行核对结果。')}>停止</Button>}
     {unknown(run.state)&&<Button variant="outline" className="wd-settings-button" disabled={busy} onClick={()=>void perform('partner.reconcile',{run_id:run.id},'已核对原运行的本地退出证据，没有重新发送任务。')}>核对原运行</Button>}
     {unknown(run.state)&&run.result&&Object.keys(run.result).length>0&&<Button variant="outline" className="wd-settings-button" disabled={busy} onClick={()=>void perform('partner.reconcile',{run_id:run.id,resolution:'accept_received_result'},'已核对原有官方结果，没有重新发送任务。')}>核对并接纳原结果</Button>}
   </div>
-  <p className="wd-partners-note">{connection.route==='api'?'驾驶来源：DeepSeek API':'驾驶来源：官方账号'}{run.account_label?` · 账号：${run.account_label}`:''}{version?` · 端版本：${version}`:''}</p>
+  <p className="wd-partners-note">{connection.route==='api'?`API：${apiName}`:'官方账号'}{run.account_label?` · 账号：${run.account_label}`:''}{version?` · 端版本：${version}`:''}</p>
   {(run.project_id||run.workspace)&&<p className="wd-partners-note">项目：{run.project_id} {run.workspace}</p>}
   {run.prompt&&<details><summary>本次工作要求</summary><p className="wd-partners-output">{run.prompt}</p></details>}
   {run.output&&<div className="wd-partners-output">{run.output}</div>}{run.error&&<p className="wd-partners-error">{run.error}</p>}

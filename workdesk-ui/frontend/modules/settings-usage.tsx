@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../components/ui/button';
+import { NativeSelect } from '../components/ui/native-select';
 import { formatMoney } from '../lib/format';
+import type { APIProvider, Partner } from './partners';
 import './settings-usage.css';
 
 type Quota = {
   provider: string;
+  legacy?:boolean;
+  partner_id?:string;api_provider?:string;account_id?:string;account_label?:string;route?:'account'|'api';run_id?:string;
   label: string;
   remaining: number | null;
   unit: string | null;
@@ -24,6 +28,7 @@ type Quota = {
 type QuotaWindow = { duration_minutes: number | null; remaining_percent: number | null; resets_at: number | null };
 export type Usage = {
   quotas: Quota[];
+  partners?:Partner[];api_providers?:APIProvider[];
 };
 
 const count = new Intl.NumberFormat('zh-CN');
@@ -163,12 +168,12 @@ function QwenQuotaDetails({ sources, snapshots, refresh }: {
   </>;
 }
 
-function QuotaRow({ quota, refresh }: { quota: Quota; refresh: () => void }) {
+function QuotaRow({ quota, refresh, partnerName, apiName }: { quota: Quota; refresh: () => void;partnerName?:string;apiName?:string }) {
   const [checking, setChecking] = useState(false);
   const [failed, setFailed] = useState(false);
   const buckets = quota.buckets ?? [], balances = quota.balances ?? [];
   const input = quota.usage?.input_tokens, output = quota.usage?.output_tokens;
-  const recordedTokens = input != null || output != null ? (input ?? 0) + (output ?? 0) : null;
+  const recordedTokens = input != null && output != null ? input + output : null;
   async function check() {
     if (!quota.refresh || checking) return;
     setChecking(true);
@@ -192,6 +197,7 @@ function QuotaRow({ quota, refresh }: { quota: Quota; refresh: () => void }) {
       {quota.refresh && <Button type="button" variant="outline" className="wd-settings-button"
         disabled={checking} onClick={check} aria-label={`刷新 ${quota.label} 额度`}>{checking ? '查询中…' : '刷新'}</Button>}
     </div>
+    {quota.legacy?<small>历史连接额度，未关联当前账号。</small>:quota.partner_id&&<small>{partnerName||quota.partner_id} · {quota.route==='api'?(apiName||quota.api_provider||'未知厂商')+' API':'官方账号'} · {quota.account_label||'账号未记录'}</small>}
     {quota.official_at != null && <small>官方查询 · {quotaDate(quota.official_at)}</small>}
     {(failed || quota.refresh_status === 'FAILED') && <small role="status">
       {quota.official_at != null ? '最近一次刷新失败，显示上次结果。' : '暂时无法查询官方额度。'}</small>}
@@ -212,11 +218,12 @@ function QuotaRow({ quota, refresh }: { quota: Quota; refresh: () => void }) {
     {!balances.length && !buckets.length && quota.remaining != null && <small>
       手工记录 · {count.format(quota.remaining)} {quota.unit}{quota.manual_at ? ' · ' + quotaDate(quota.manual_at) : ''}
     </small>}
-    {quota.provider === 'qwen' ? <QwenQuotaDetails sources={quota.console_sources ?? []}
+    {quota.provider === 'qwen'&&(quota.legacy||!quota.partner_id) ? <QwenQuotaDetails sources={quota.console_sources ?? []}
       snapshots={quota.console_snapshots ?? []} refresh={refresh}/> :
       !balances.length && !buckets.length && !failed && quota.refresh_status !== 'FAILED' && <small>
-        {quota.refresh ? '点击刷新读取官方额度。' : '请先在「账号与模型」中连接账户。'}</small>}
+        {quota.refresh ? '点击刷新读取官方额度。' : quota.account_id?'暂无官方额度回执。':'请先在「账号与模型」中连接账户。'}</small>}
     {recordedTokens != null && <small className="wd-settings-recorded-tokens">近 7 天已记录 {count.format(recordedTokens)} Tokens</small>}
+    {recordedTokens==null&&(input!=null||output!=null)&&<small className="wd-settings-recorded-tokens">近 7 天输入 {input==null?'—':count.format(input)} / 输出 {output==null?'—':count.format(output)} Tokens</small>}
   </div>;
 }
 
@@ -224,6 +231,7 @@ export function SettingsUsage() {
   const [data, setData] = useState<Usage | null>(null);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [partnerId,setPartnerId]=useState('all');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -238,18 +246,22 @@ export function SettingsUsage() {
     return () => controller.abort();
   }, [retry]);
 
+  const visible=(data?.quotas||[]).filter(quota=>partnerId==='all'||(quota.partner_id||quota.provider)===partnerId);
+  const quotaRows=(rows:Quota[])=>rows.map(quota=><QuotaRow key={[quota.partner_id||quota.provider,quota.route,quota.api_provider,quota.account_id||quota.label].join(':')} quota={quota} partnerName={data?.partners?.find(partner=>partner.id===quota.partner_id)?.name} apiName={data?.api_providers?.find(provider=>provider.id===quota.api_provider)?.name} refresh={()=>setRetry(value=>value+1)}/>);
   return <div aria-busy={!data && !error}>
     <section className="wd-settings-group wd-settings-card" aria-label="账户额度">
       <div className="wd-settings-usage-header">
         <h2>账户额度</h2>
         <nav aria-label="用量报告">
+          <NativeSelect aria-label="额度伙伴" size="sm" value={partnerId} onChange={event=>setPartnerId(event.currentTarget.value)}><option value="all">全部伙伴</option>{data?.partners?.map(partner=><option value={partner.id} key={partner.id}>{partner.name}</option>)}</NativeSelect>
           <Button asChild size="sm" variant="outline" className="wd-settings-button"><a href="#settings/usage/activity">Token 活动</a></Button>
           <Button asChild size="sm" variant="outline" className="wd-settings-button"><a href="#settings/usage/calls">调用消耗</a></Button>
           <Button asChild size="sm" variant="ghost" className="wd-settings-button"><a href="#control/usage">工作用量</a></Button>
         </nav>
       </div>
-      <p className="wd-settings-note">任务授权在 <a href="#work">Work 的合作确认</a> 或 <a href="#control/new">高级任务草稿</a> 中设置。此处查看余额和已记录消耗。</p>
-      {data?.quotas.map(quota => <QuotaRow key={quota.provider} quota={quota} refresh={() => setRetry(value => value + 1)} />)}
+      <p className="wd-settings-note">账号与 <a href="#settings/accounts">账号与模型</a> 保持一致，此处查看官方额度回执和已记录消耗。</p>
+      {quotaRows(visible.filter(quota=>!quota.legacy))}
+      {visible.some(quota=>quota.legacy)&&<details className="wd-settings-row"><summary>历史连接额度</summary>{quotaRows(visible.filter(quota=>quota.legacy))}</details>}
       {error ? <div className="wd-settings-row" role="status">
         <span>暂时无法读取账户额度。</span><Button className="wd-settings-button" variant="outline" type="button" onClick={() => setRetry(retry + 1)}>重试</Button>
       </div> : !data && <p className="wd-settings-empty" role="status">正在读取账户额度…</p>}

@@ -24,6 +24,7 @@ func partnerFixture(t *testing.T) *App {
 	if err := a.DB.MigratePartners(); err != nil {
 		t.Fatal(err)
 	}
+	installPartnerAPICatalogFixture(t, a)
 	return a
 }
 

@@ -37,7 +37,9 @@ internal sealed partial class WorkdeskHost : Form {
     readonly Dictionary<string, ChatView> chats = new Dictionary<string, ChatView>();
     readonly Dictionary<string, ChatAppearance> appearances = new Dictionary<string, ChatAppearance>();
     readonly Dictionary<string, string> sites = new Dictionary<string, string> {
-        {"codex", "https://chatgpt.com/"}, {"deepseek", "https://chat.deepseek.com/"}, {"qwen", "https://chat.qwen.ai/"}
+        {"codex", "https://chatgpt.com/"}, {"deepseek", "https://chat.deepseek.com/"}, {"qwen", "https://chat.qwen.ai/"},
+        {"claude", "https://claude.ai/"}, {"grok", "https://grok.com/"}, {"gemini", "https://gemini.google.com/"},
+        {"kimi", "https://www.kimi.com/"}, {"glm", "https://chat.z.ai/"}
     };
     string selected = "";
     bool wantsChat;

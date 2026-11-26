@@ -17,6 +17,17 @@
     "api"
   ],
   "api_driver_provider": "deepseek",
+  "api_driver_provider_compatibility": "LEGACY_STAGE2_VERIFICATION_PROVIDER; NEW_RUNS_USE_EXACT_API_PROVIDER",
+  "api_providers": ["openai", "deepseek", "qwen", "anthropic", "xai", "gemini", "kimi", "glm"],
+  "api_catalog": {
+    "path": "src/researchos/workdesk/partners/api_providers.json",
+    "schema": 1,
+    "source": "FROZEN_IMPLEMENTATION; SHA256_AND_PROVIDER_SNAPSHOT_BOUND_TO_RUN",
+    "compatibility": "PER_PARTNER_AND_PROVIDER; ISOLATED_COMBINATIONS_REJECTED_BEFORE_DISPATCH; NO_FALLBACK",
+    "credentials": "kind=api; api_provider=EXACT_VENDOR; LEGACY_kind=deepseek_api_RETAINS_IDS_AND_VERIFICATION",
+    "key_fanout": "EXPLICIT; SAME_API_PROVIDER_ONLY",
+    "verification": "EXACT_PROVIDER_ACCOUNT_SECRET_VERSION_AND_CONNECTION; LEGACY_api_verification_REMAINS_DEEPSEEK"
+  },
   "credentials": "REFERENCES_ONLY; USER_SUPPLIED_AT_FINAL_VERIFICATION",
   "commands": [
     "component.prepare",
@@ -48,7 +59,10 @@
     "/api/v2/component-operations",
     "/api/v2/partner-runs",
     "/api/v2/partner-runs/{id}",
-    "/api/v2/partner-runs/{id}/events?after={seq}"
+    "/api/v2/partner-runs/{id}/events?after={seq}",
+    "/api/v1/connection-setup",
+    "/api/v1/settings-usage?days={days}",
+    "/api/v1/settings-token-usage?partner_id={partner}&api_provider={vendor}&account_id={account}&route={route}&days={days}&page={page}"
   ],
   "worker": {
     "transport": "inherited-json-lines",
@@ -75,6 +89,15 @@
     "close_local_tracking": "EXPLICIT; CONFIRMED_LOCAL_EXIT; REMOTE_OUTCOME_REMAINS_UNKNOWN"
   },
   "request_intent_count": "OBSERVED_GATEWAY_INTENTS; NOT_BILLING_COUNT",
+  "usage": {
+    "source": "SAME_PARTNER_RUN_AND_EVENTS; READ_ONLY; MODE_RUN_ONLY",
+    "identity": "partner_id; api_provider; account_id; route; run_id; request_id_WHEN_REPORTED",
+    "deduplication": "REQUEST_RECEIPTS_FIRST; NO_ADDITION_OF_NATIVE_TOTALS_TO_REQUEST_RECEIPTS",
+    "missing": "NULL_IS_UNKNOWN; ZERO_ONLY_WHEN_REPORTED; PARTIAL_USAGE_LABELLED",
+    "price": "ACTUAL_API_PROVIDER_AND_ROUTE; ACCOUNT_SUBSCRIPTIONS_NEVER_USE_API_TARIFFS",
+    "quota": "NATIVE_ACCOUNT_QUOTA_UNKNOWN_UNLESS_OFFICIALLY_REPORTED; LEGACY_QUOTA_STAYS_LEGACY"
+  },
+  "connection_launcher": "ORIGINAL_connect_FULL_PAGE; SAME_VERSIONED_WORK_AND_API_RECORDS; WEBSITE_CHAT_CONFIRMATIONS_INDEPENDENT",
   "official_account_state": {
     "auth_state": ["AUTHENTICATED", "UNAUTHENTICATED", "UNKNOWN"],
     "login_attempt": "login_run_id; login_state; login_release_id; SEPARATE_FROM_AUTHENTICATION_FACT",

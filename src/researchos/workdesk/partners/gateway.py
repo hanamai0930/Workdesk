@@ -1,4 +1,4 @@
-"""One-run DeepSeek transport with native wire protocols and Gemini translation.
+"""One-run official API transport with native wires and Gemini translation.
 
 No model request is made at construction. The caller supplies a fresh loopback
 token and a frozen run binding; credentials are held only in this process.
@@ -14,8 +14,11 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
-from urllib.parse import urlsplit, unquote
+from urllib.parse import urlsplit, unquote, quote
 from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+from .providers import provider_for
+from .usage import UsageReceipt
 
 
 class ProtocolUnsupported(ValueError):
@@ -27,7 +30,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def gemini_request(body: dict, model: str) -> dict:
+def gemini_request(body: dict, model: str, api_provider="deepseek") -> dict:
     """Translate ordinary Gemini content/functions without inventing tools."""
     messages = []
     instruction = body.get("systemInstruction", body.get("system_instruction"))
@@ -93,6 +96,8 @@ def gemini_request(body: dict, model: str) -> dict:
         if key in mapping:
             result[mapping[key]] = value
         elif key in {"thinkingConfig", "thinking_config"}:
+            if api_provider != "deepseek" and value:
+                raise ProtocolUnsupported("Explicit Gemini thinking configuration has no faithful mapping for this API")
             if value.get("includeThoughts", value.get("include_thoughts")):
                 result["thinking"] = {"type": "enabled"}
         elif key == "responseMimeType" and value == "application/json":
@@ -154,12 +159,19 @@ def gemini_response(body: dict) -> dict:
 
 class RunGateway:
     def __init__(self, api_key: str, model: str, *, emit=lambda **v: None, binding=None,
-                 allowed_models=None, upstream="https://api.deepseek.com", _test_upstream=False):
-        parsed = urlsplit(upstream)
-        if not _test_upstream and (parsed.scheme != "https" or parsed.netloc != "api.deepseek.com" or parsed.path not in ("", "/")):
-            raise ValueError("The run gateway only connects to the official DeepSeek API")
+                 allowed_models=None, upstream=None, _test_upstream=False, api_provider=None,
+                 provider_snapshot=None, catalog_sha256=None):
+        self.provider = provider_for(api_provider, snapshot=provider_snapshot, catalog_sha256=catalog_sha256)
+        self.provider_id = self.provider["id"]
+        parsed = urlsplit(upstream or self.provider["base_url"])
+        if _test_upstream:
+            if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.username or parsed.password:
+                raise ValueError("Local protocol substitutes require a loopback upstream")
+        elif upstream is not None and upstream.rstrip("/") != self.provider["base_url"].rstrip("/"):
+            raise ValueError("The gateway only connects to frozen official API endpoints")
         self.key, self.model, self.emit = api_key, model, emit
-        self.binding, self.upstream = dict(binding or {}), upstream.rstrip("/")
+        self.binding = {**dict(binding or {}), "api_provider": self.provider_id}
+        self.upstream = upstream.rstrip("/") if _test_upstream else None
         self.allowed_models = set(allowed_models or [model])
         self.token = secrets.token_urlsafe(32)
         self.server = None
@@ -168,6 +180,17 @@ class RunGateway:
         self.opener = build_opener(NoRedirect)
         self.active = set()
         self.lock = threading.Lock()
+
+    def _endpoint(self, wire, *, operation=None):
+        endpoint = self.provider["endpoints"].get(wire)
+        if not endpoint:
+            raise ProtocolUnsupported("The frozen API provider has no registered " + wire + " endpoint")
+        endpoint = endpoint.replace("{model}", quote(self.model, safe="")).replace("{operation}", operation or "generateContent")
+        if self.upstream:
+            endpoint = self.upstream + urlsplit(endpoint).path
+        if wire == "generate_content" and operation == "streamGenerateContent":
+            endpoint += "?alt=sse"
+        return endpoint
 
     def start(self):
         gateway = self
@@ -232,87 +255,124 @@ class RunGateway:
             return handler.send_json(403, {"error": "Run token is absent, expired or incorrect"})
         path = urlsplit(handler.path).path
         size = int(handler.headers.get("Content-Length", "0"))
-        if size > 32 * 1024 * 1024:
-            return handler.send_json(413, {"error": "Model protocol frame exceeds the gateway transport limit"})
+        if size < 0 or size > 32 * 1024 * 1024:
+            return handler.send_json(413, {"error": "Native request exceeds transport limit"})
         body = json.loads(handler.rfile.read(size)) if size else None
-        google = "/models/" in path and ":" in path
+        google = path.startswith("/v1beta/models/") or path.startswith("/v1/models/")
+        translated = False
+        operation = None
         if google:
-            selected, action = unquote(path.rsplit("/models/", 1)[1]).split(":", 1)
+            selected, operation = unquote(path.split("/models/", 1)[1]).split(":", 1)
             if selected not in self.allowed_models:
                 return handler.send_json(400, {"error": {"message": "Model alias is not in the frozen connection map"}})
-            if action == "countTokens":
+            if operation not in {"countTokens", "generateContent", "streamGenerateContent"}:
+                return handler.send_json(501, {"error": {"message": "Unregistered Gemini service operation"}})
+            if self.provider_id == "gemini":
+                wire = "generate_content"
+                stream = operation == "streamGenerateContent"
+            elif operation == "countTokens":
                 estimate = len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
-                self.emit(type="event", kind="token_count_estimate", source="UTF8_BYTES_UPPER_ESTIMATE", value=estimate)
+                self.emit(type="event", kind="token_count_estimate", api_provider=self.provider_id,
+                          source="UTF8_BYTES_UPPER_ESTIMATE", value=estimate)
                 return handler.send_json(200, {"totalTokens": estimate, "workdeskEstimate": True})
-            if action not in {"generateContent", "streamGenerateContent"}:
-                return handler.send_json(501, {"error": {"message": "Gemini service operation has no DeepSeek equivalent"}})
-            try:
-                body = gemini_request(body, self.model)
-            except ProtocolUnsupported as exc:
-                return handler.send_json(400, {"error": {"message": str(exc)}})
-            body["stream"] = action == "streamGenerateContent"
-            path = "/chat/completions"
-        elif path in {"/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses", "/v1/messages", "/messages", "/anthropic/v1/messages", "/anthropic/messages", "/models", "/v1/models"}:
-            if body is not None:
+            else:
+                try:
+                    body = gemini_request(body, self.model, self.provider_id)
+                except ProtocolUnsupported as exc:
+                    return handler.send_json(400, {"error": {"message": str(exc)}})
+                stream = operation == "streamGenerateContent"
+                body["stream"] = stream
+                wire, translated = "chat_completions", True
+        else:
+            routes = {"/chat/completions": "chat_completions", "/v1/chat/completions": "chat_completions",
+                      "/responses": "responses", "/v1/responses": "responses",
+                      "/messages": "messages", "/v1/messages": "messages", "/anthropic/messages": "messages",
+                      "/anthropic/v1/messages": "messages", "/models": "models", "/v1/models": "models",
+                      "/search": "search", "/v1/search": "search", "/fetch": "fetch", "/v1/fetch": "fetch"}
+            wire = routes.get(path)
+            if wire is None:
+                return handler.send_json(404, {"error": {"message": "Unknown provider operation"}})
+            stream = isinstance(body, dict) and body.get("stream") is True
+            if isinstance(body, dict):
                 requested = body.get("model", self.model)
-                # Anthropic's documented [1m] suffix is metadata, not a different upstream model.
                 if requested.removesuffix("[1m]") != self.model:
                     return handler.send_json(400, {"error": {"message": "Model differs from the frozen connection"}})
-        elif path in {"/search", "/fetch", "/v1/search", "/v1/fetch"}:
-            pass  # Official Codex standalone web operations remain native DeepSeek requests.
-        else:
-            return handler.send_json(404, {"error": {"message": "Unknown provider operation"}})
-        if path.startswith("/v1/"):
-            path = path[3:]
-        if path in {"/messages", "/anthropic/messages", "/anthropic/v1/messages"}:
-            path = "/anthropic/v1/messages"
+        try:
+            endpoint = self._endpoint(wire, operation=operation)
+        except ProtocolUnsupported as exc:
+            return handler.send_json(501, {"error": {"message": str(exc)}})
+        if self.provider_id == "anthropic" and wire == "chat_completions":
+            # Anthropic documents that strict function schemas are ignored by
+            # its Chat compatibility layer. Refuse that guarantee explicitly.
+            if any((tool.get("function") or {}).get("strict") for tool in (body or {}).get("tools", [])):
+                return handler.send_json(400, {"error": {"message": "Anthropic Chat compatibility does not enforce strict function schemas; use its Messages route"}})
         attempt = uuid.uuid4().hex
-        self.emit(type="event", kind="model_request_intent", request_id=attempt, model=self.model, protocol="gemini-translated" if google else path, binding=self.binding)
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + self.key}
-        if "messages" in path:
+        common = {"request_id": attempt, "api_provider": self.provider_id, "provider": self.provider_id,
+                  "model": self.model, "protocol": wire, "binding": self.binding}
+        self.emit(type="event", kind="model_request_intent", **common)
+        headers = {"Content-Type": "application/json"}
+        auth_type = self.provider.get("auth_by_wire", {}).get(wire, self.provider["auth"]["type"])
+        if auth_type == "bearer":
+            headers["Authorization"] = "Bearer " + self.key
+        elif auth_type == "x-api-key":
             headers["x-api-key"] = self.key
+        elif auth_type == "x-goog-api-key":
+            headers["x-goog-api-key"] = self.key
+        else:
+            raise ValueError("Unknown frozen API authentication method")
+        if wire == "messages":
             headers["anthropic-version"] = handler.headers.get("anthropic-version", "2023-06-01")
             if handler.headers.get("anthropic-beta"):
                 headers["anthropic-beta"] = handler.headers["anthropic-beta"]
-        request = Request(self.upstream + path, data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None, headers=headers, method=handler.command)
+        request = Request(endpoint, data=json.dumps(body, ensure_ascii=False).encode() if body is not None else None,
+                          headers=headers, method=handler.command)
         try:
             response = self.opener.open(request, timeout=600)
         except HTTPError as exc:
             raw = exc.read(1024 * 1024)
-            # Provider errors may echo authorization values; never forward a key.
             raw = raw.replace(self.key.encode(), b"[REDACTED]") if self.key else raw
-            self.emit(type="event", kind="model_request_rejected", request_id=attempt, status=exc.code)
+            self.emit(type="event", kind="model_request_rejected", **common, status=exc.code)
             return handler.send_json(exc.code, {"error": {"message": raw.decode("utf8", "replace")}})
         with self.lock:
             self.active.add(response)
+        usage = UsageReceipt()
+        upstream_request_id = response.headers.get("x-request-id", response.headers.get("request-id"))
         try:
-            stream = body is not None and body.get("stream")
             handler.send_response(response.status)
             handler.send_header("Content-Type", "text/event-stream" if stream else "application/json")
             handler.send_header("Cache-Control", "no-store")
             handler.send_header("Connection", "close")
             handler.end_headers()
             handler.close_connection = True
-            if not google:
+            if translated and stream:
+                self._gemini_stream(response, handler, attempt, usage)
+            elif translated:
+                raw = response.read()
+                usage.finish_json(raw)
+                handler.wfile.write(json.dumps(gemini_response(json.loads(raw)), ensure_ascii=False).encode())
+            elif stream:
                 while not self.closed.is_set():
                     block = response.read1(64 * 1024)
                     if not block:
                         break
+                    usage.feed_sse(block)
                     handler.wfile.write(block)
                     handler.wfile.flush()
-            elif not stream:
-                data = json.load(response)
-                handler.wfile.write(json.dumps(gemini_response(data), ensure_ascii=False).encode())
-                self.emit(type="event", kind="model_usage", request_id=attempt, model=data.get("model"), usage=data.get("usage"))
+                usage.end_sse()
             else:
-                self._gemini_stream(response, handler, attempt)
-            self.emit(type="event", kind="model_transport_ended", request_id=attempt, remote_completion="CONSULT_NATIVE_RESULT")
+                raw = response.read()
+                usage.finish_json(raw)
+                handler.wfile.write(raw)
+            self.emit(type="event", kind="model_transport_ended", **common, remote_completion="CONSULT_NATIVE_RESULT")
         finally:
+            # Exactly one receipt per HTTP request. Missing or incomplete usage
+            # stays unknown; an official numeric zero is retained as zero.
+            self.emit(type="event", kind="model_usage", **common, upstream_request_id=upstream_request_id, **usage.fields())
             with self.lock:
                 self.active.discard(response)
             response.close()
 
-    def _gemini_stream(self, response, handler, attempt):
+    def _gemini_stream(self, response, handler, attempt, receipt):
         calls = {}
         def send(value):
             handler.wfile.write(b"data: " + json.dumps(value, ensure_ascii=False).encode() + b"\n\n")
@@ -324,11 +384,12 @@ class RunGateway:
                 continue
             payload = raw[5:].strip()
             if payload == b"[DONE]":
+                receipt.final = True
                 break
             data = json.loads(payload)
+            receipt.observe(data)
             usage = data.get("usage")
             if usage:
-                self.emit(type="event", kind="model_usage", request_id=attempt, model=data.get("model"), usage=usage)
                 send(gemini_response({**data, "choices": []}))
             for choice in data.get("choices", []):
                 delta = choice.get("delta", {})

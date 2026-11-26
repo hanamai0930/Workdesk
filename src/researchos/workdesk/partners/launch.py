@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import uuid
 
+from .providers import validate_binding
+
 PARTNERS = ("codex", "deepseek", "qwen", "claude", "grok", "gemini", "kimi", "glm")
 
 
@@ -153,25 +155,37 @@ def build_launch(config: dict) -> LaunchSpec:
     model = config.get("model")
     url, token = config.get("gateway_url"), config.get("gateway_token")
     if route == "api" and mode == "run":
+        api = validate_binding(config)
+        api_id, api_name = api["id"], api["name"]
+        model_meta = next((row for row in api["models"] if row["id"] == model), {})
         if not model or not url or not token or not url.startswith("http://127.0.0.1:"):
             raise ValueError("API runs require the frozen model and a running bound loopback gateway")
         if partner == "codex":
-            provider = "workdesk_deepseek"
+            provider = "workdesk_" + api_id
             config_text = '\n'.join([
                 'model = ' + _text(model), 'model_provider = ' + _text(provider),
                 'forced_login_method = "api"',
-                '[model_providers.workdesk_deepseek]', 'name = "DeepSeek"',
+                '[model_providers.' + provider + ']', 'name = ' + _text(api_name),
                 'base_url = ' + _text(url), 'wire_api = "responses"',
                 'env_key = "WORKDESK_RUN_TOKEN"', 'requires_openai_auth = false',
                 'request_max_retries = 0', 'stream_max_retries = 0', ''])
             _write(home / ".codex/config.toml", config_text)
             env["WORKDESK_RUN_TOKEN"] = token
         elif partner == "deepseek":
-            env.update(DEEPSEEK_API_KEY=token, DEEPSEEK_BASE_URL=url)
+            if api_id == "deepseek":
+                env.update(DEEPSEEK_API_KEY=token, DEEPSEEK_BASE_URL=url)
+            else:
+                env["WORKDESK_RUN_TOKEN"] = token
+                overlay = home / ".dsh/.workdesk/api-provider.patch.yml"
+                _write(overlay, json.dumps([{"id": "llm-pi-ai", "config": {"providers": {"workdesk_api_" + api_id: {
+                    "apiKeyEnv": "WORKDESK_RUN_TOKEN", "displayName": api_name,
+                    "api": "openai-completions", "baseURL": url + "/v1", "models": [{"id": model, "name": model,
+                    **({"contextWindow": model_meta["context_tokens"]} if model_meta.get("context_tokens") else {})}],
+                    "compat": {"supportsUsageInStreaming": True}}}}}]))
         elif partner == "qwen":
             env.update(OPENAI_API_KEY=token, OPENAI_BASE_URL=url + "/v1", OPENAI_MODEL=model)
             _write(home / ".qwen/settings.json", {"security": {"auth": {"selectedType": "openai"}},
-                   "model": {"name": model}, "modelProviders": {"openai": [{"id": model, "name": "DeepSeek via Workdesk",
+                   "model": {"name": model}, "modelProviders": {"openai": [{"id": model, "name": api_name + " via Workdesk",
                    "baseUrl": url + "/v1", "envKey": "OPENAI_API_KEY"}]}})
         elif partner == "claude":
             env.update(ANTHROPIC_BASE_URL=url + "/anthropic", ANTHROPIC_AUTH_TOKEN=token,
@@ -180,8 +194,9 @@ def build_launch(config: dict) -> LaunchSpec:
                        ANTHROPIC_DEFAULT_FABLE_MODEL=model,
                        CLAUDE_CODE_SUBAGENT_MODEL=model)
         elif partner == "grok":
-            _write(home / ".grok/config.toml", '\n'.join(['[models]', 'default = "workdesk_deepseek"',
-                   '[model.workdesk_deepseek]', 'model = ' + _text(model), 'base_url = ' + _text(url + "/v1"),
+            native_id = "workdesk_" + api_id
+            _write(home / ".grok/config.toml", '\n'.join(['[models]', 'default = ' + _text(native_id),
+                   '[model.' + native_id + ']', 'model = ' + _text(model), 'base_url = ' + _text(url + "/v1"),
                    'env_key = "WORKDESK_RUN_TOKEN"', 'api_backend = "chat_completions"', '']))
             env["WORKDESK_RUN_TOKEN"] = token
         elif partner == "gemini":
@@ -195,26 +210,40 @@ def build_launch(config: dict) -> LaunchSpec:
             # represent. Configure that default out before native serialization;
             # preserve explicit user aliases/overrides so unsupported topK is
             # still rejected by the gateway rather than silently discarded.
-            settings.setdefault("modelConfigs", {}).setdefault("customAliases", {}).setdefault("chat-base", {
-                "extends": "base", "modelConfig": {"generateContentConfig": {
-                    "thinkingConfig": {"includeThoughts": True}, "temperature": 1, "topP": 0.95}}})
+            if api_id != "gemini":
+                aliases = settings.setdefault("modelConfigs", {}).setdefault("customAliases", {})
+                if api_id == "deepseek":
+                    aliases.setdefault("chat-base", {"extends": "base", "modelConfig": {"generateContentConfig": {
+                        "thinkingConfig": {"includeThoughts": True}, "temperature": 1, "topP": 0.95}}})
+                else:
+                    # Official presets can configure defaults out before native
+                    # serialization. Explicit user aliases are left intact and
+                    # unsupported choices are rejected by the wire adapter.
+                    aliases.setdefault("base", {"modelConfig": {"generateContentConfig": {}}})
+                    for alias, parent in (("chat-base", "base"), ("chat-base-2.5", "chat-base"), ("chat-base-3", "chat-base")):
+                        aliases.setdefault(alias, {"extends": parent, "modelConfig": {"generateContentConfig": {}}})
             _write(settings_path, settings)
-            limitations.append("GEMINI_NATIVE_CHAT_BASE_TOP_K_DEFAULT_REMOVED_FOR_DEEPSEEK; EXPLICIT_TOP_K_UNSUPPORTED")
-            limitations += ["Google-hosted search/embedding are not substituted", "Token preflight is a labelled UTF-8 byte estimate"]
+            if api_id != "gemini":
+                limitations.append("GEMINI_NATIVE_VENDOR_SAMPLING_DEFAULTS_CONFIGURED_FOR_API_BRIDGE; EXPLICIT_UNSUPPORTED_OPTIONS_REJECTED")
+                limitations += ["Google-hosted search/embedding are not substituted", "Token preflight is a labelled UTF-8 byte estimate"]
         elif partner == "kimi":
-            _write(home / ".kimi-code/config.toml", '\n'.join(['default_model = "workdesk-deepseek"',
-                   '[providers.workdesk-deepseek]', 'type = "openai"', 'base_url = ' + _text(url + "/v1"),
-                   'api_key_env = "WORKDESK_RUN_TOKEN"', '[models.workdesk-deepseek]',
-                   'provider = "workdesk-deepseek"', 'model = ' + _text(model),
-                   'max_context_size = ' + str(int(options.get("context_tokens", 1048576))), '']))
+            native_id = "workdesk-" + api_id
+            _write(home / ".kimi-code/config.toml", '\n'.join(['default_model = ' + _text(native_id),
+                   '[providers.' + native_id + ']', 'type = "openai"', 'base_url = ' + _text(url + "/v1"),
+                   'api_key_env = "WORKDESK_RUN_TOKEN"', '[models.' + native_id + ']',
+                   'provider = ' + _text(native_id), 'model = ' + _text(model),
+                   'max_context_size = ' + str(int(options.get("context_tokens", model_meta.get("context_tokens", 1048576)))), '']))
             env["WORKDESK_RUN_TOKEN"] = token
+            if not model_meta.get("context_tokens") and not options.get("context_tokens"):
+                limitations.append("CUSTOM_API_MODEL_CONTEXT_USES_NATIVE_DEFAULT; PROVIDER_LIMIT_UNVERIFIED")
         elif partner == "glm":
+            native_id = "workdesk_" + api_id
             _write(home / ".zcode/v2/provider_config.json", {"schemaVersion": 1, "config": {
-                "providerConfigRules": {"providerRules": [{"providerId": "workdesk_deepseek", "providerName": "DeepSeek via Workdesk",
+                "providerConfigRules": {"providerRules": [{"providerId": native_id, "providerName": api_name + " via Workdesk",
                     "config": {"group": "standard-personal", "access": {"type": "api-key", "apiKey": token},
                                "api": {"type": "openai-chat-completions", "baseUrl": url + "/v1"}, "personalModelIds": [model]}}]},
                 "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []},
-                "defaultModelSelection": {"providerId": "workdesk_deepseek", "modelId": model}}})
+                "defaultModelSelection": {"providerId": native_id, "modelId": model}}})
     if partner == "codex":
         argv += ["app-server", "--listen", "stdio://"]
         protocol = "codex"
@@ -228,6 +257,8 @@ def build_launch(config: dict) -> LaunchSpec:
         else:
             argv += ["--profile", "sdk"]
             protocol = "deepseek"
+            if route == "api" and mode == "run" and api_id != "deepseek":
+                argv += ["--patch", str(home / ".dsh/.workdesk/api-provider.patch.yml")]
             if route == "account":
                 overlay = home / ".dsh/.workdesk/account-selection.patch.yml"
                 _write(overlay, json.dumps([{"insert": [{"id": "workdesk-account-selection",

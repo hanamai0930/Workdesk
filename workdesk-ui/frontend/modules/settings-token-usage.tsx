@@ -3,28 +3,35 @@ import { ArrowLeft, ArrowUpRight } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { NativeSelect } from '../components/ui/native-select';
 import { formatMoney } from '../lib/format';
+import type { APIProvider, Partner } from './partners';
 import './settings-token-usage.css';
 
 type Tokens = { input: number | null; cache_hit: number | null; cache_miss: number | null; output: number | null; tokens: number | null };
-type Counts = Tokens & { calls: number; native: number; records: number; cache_receipts: number; estimated_records: number; amount: string };
+type Counts = Tokens & { calls: number; native: number; records: number; cache_receipts: number; estimated_records: number; amount: string|null;unknown_usage_records?:number };
 type Bucket = Counts & { date: string };
-type Call = Tokens & { id: string; at: number; provider: string; model: string; source: string; status: string;
-  estimate: { amount: string; period: 'peak' | 'off_peak'; time_basis: string; currency: string } | null };
-type Report = { rate_basis?: {version:string;reference_date:string;source:string}; days: number; provider: string; page: number; page_size: number; count: number;
+type UsageIdentity = {partner_id?:string;api_provider?:string;account_id?:string;account_label?:string;route?:'account'|'api';run_id?:string;usage_note?:string;usage_complete?:boolean};
+type Call = Tokens & UsageIdentity & { id: string; at: number; provider: string; model: string; source: string; status: string;
+  estimate: { amount: string|null; period: 'peak' | 'off_peak'; time_basis: string; currency: string } | null };
+type Report = {partners?:Partner[];api_providers?:APIProvider[];partner_id?:string; rate_basis?: {version:string;reference_date:string;source:string}; days: number; provider: string; page: number; page_size: number; count: number;
   date_first: string; date_last: string; totals: Counts; daily: Bucket[];
-  models: (Counts & { provider: string; model: string })[]; rows: Call[] };
+  models: (Counts & UsageIdentity & { provider: string; model: string })[]; rows: Call[] };
 type View = 'daily' | 'weekly' | 'cumulative';
 
-const providers = { all: '全部厂商', codex: 'Codex', deepseek: 'DeepSeek', qwen: 'Qwen' };
 const count = new Intl.NumberFormat('zh-CN');
 const clock = new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' });
 const dayMs = 86400000;
 const fields = [['tokens','总 Tokens'], ['cache_hit','缓存命中输入'], ['cache_miss','缓存未命中输入'], ['output','输出 Tokens']] as const;
 const token = (value?: number | null) => value == null ? '—' : count.format(value);
-const providerName = (key: string) => providers[key as keyof typeof providers] || key;
+const partnerName = (report:Report,key:string) => report.partners?.find(item=>item.id===key)?.name||key;
+const apiName = (report:Report,key:string) => report.api_providers?.find(item=>item.id===key)?.name||key;
+function origin(report:Report,row:UsageIdentity&{provider:string;source?:string}){
+  const api=row.api_provider||(['api_chat','gateway','search'].includes(row.source||'')?row.provider:undefined);
+  return (api?apiName(report,api)+' API':'官方账号')+' · '+(row.account_label||row.account_id||'账号未记录');
+}
+const identityKey=(row:UsageIdentity&{provider:string;model:string})=>[row.partner_id||row.provider,row.api_provider,row.account_id,row.route,row.run_id,row.model].join(':');
 const shortDate = (date: string) => date.slice(5).replace('-', '/');
 const iso = (time: number) => new Date(time).toISOString().slice(0, 10);
-const price = (amount: string, currency = 'CNY') => formatMoney(amount, currency);
+const price = (amount: string|null|undefined, currency = 'CNY') => amount==null?'—':formatMoney(amount, currency);
 const beijingTime = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', weekday: 'short',
   hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
@@ -74,6 +81,7 @@ const dayLabel = (date: string, value?: Bucket) =>
 const sources: Record<string, string> = {
   api_chat: 'API Chat', gateway: 'Work API', search: '搜索 API',
   deepseek_native: '原生模型响应', qwen_native: '原生回合', codex_native: '原生回合',
+  partner_native: '官方工作端回执',
 };
 const statuses: Record<string, string> = {
   COMPLETE: '完成', COMPLETED: '完成', FAILED: '失败', INTERRUPTED: '已停止',
@@ -203,12 +211,13 @@ function TokenActivity({ report }: { report: Report }) {
     <section className="wd-settings-card wd-token-section" aria-label="按模型统计">
       <h3>按模型统计</h3>
       {report.models.length?<div className="wd-token-scroll"><table className="wd-token-table">
-        <thead><tr><th>厂商 / 型号</th><th>输入</th>{fields.slice(1).map(([key,label])=><th key={key}>{label}</th>)}<th>总计</th></tr></thead>
-        <tbody>{report.models.map(row=><tr key={row.provider+row.model}><th scope="row">{providerName(row.provider)} / {row.model}</th>
+        <thead><tr><th>伙伴 / 型号</th><th>来源 / 账号</th><th>输入</th>{fields.slice(1).map(([key,label])=><th key={key}>{label}</th>)}<th>总计</th></tr></thead>
+        <tbody>{report.models.map(row=><tr key={identityKey(row)}><th scope="row">{partnerName(report,row.partner_id||row.provider)} / {row.model}</th><td>{origin(report,row)}{row.usage_note&&<small className="wd-token-usage-note">{row.usage_note}</small>}</td>
           <td>{token(row.input)}</td>{fields.slice(1).map(([key])=><td key={key}>{token(row[key])}</td>)}<td>{token(row.tokens)}</td></tr>)}</tbody>
       </table></div>:<p className="wd-token-detail">这一周期暂无用量记录。</p>}
     </section>
     <p className="wd-settings-note">缓存拆分覆盖 {count.format(report.totals.cache_receipts)} / {count.format(report.totals.records)} 条用量记录。缺失的字段显示为「—」。</p>
+    {report.totals.unknown_usage_records!=null&&<p className="wd-settings-note">用量回执未知：{count.format(report.totals.unknown_usage_records)} 条。</p>}
   </>;
 }
 
@@ -227,8 +236,9 @@ function CallDetails({ report, setPage }: { report: Report; setPage: (page: numb
     <Metrics items={[
       ['API 请求', count.format(report.totals.calls)], ['原生用量记录', count.format(report.totals.native)],
       ['总 Tokens',token(report.totals.tokens)],
-      ['DeepSeek Token 费用估算',report.totals.estimated_records ? price(report.totals.amount) : '—',report.totals.estimated_records ? '原始估算 CNY '+report.totals.amount : undefined],
+      ['API Token 费用估算',report.totals.estimated_records ? price(report.totals.amount) : '—',report.totals.estimated_records ? '原始估算 CNY '+report.totals.amount : undefined],
     ]}/>
+    <p className="wd-settings-note">请求回执数量不等于计费次数。{report.totals.unknown_usage_records!=null&&<> 用量回执未知：{count.format(report.totals.unknown_usage_records)} 条，不计作已确认的 API 请求。</>}</p>
     <section className="wd-settings-card wd-token-section" aria-label="调用消耗图">
       <div className="wd-token-heading"><h3>{graph==='calls'?'每日调用记录':'每日 Token 费用估算'}</h3>
         <div className="wd-settings-theme" role="group" aria-label="调用图表">
@@ -241,10 +251,10 @@ function CallDetails({ report, setPage }: { report: Report; setPage: (page: numb
     <section className="wd-settings-card wd-token-section" aria-label="调用明细">
       <h3>调用明细</h3>
       {report.rows.length?<div className="wd-token-scroll"><table className="wd-token-table wd-token-call-table">
-        <thead><tr><th>时间</th><th>厂商 / 型号</th><th>渠道 / 状态</th><th>命中输入</th><th>未命中输入</th><th>输出</th><th>总 Tokens</th><th>参考费用</th></tr></thead>
-        <tbody>{report.rows.map(row=><tr key={row.source+row.id}>
+        <thead><tr><th>时间</th><th>伙伴 / 型号</th><th>来源 / 账号</th><th>渠道 / 状态</th><th>命中输入</th><th>未命中输入</th><th>输出</th><th>总 Tokens</th><th>参考费用</th></tr></thead>
+        <tbody>{report.rows.map(row=><tr key={identityKey(row)+row.source+row.id}>
           <td><time dateTime={new Date(row.at*1000).toISOString()}>{clock.format(row.at*1000)}</time></td>
-          <th scope="row">{providerName(row.provider)} / {row.model}</th><td>{sources[row.source]||row.source} · {statuses[row.status]||'待核对'}</td>
+          <th scope="row">{row.run_id?<a href={'#work/partners/run/'+encodeURIComponent(row.run_id)}>{partnerName(report,row.partner_id||row.provider)} / {row.model}</a>:<>{partnerName(report,row.partner_id||row.provider)} / {row.model}</>}</th><td>{origin(report,row)}{row.usage_note&&<small className="wd-token-usage-note">{row.usage_note}</small>}</td><td>{sources[row.source]||(row.run_id?'官方工作端回执':row.source)} · {statuses[row.status]||'待核对'}</td>
           <td>{token(row.cache_hit)}</td><td>{token(row.cache_miss)}</td><td>{token(row.output)}</td>
           <td>{token(row.tokens)}</td><td title={row.estimate ? '原始估算 '+row.estimate.currency+' '+row.estimate.amount+' · '+(timeBasis[row.estimate.time_basis] || '') : undefined}>{row.estimate?<>{price(row.estimate.amount,row.estimate.currency)} <small>{row.estimate.period==='peak'?'高峰':'空闲'}</small></>:'—'}</td>
         </tr>)}</tbody>
@@ -255,7 +265,7 @@ function CallDetails({ report, setPage }: { report: Report; setPage: (page: numb
         <Button type="button" variant="outline" className="wd-settings-button" disabled={report.page>=maxPage} onClick={()=>setPage(report.page+1)}>下一页</Button>
       </div>}
     </section>
-    <div className="wd-settings-note">估算覆盖 {count.format(report.totals.estimated_records)} 条 DeepSeek 模型 Token 用量，按各条记录的北京时间计价。{report.rate_basis && <details><summary>计价依据 · {report.rate_basis.version}</summary><div>当前高峰为周一至周五 09:00–12:00、14:00–18:00，中国法定节假日除外。其他时段执行空闲价。优先采用官方响应中的创建时间；历史记录按可用的请求或回执时间估算。费率核对日 {report.rate_basis.reference_date}。<a href={report.rate_basis.source} target="_blank" rel="noreferrer">DeepSeek 定价来源</a></div></details>}实际扣款请查看 <a href="https://platform.deepseek.com/usage" target="_blank" rel="noreferrer">DeepSeek 官方用量 <ArrowUpRight aria-hidden="true"/></a>。</div>
+    <div className="wd-settings-note">费用按实际 API 厂商统计，估算覆盖 {count.format(report.totals.estimated_records)} 条用量记录。未取得价格或用量的记录显示为「—」。{report.rate_basis && <details><summary>计价依据 · {report.rate_basis.version}</summary><div>费率核对日 {report.rate_basis.reference_date}。<a href={report.rate_basis.source} target="_blank" rel="noreferrer">定价来源 <ArrowUpRight aria-hidden="true"/></a></div></details>}实际扣款请查看相应厂商的官方账单。</div>
   </>;
 }
 
@@ -269,13 +279,13 @@ export function SettingsTokenUsage({ mode }: { mode: 'activity' | 'calls' }) {
   useEffect(()=>{
     const control=new AbortController();
     setError(false);
-    fetch('api/v1/settings-token-usage?'+new URLSearchParams({provider,days:String(days),page:String(page)}),{signal:control.signal})
+    fetch('api/v1/settings-token-usage?'+new URLSearchParams({partner_id:provider,days:String(days),page:String(page)}),{signal:control.signal})
       .then(response=>{if(!response.ok)throw Error();return response.json() as Promise<Report>;})
       .then(value=>{if(!control.signal.aborted)setReport(value);})
       .catch(()=>{if(!control.signal.aborted)setError(true);});
     return ()=>control.abort();
   },[provider,days,page,retry]);
-  const current=report?.provider===provider&&report.days===days&&report.page===page?report:null;
+  const current=(report?.partner_id??report?.provider)===provider&&report?.days===days&&report.page===page?report:null;
   return <div className="wd-token-report" aria-busy={!current&&!error}>
     <div className="wd-token-heading">
       <div className="wd-token-heading"><Button asChild size="sm" variant="outline" className="wd-settings-button">
@@ -284,8 +294,8 @@ export function SettingsTokenUsage({ mode }: { mode: 'activity' | 'calls' }) {
         {mode==='calls' && <BeijingClock/>}
       </div>
       <div className="wd-token-filters">
-        <NativeSelect aria-label="模型厂商" size="sm" value={provider} onChange={e=>{setProvider(e.target.value);setPage(1);}}>
-          {Object.entries(providers).map(([key,label])=><option key={key} value={key}>{label}</option>)}
+        <NativeSelect aria-label="伙伴" size="sm" value={provider} onChange={e=>{setProvider(e.target.value);setPage(1);}}>
+          <option value="all">全部伙伴</option>{report?.partners?.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
         </NativeSelect>
         <NativeSelect aria-label="用量周期" size="sm" value={days} onChange={e=>{setDays(Number(e.target.value));setPage(1);}}>
           {[7,30,90,365].map(value=><option key={value} value={value}>{value===365?'近一年':'近 '+value+' 天'}</option>)}

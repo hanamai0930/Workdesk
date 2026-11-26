@@ -24,6 +24,7 @@
   definitions.settings.sources.push('../frontend/modules/settings-token-usage.tsx');
   definitions.settings.styles.push('../frontend/modules/settings-token-usage.css');
   definitions.settings.sources.push('../frontend/modules/partners.tsx');
+  definitions.connect.sources.push('../frontend/modules/partners.tsx');
   definitions.settings.styles.push('../frontend/modules/partners.css');
   definitions.workbench.sources.push('../frontend/modules/partner-work.tsx');
   definitions.workbench.styles.push('../frontend/modules/partner-work.css');

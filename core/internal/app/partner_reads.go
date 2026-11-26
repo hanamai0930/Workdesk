@@ -32,6 +32,10 @@ func (a *App) decoratePartnerRuns(runs, accounts []map[string]any) error {
 		}
 		if c, ok := run["connection_snapshot"].(map[string]any); ok {
 			run["model"] = c["model"]
+			if str(c["route"]) == "api" {
+				run["api_provider"] = connectionAPIProvider(c)
+				run["driver_provider"] = connectionAPIProvider(c)
+			}
 		}
 		if observed := str(run["resolved_model"]); observed != "" {
 			run["model"] = observed
@@ -55,6 +59,9 @@ func (a *App) decoratePartnerRuns(runs, accounts []map[string]any) error {
 
 func (a *App) decoratePartnerAccounts(accounts, runs []map[string]any) error {
 	for _, account := range accounts {
+		if provider := accountAPIProvider(account); provider != "" {
+			account["api_provider"] = provider
+		}
 		for _, key := range []string{"login_url", "user_code", "instructions"} {
 			delete(account, key)
 		}
@@ -134,6 +141,11 @@ func (a *App) partnerRun(id string) (any, error) {
 // original result and credential version remain in its immutable run snapshot.
 func decoratePartnerConnections(connections, accounts []map[string]any) {
 	for _, connection := range connections {
+		if str(connection["route"]) == "api" {
+			if provider := connectionAPIProvider(connection); provider != "" {
+				connection["api_provider"], connection["driver_provider"] = provider, provider
+			}
+		}
 		if str(connection["state"]) != "VERIFIED" || str(connection["route"]) != "api" {
 			continue
 		}
@@ -143,6 +155,10 @@ func decoratePartnerConnections(connections, accounts []map[string]any) {
 			}
 			if str(account["state"]) == "DISCONNECTED" {
 				connection["state"] = "DISCONNECTED"
+			} else if provider := connectionAPIProvider(connection); provider == "" || provider != accountAPIProvider(account) || (str(connection["verified_api_provider"]) != "" && connection["verified_api_provider"] != provider) || (provider != "deepseek" && str(connection["verified_api_provider"]) == "") {
+				connection["state"] = "SAVED_UNVERIFIED"
+				connection["verification_stale"] = true
+				connection["verification_reason"] = "API 厂商与原验证凭据不符"
 			} else if str(connection["verified_secret_version"]) == "" || connection["verified_secret_version"] != account["secret_version"] {
 				connection["state"] = "SAVED_UNVERIFIED"
 				connection["verification_stale"] = true

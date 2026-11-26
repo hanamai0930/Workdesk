@@ -1,0 +1,974 @@
+{
+  "schema": 1,
+  "reviewed_at": "2026-11-26",
+  "partners": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "native_wire": "responses"
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "native_wire": "messages"
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen",
+      "native_wire": "chat_completions"
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "native_wire": "messages"
+    },
+    {
+      "id": "grok",
+      "name": "Grok",
+      "native_wire": "chat_completions"
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "native_wire": "generate_content"
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi",
+      "native_wire": "chat_completions"
+    },
+    {
+      "id": "glm",
+      "name": "GLM",
+      "native_wire": "chat_completions"
+    }
+  ],
+  "api_providers": [
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "partner_id": "codex",
+      "partner_name": "Codex",
+      "base_url": "https://api.openai.com/v1",
+      "default_model": "gpt-5.2",
+      "models": [
+        {
+          "id": "gpt-5.2",
+          "name": "gpt-5.2",
+          "context_tokens": 400000
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {},
+      "endpoints": {
+        "chat_completions": "https://api.openai.com/v1/chat/completions",
+        "responses": "https://api.openai.com/v1/responses",
+        "models": "https://api.openai.com/v1/models"
+      },
+      "supported_wires": [
+        "chat_completions",
+        "responses"
+      ],
+      "sources": [
+        {
+          "url": "https://developers.openai.com/api/docs/models/gpt-5.2",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/responses",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/chat",
+          "title": "官方协议与模型说明"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "isolated",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "当前工作端未接此API：尚无有效的Messages接线",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "默认GPT-5.2保留Chat工具协议。GPT-6系列工具调用需要Responses；自定义模型仍由官方校验。"
+      ]
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "partner_id": "deepseek",
+      "partner_name": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "default_model": "deepseek-flash",
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "name": "deepseek-flash",
+          "context_tokens": 1048576
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {},
+      "endpoints": {
+        "chat_completions": "https://api.deepseek.com/chat/completions",
+        "responses": "https://api.deepseek.com/responses",
+        "messages": "https://api.deepseek.com/anthropic/v1/messages",
+        "models": "https://api.deepseek.com/models",
+        "search": "https://api.deepseek.com/search",
+        "fetch": "https://api.deepseek.com/fetch"
+      },
+      "supported_wires": [
+        "chat_completions",
+        "responses",
+        "messages"
+      ],
+      "sources": [
+        {
+          "url": "https://api-docs.deepseek.com/api/create-chat-completion/",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://api-docs.deepseek.com/quick_start/agent_integrations/codex/",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/",
+          "title": "官方协议与模型说明"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "claude": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LIVE_DEEPSEEK"
+        }
+      },
+      "notes": []
+    },
+    {
+      "id": "qwen",
+      "name": "Qwen / 阿里云百炼",
+      "partner_id": "qwen",
+      "partner_name": "Qwen",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "default_model": "qwen3.7-plus",
+      "models": [
+        {
+          "id": "qwen3.7-plus",
+          "name": "qwen3.7-plus",
+          "context_tokens": 1000000
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {},
+      "endpoints": {
+        "chat_completions": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        "responses": "https://dashscope.aliyuncs.com/compatible-mode/v1/responses",
+        "messages": "https://dashscope.aliyuncs.com/apps/anthropic/v1/messages",
+        "models": "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+      },
+      "supported_wires": [
+        "chat_completions",
+        "responses",
+        "messages"
+      ],
+      "sources": [
+        {
+          "url": "https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://help.aliyun.com/zh/model-studio/anthropic-api-messages",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://help.aliyun.com/zh/model-studio/qwen3-7-plus",
+          "title": "官方模型参数"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "缺省为北京公共端点；阿里云确认旧公共域名仍可用。区域Key和Coding/Token Plan Key不混用。"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic / Claude",
+      "partner_id": "claude",
+      "partner_name": "Claude",
+      "base_url": "https://api.anthropic.com/v1",
+      "default_model": "claude-sonnet-5-5",
+      "models": [
+        {
+          "id": "claude-sonnet-5-5",
+          "name": "claude-sonnet-5-5",
+          "context_tokens": 1000000
+        }
+      ],
+      "auth": {
+        "type": "x-api-key",
+        "headers": {}
+      },
+      "auth_by_wire": {
+        "messages": "x-api-key",
+        "chat_completions": "bearer"
+      },
+      "endpoints": {
+        "messages": "https://api.anthropic.com/v1/messages",
+        "chat_completions": "https://api.anthropic.com/v1/chat/completions",
+        "models": "https://api.anthropic.com/v1/models"
+      },
+      "supported_wires": [
+        "messages",
+        "chat_completions"
+      ],
+      "sources": [
+        {
+          "url": "https://platform.claude.com/docs/en/api/messages",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://platform.claude.com/docs/en/models/overview",
+          "title": "官方协议与模型说明"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "isolated",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "当前工作端未接此API：尚无已核实的Responses接线",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "官方Chat兼容层有明确字段限制；严格JSON/schema、缓存和音频等不能视为与Messages完全等价。"
+      ]
+    },
+    {
+      "id": "xai",
+      "name": "xAI / Grok",
+      "partner_id": "grok",
+      "partner_name": "Grok",
+      "base_url": "https://api.x.ai/v1",
+      "default_model": "grok-4.7",
+      "models": [
+        {
+          "id": "grok-4.7",
+          "name": "grok-4.7",
+          "context_tokens": 500000
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {},
+      "endpoints": {
+        "responses": "https://api.x.ai/v1/responses",
+        "chat_completions": "https://api.x.ai/v1/chat/completions",
+        "models": "https://api.x.ai/v1/models"
+      },
+      "supported_wires": [
+        "responses",
+        "chat_completions"
+      ],
+      "sources": [
+        {
+          "url": "https://docs.x.ai/developers/rest-api-reference/inference/responses",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.x.ai/developers/model-capabilities/text/comparison",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.x.ai/developers/rest-api-reference/inference/legacy",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.x.ai/developers/models",
+          "title": "官方模型参数"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "isolated",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "当前工作端未接此API：尚无有效的Messages接线；xAI已废弃Anthropic兼容入口",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "Anthropic兼容Messages已由官方废弃，不调用旧端点。"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Google / Gemini",
+      "partner_id": "gemini",
+      "partner_name": "Gemini",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "default_model": "gemini-4-hydrogen",
+      "models": [
+        {
+          "id": "gemini-4-hydrogen",
+          "name": "gemini-4-hydrogen",
+          "context_tokens": 1000000
+        }
+      ],
+      "auth": {
+        "type": "x-goog-api-key",
+        "headers": {}
+      },
+      "auth_by_wire": {
+        "generate_content": "x-goog-api-key",
+        "chat_completions": "bearer"
+      },
+      "endpoints": {
+        "generate_content": "https://generativelanguage.googleapis.com/v1beta/models/{model}:{operation}",
+        "chat_completions": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "models": "https://generativelanguage.googleapis.com/v1beta/models"
+      },
+      "supported_wires": [
+        "generate_content",
+        "chat_completions"
+      ],
+      "sources": [
+        {
+          "url": "https://ai.google.dev/api/generate-content",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://ai.google.dev/gemini-api/docs/openai",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://ai.google.dev/gemini-api/docs/models",
+          "title": "官方协议与模型说明"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "isolated",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "当前工作端未接此API：尚无已核实的Responses接线",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "isolated",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "当前工作端未接此API：尚无有效的Messages接线",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "generate_content",
+          "native_wire": "generate_content",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": []
+    },
+    {
+      "id": "kimi",
+      "name": "Kimi / Moonshot（国际开放平台）",
+      "partner_id": "kimi",
+      "partner_name": "Kimi",
+      "base_url": "https://api.moonshot.ai/v1",
+      "default_model": "kimi-k3.1-pro",
+      "models": [
+        {
+          "id": "kimi-k3.1-pro",
+          "name": "kimi-k3.1-pro",
+          "context_tokens": 1000000
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {},
+      "endpoints": {
+        "chat_completions": "https://api.moonshot.ai/v1/chat/completions",
+        "responses": "https://api.moonshot.ai/v1/responses",
+        "messages": "https://api.moonshot.ai/anthropic/v1/messages",
+        "models": "https://api.moonshot.ai/v1/models"
+      },
+      "supported_wires": [
+        "chat_completions",
+        "responses",
+        "messages"
+      ],
+      "sources": [
+        {
+          "url": "https://platform.kimi.ai/docs/get-your-api-key",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://platform.kimi.ai/docs/api/chat",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://platform.kimi.ai/docs/api/responses",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://platform.kimi.ai/docs/api/messages",
+          "title": "官方协议与模型说明"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "此项为Moonshot国际开放平台API，不是Kimi Code订阅或中国站API；不同站点及套餐Key不可混用。"
+      ]
+    },
+    {
+      "id": "glm",
+      "name": "GLM / 智谱开放平台",
+      "partner_id": "glm",
+      "partner_name": "GLM",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "default_model": "glm-5.3",
+      "models": [
+        {
+          "id": "glm-5.3",
+          "name": "glm-5.3",
+          "context_tokens": 1000000
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "headers": {}
+      },
+      "auth_by_wire": {
+        "messages": "x-api-key"
+      },
+      "endpoints": {
+        "chat_completions": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "responses": "https://open.bigmodel.cn/api/v1/responses",
+        "messages": "https://open.bigmodel.cn/api/anthropic/v1/messages"
+      },
+      "supported_wires": [
+        "chat_completions",
+        "responses",
+        "messages"
+      ],
+      "sources": [
+        {
+          "url": "https://docs.bigmodel.cn/cn/api/introduction",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.bigmodel.cn/cn/guide/develop/responses/introduction",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.bigmodel.cn/cn/guide/develop/claude/introduction",
+          "title": "官方协议与模型说明"
+        },
+        {
+          "url": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3",
+          "title": "官方模型参数"
+        }
+      ],
+      "compatibility": {
+        "codex": {
+          "state": "supported",
+          "wire": "responses",
+          "native_wire": "responses",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "deepseek": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "OFFICIAL_DSH_PI_AI",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "qwen": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "claude": {
+          "state": "supported",
+          "wire": "messages",
+          "native_wire": "messages",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "grok": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "gemini": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "generate_content",
+          "adapter": "GEMINI_TO_CHAT",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "kimi": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        },
+        "glm": {
+          "state": "supported",
+          "wire": "chat_completions",
+          "native_wire": "chat_completions",
+          "adapter": "NATIVE_PASSTHROUGH",
+          "reason": "已接入官方协议传输；是否可用仍以该账号实际回执为准",
+          "validation": "LOCAL_PROTOCOL_ONLY"
+        }
+      },
+      "notes": [
+        "此项为智谱标准API；Z.AI国际站和Coding Plan的端点与Key不同。",
+        "官方当前说明：曾订阅GLM Coding Plan的账号，标准API暂可能仅开放Chat协议；账号实际权限由官方回执确认。"
+      ]
+    }
+  ]
+}

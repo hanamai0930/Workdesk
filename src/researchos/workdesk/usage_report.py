@@ -6,8 +6,9 @@ from decimal import Decimal
 import json
 
 from .deepseek_pricing import LOCAL, RATE_BASIS, estimate
+from .partner_usage import catalog as partner_catalog
 
-PROVIDERS = ('codex', 'deepseek', 'qwen')
+PROVIDERS = tuple(dict.fromkeys(row['id'] for group in partner_catalog() for row in group))
 TOKEN_KEYS = ('input', 'cache_hit', 'cache_miss', 'output', 'tokens')
 PAGE_SIZE = 40
 
@@ -65,7 +66,9 @@ def deepseek_usage(value):
 
 def record(provider, model, source, at, status, numbers, *, time_basis=None, **metadata):
     return {'provider':provider, 'model':model or '未知型号', 'source':source, 'at':at, 'status':status,
-            **numbers, 'estimate':estimate(provider, model, numbers, at, time_basis) if source in ('api_chat','gateway','deepseek_native') else None,
+            **numbers, 'estimate':estimate(provider, model, numbers, at, time_basis) if source in ('api_chat','gateway') else None,
+            'partner_id': provider, 'api_provider': provider if source in ('api_chat','gateway') else None,
+            'account_id': None, 'account_label': None, 'route': 'api' if source in ('api_chat','gateway') else 'account', 'run_id': None,
             **metadata}
 
 
@@ -220,7 +223,8 @@ def codex_records(db,start,end):
 
 def empty():
     return {**dict.fromkeys(TOKEN_KEYS), 'calls':0, 'native':0, 'records':0,
-            'cache_receipts':0, 'estimated_records':0, 'amount':Decimal(0)}
+            'cache_receipts':0, 'estimated_records':0, 'amount':Decimal(0),
+            'request_intents':0, 'unknown_usage_records':0}
 
 
 def add(target,row):
@@ -230,8 +234,12 @@ def add(target,row):
     target['records']+=1
     if row['source'] in ('api_chat','gateway','search'):
         target['calls']+=1
-    else:
+    elif row['source'] == 'partner_gateway':
+        target['calls']+=int(row.get('has_request_receipt') is True)
+    elif row['source'] != 'partner_request_unknown':
         target['native']+=1
+    target['request_intents']+=row.get('request_intents',0)
+    target['unknown_usage_records']+=int(row.get('usage_complete') is False or row['tokens'] is None)
     if row['cache_hit'] is not None and row['cache_miss'] is not None:
         target['cache_receipts']+=1
     if row['estimate']:
@@ -240,11 +248,12 @@ def add(target,row):
 
 
 def summary(value):
-    amount = format(value['amount'], 'f')
-    return {**value, 'amount':amount, 'low':amount, 'high':amount}
+    amount = format(value['amount'], 'f') if value['estimated_records'] else None
+    return {**value, 'amount':amount, 'low':amount, 'high':amount,
+            'price_complete':value['records'] > 0 and value['estimated_records']==value['records']}
 
 
-def period_records(db, start, end, provider='all'):
+def period_records(db, start, end, provider='all', partner_id='all', api_provider='all', account_id='all', route='all'):
     readers = [chat_records, gateway_records]
     if provider in ('all', 'deepseek', 'qwen'):
         readers.append(sdk_records)
@@ -253,34 +262,46 @@ def period_records(db, start, end, provider='all'):
     for read in readers:
         for row in read(db, start, end):
             if (row['provider'] in PROVIDERS and (provider == 'all' or row['provider'] == provider)
+                    and (partner_id == 'all' or row.get('partner_id') == partner_id)
+                    and (api_provider == 'all' or row.get('api_provider') == api_provider)
+                    and (account_id == 'all' or row.get('account_id') == account_id)
+                    and (route == 'all' or row.get('route') == route)
                     and start <= row['at'] < end):
                 yield row
+    from .partner_usage import run_records
+    for row in run_records(db,start,end,partner_id=partner_id,api_provider=api_provider,account_id=account_id,route=route):
+        if provider == 'all' or row['provider'] == provider:
+            yield row
 
 
-def report(service,provider='all',days='365',page='1'):
+def report(service,provider='all',days='365',page='1',partner_id='all',api_provider='all',account_id='all',route='all'):
     if provider not in ('all',*PROVIDERS) or str(days) not in ('7','30','90','365'):
         raise ValueError('请选择支持的厂商和日期范围。')
     if not str(page).isdigit() or not 1<=int(page)<=10000:
         raise ValueError('页码无效。')
+    partners, api_providers = partner_catalog()
+    if partner_id not in ('all',*(row['id'] for row in partners)) or api_provider not in ('all',*(row['id'] for row in api_providers)) or route not in ('all','api','account'):
+        raise ValueError('请选择支持的伙伴、API 厂商和接入方式。')
     days,page=int(days),int(page)
     from .network_time import pricing_now
     end=datetime.fromtimestamp(pricing_now(),LOCAL)
     start=end.replace(hour=0,minute=0,second=0,microsecond=0)-timedelta(days=days-1)
     total=empty()
     by_day=defaultdict(empty)
-    by_model=defaultdict(empty)
     rows=[]
     with service.store.read() as db:
-        for row in period_records(db, start.timestamp(), end.timestamp(), provider):
+        for row in period_records(db, start.timestamp(), end.timestamp(), provider,partner_id,api_provider,account_id,route):
             day=datetime.fromtimestamp(row['at'],LOCAL).date().isoformat()
             add(total,row)
             add(by_day[day],row)
-            add(by_model[(row['provider'],row['model'])],row)
             rows.append(row)
     rows.sort(key=lambda row:(row['at'],row['id']),reverse=True)
-    return {'rate_basis': RATE_BASIS, 'provider':provider,'days':days,'page':page,'page_size':PAGE_SIZE,'count':len(rows),
+    from .partner_usage import model_rows
+    return {'rate_basis': RATE_BASIS, 'provider':provider,'partner_id':partner_id,'api_provider':api_provider,'account_id':account_id,'route':route,
+            'calls_basis':'RECORDED_REQUEST_RECEIPTS_NOT_BILLED_COUNT',
+            'partners':partners,'api_providers':api_providers,'days':days,'page':page,'page_size':PAGE_SIZE,'count':len(rows),
             'date_first':start.date().isoformat(),'date_last':end.date().isoformat(),
             'totals':summary(total),
             'daily':[{'date':day,**summary(value)} for day,value in sorted(by_day.items())],
-            'models':[{'provider':key[0],'model':key[1],**summary(value)} for key,value in sorted(by_model.items())],
+            'models':model_rows(rows),
             'rows':rows[(page-1)*PAGE_SIZE:page*PAGE_SIZE]}

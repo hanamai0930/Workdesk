@@ -1,4 +1,4 @@
-// Compiled only into the disposable test executable. All three sites are local fixtures.
+// Compiled only into the disposable test executable. All sites are local fixtures.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -60,6 +60,22 @@ internal sealed partial class WorkdeskHost {
                 if(result!="\"local fixture received: hello local fixture\"")throw new Exception("Input failed for "+provider);
                 if(c.View.Bounds.Width<500 || c.View.Bounds.Height<300 || c.View.Bounds.X<200 || c.View.Bounds.Y<100)throw new Exception("Child bounds invalid");
                 checks.Add(provider+": actual WebView2 loads, accepts input, and stays inside the main chat region");
+            }
+            foreach(string provider in new[]{"claude","grok","gemini","kimi","glm"}) {
+                bool restore=File.Exists(Path.Combine(Path.GetDirectoryName(reportPath),"restore-profile"));
+                await ShellProbe("chrome.webview.postMessage({channel:'workdesk.chat.account',action:'open',provider:'"+provider+"'});");
+                await WaitProbe(()=>chatLogins.ContainsKey(provider) && chatLogins[provider].Controls.OfType<TableLayoutPanel>().Single().Controls.OfType<Button>().Single().Enabled);
+                var login=chatLogins[provider];
+                var view=login.Controls.OfType<WebView2>().Single();
+                if(view.CoreWebView2.Settings.AreHostObjectsAllowed || view.CoreWebView2.Settings.IsWebMessageEnabled || view.CoreWebView2.Profile.IsInPrivateModeEnabled)
+                    throw new Exception("Unsafe or private Chat account profile: "+provider);
+                string saved=await view.CoreWebView2.ExecuteScriptAsync("localStorage.getItem('workdesk-login-fixture')==='"+provider+"'");
+                if(restore && saved!="true")throw new Exception("New account profile did not persist: "+provider);
+                if(!restore)await view.CoreWebView2.ExecuteScriptAsync("localStorage.setItem('workdesk-login-fixture','"+provider+"')");
+                if(ChatConfirmed(provider)!=restore)throw new Exception("Website view incorrectly inferred authentication: "+provider);
+                login.Controls.OfType<TableLayoutPanel>().Single().Controls.OfType<Button>().Single().PerformClick();
+                await WaitProbe(()=>!chatLogins.ContainsKey(provider) && ChatConfirmed(provider));
+                checks.Add(provider+": official website account launcher, isolated persistent profile and explicit confirmation pass with local pages");
             }
             await ShellProbe("document.querySelector('[data-wb=new]').click()");
             await ShellProbe("document.querySelector('[data-wb=chat-enter]').click()");

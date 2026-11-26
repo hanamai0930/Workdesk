@@ -93,7 +93,7 @@ const chatApi=status=>status.api_connections?.deepseek??status.connections.deeps
 async function route(){
   const request=++routeRequest;
   const originalRequest=location.hash.slice(1)||'chat';
-  const requested=/^connect(?:\/|$)/.test(originalRequest)?'settings/accounts':originalRequest.replace(/^settings\/partners(?=\/|$)/,'settings/accounts');
+  const requested=originalRequest.replace(/^settings\/partners(?=\/|$)/,'settings/accounts');
   if(requested!==originalRequest)history.replaceState(history.state,'','#'+requested);
   const localResources=/^resources(?:\/|$)/.test(requested);
   let current=requested,connectionStatus=null,connectionRequired=false;
@@ -108,8 +108,8 @@ async function route(){
     if(connectionRequired&&!localResources&&!developmentLocal&&!partnerAccess){
       document.body.dataset.connectionRequired='true';
       if(requested!=='connect')connectionReturn=requested;
-      current='settings/accounts';
-      history.replaceState(history.state,'','#settings/accounts');
+      current='connect';
+      history.replaceState(history.state,'','#connect');
     }else{
       delete document.body.dataset.connectionRequired;
       if(requested==='connect'&&state.route&&state.route!=='connect')connectionReturn=state.route;

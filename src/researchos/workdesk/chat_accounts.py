@@ -6,7 +6,8 @@ from .workspace import plain
 
 def connections(locations):
     """Keep user-confirmed Chat sessions distinct from Work authentication."""
-    connected = dict.fromkeys(("codex", "deepseek", "qwen"), False)
+    from .partners.launch import PARTNERS
+    connected = dict.fromkeys(PARTNERS, False)
     if not locations.user:
         return connected
     root = locations.user / "browser-profiles" / "official-chat"

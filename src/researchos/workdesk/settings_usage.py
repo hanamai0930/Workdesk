@@ -2,6 +2,7 @@
 import time
 
 from .usage_report import period_records
+from .partner_usage import account_overview, catalog as partner_catalog, work_report as partner_work_report
 
 PROVIDERS = {'codex': 'Codex', 'deepseek': 'DeepSeek', 'qwen': 'Qwen'}
 
@@ -21,6 +22,7 @@ def _quotas(service, resources, usage):
         refresh = ({'connection_id': connection['id'], 'connection_revision': connection['revision']}
                    if connection and service.resources.quota_readable(connection) else None)
         yield {'provider': provider, 'label': label, 'kind': source.get('kind'),
+               'legacy': True, 'partner_id': provider, 'api_provider': None, 'account_id': None, 'account_label': None, 'route': None,
                'remaining': source.get('remaining'), 'unit': source.get('unit'),
                'official_at': official.get('observed_at'),
                'manual_at': source.get('observed_at'),
@@ -76,18 +78,33 @@ def overview(service, days=7):
             GROUP BY t.id ORDER BY activity_at DESC, t.id
         """, (start, end, start, end)).fetchall()
         usage = {}
-        for row in period_records(db, start, end):
+        receipts = list(period_records(db, start, end))
+        for row in receipts:
+            if row.get('run_id') is not None:
+                continue
             total = usage.setdefault(row['provider'], {'input_tokens': None, 'output_tokens': None})
             for key, source in (('input_tokens','input'), ('output_tokens','output')):
                 if row[source] is not None:
                     total[key] = (total[key] or 0) + row[source]
-        quotas = list(_quotas(service, service.resources.catalog(db=db), usage))
+        quotas = list(_quotas(service, service.resources.catalog(db=db), usage)) + account_overview(db, receipts)
+        partner_tasks = []
+        for group in partner_work_report(db, records=receipts):
+            observed = [row for row in receipts if row.get('run_id') == group['id']]
+            if not observed:
+                continue
+            values = lambda key: [row[key] for row in observed if row[key] is not None]
+            partner_tasks.append({**group, 'activity_at': max(row['at'] for row in observed), 'attempts': 1,
+                'input_tokens': sum(values('input')) if values('input') else None,
+                'output_tokens': sum(values('output')) if values('output') else None,
+                'reserved_cny': None, 'budget_cny': None})
 
     totals = {}
     for key in ('input_tokens', 'output_tokens', 'reserved_cny'):
-        values = [row[key] for row in records if row[key] is not None]
+        values = [row[key] for row in (*records,*partner_tasks) if row[key] is not None]
         totals[key] = sum(values) if values else None
 
     # Removed records retain their accounting, without reappearing as links.
-    rows = [dict(row) for row in records if row['visible']]
-    return {'days': days, 'totals': totals, 'tasks': rows[:6], 'task_count': len(rows), 'quotas': quotas}
+    rows = [dict(row) for row in records if row['visible']] + partner_tasks
+    rows.sort(key=lambda row: (-row['activity_at'], row['id']))
+    partners, api_providers = partner_catalog()
+    return {'days': days, 'partners': partners, 'api_providers': api_providers, 'totals': totals, 'tasks': rows[:6], 'task_count': len(rows), 'quotas': quotas}

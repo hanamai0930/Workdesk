@@ -73,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path=='/api/v1/settings-token-usage':
                 from .usage_report import report
                 value=report(self.server.service,*(args.get(key,[default])[0] for key,default in
-                    (('provider','all'),('days','365'),('page','1'))))
+                    (('provider','all'),('days','365'),('page','1'),('partner_id','all'),('api_provider','all'),('account_id','all'),('route','all'))))
             elif parsed.path=='/api/v1/work-usage':
                 from .work_usage import report
                 value=report(self.server.service,args.get('id',[None])[0])

@@ -21,6 +21,7 @@ import uuid
 from .gateway import RunGateway
 from .launch import build_launch
 from .auth import LoginOutput, redact_login_chunk
+from .providers import validate_binding
 
 MAX_FRAME = 32 * 1024 * 1024
 SENSITIVE_NAMES = {"api_key", "apikey", "access_token", "refresh_token", "authorization", "auth_token", "id_token", "password", "credential", "credentials"}
@@ -164,11 +165,15 @@ class PartnerWorker:
 
     def start(self):
         if self.config.get("route") == "api" and self.config.get("mode", "run") == "run":
+            provider = validate_binding(self.config)
+            self.config["api_provider"] = provider["id"]
             key = self.config.pop("api_key", None)
             if not key:
-                raise NativeRejected("DeepSeek API key is required; no model request was sent")
+                raise NativeRejected("The selected API provider key is required; no model request was sent")
             self.gateway = RunGateway(key, self.config["model"], emit=self.emit,
-                binding={k: self.config.get(k) for k in ("run_id", "instance_id", "owner_epoch", "connection_id", "account_id", "secret_version")},
+                api_provider=provider["id"], provider_snapshot=self.config.get("api_provider_snapshot"),
+                catalog_sha256=self.config.get("api_catalog_sha256"),
+                binding={k: self.config.get(k) for k in ("run_id", "instance_id", "owner_epoch", "connection_id", "account_id", "secret_version", "api_catalog_sha256")},
                 allowed_models=[self.config["model"], *(self.config.get("options") or {}).get("model_aliases", [])]).start()
             self.config.update(gateway_url=self.gateway.url, gateway_token=self.gateway.token)
             self.secret_values.append(self.gateway.token)
@@ -482,7 +487,8 @@ class PartnerWorker:
         self.done.wait()
 
     def _deepseek(self):
-        provider = "deepseek-official" if self.spec.route == "api" else "deepseek-account"
+        api_id = self.config.get("api_provider", "deepseek")
+        provider = ("deepseek-official" if api_id == "deepseek" else "workdesk_api_" + api_id) if self.spec.route == "api" else "deepseek-account"
         selection = None
         if self.spec.route == "account":
             if not self.deepseek_account_ready.wait(45):

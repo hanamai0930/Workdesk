@@ -231,6 +231,8 @@ def data_owner_lock(data):
 def _implementation_content(locations):
     from hashlib import sha256
     sources=[p for p in Path(__file__).parent.rglob('*') if p.suffix in {'.py','.mjs'} and '__pycache__' not in p.parts]
+    catalog=Path(__file__).parent/'partners/api_providers.json'
+    if catalog.is_file():sources.append(catalog)
     return {p.relative_to(locations.base).as_posix():p.read_bytes() for p in sources}
 
 

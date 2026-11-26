@@ -5,10 +5,12 @@ import json
 import time
 
 from .usage_report import add, codex_records, empty, gateway_records, sdk_records, summary
+from .partner_usage import work_report as partner_work_report
 
 
 def model_rows(models):
-    return [{'provider': provider, 'model': model, **summary(totals)}
+    return [{'provider': provider, 'partner_id': provider, 'api_provider': None, 'account_id': None, 'account_label': None,
+             'route': None, 'run_id': None, 'model': model, **summary(totals)}
             for (provider, model), totals in models.items()]
 
 
@@ -17,6 +19,9 @@ def report(service, identity=None):
     task_visible = service.work_records.visible('task', 't.id')
     dialogue_visible = service.work_records.visible('dialogue', 'd.id')
     with service.store.read() as db:
+        partner_groups = partner_work_report(db, identity)
+        if identity is not None and partner_groups:
+            return {'task': partner_groups[0]}
         # Frozen unit ownership or an unambiguous dispatch binds the costs.
         # Manually linked references can belong to a different business task.
         rows = db.execute(f"""
@@ -73,7 +78,7 @@ def report(service, identity=None):
                 return {'task': {**dict(item), 'models': [], 'steps': []}}
             rows = [row for row in rows if row['group_id']==selected]
         if not rows:
-            return {'tasks': []}
+            return {'tasks': partner_groups}
 
         plans = {}
         for row in db.execute("SELECT id,data FROM collaboration WHERE kind='teamwork_plan'"):
@@ -132,5 +137,5 @@ def report(service, identity=None):
                     'models': model_rows(models)})
         for group in groups.values():
             group['models'] = model_rows(group['models'])
-        ordered = sorted(groups.values(), key=lambda group: (-group['updated'], group['id']))
+        ordered = sorted((*groups.values(), *partner_groups), key=lambda group: (-group['updated'], group['id']))
         return {'task': ordered[0]} if identity is not None else {'tasks': ordered}

@@ -79,6 +79,15 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 		response(w, 200, a.Identity())
 		return
 	}
+	if path == "/api/v1/connection-setup" && r.Method == "GET" {
+		value, err := a.connectionSetup(r.Context())
+		if err != nil {
+			failed(w, err)
+		} else {
+			response(w, 200, value)
+		}
+		return
+	}
 	if r.Method == "POST" {
 		kind := str(body["kind"])
 		if !ownerControl(kind) {

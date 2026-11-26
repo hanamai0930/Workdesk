@@ -51,6 +51,18 @@
   .wd-connect .wd-connect-footer .wd-connect-enter { min-height:40px;padding-inline:14px;background:light-dark(#275d4e,#a0ceb9);
     color:light-dark(#fff,#172821); }
   .wd-connect .wd-connect-error { color:light-dark(#994038,#f0a49a);overflow-wrap:anywhere; }
+  .wd-partners-embedded { width:100%;justify-items:stretch;min-width:0; }
+  .wd-partners-embedded :is(label,.wd-partners-panel-body,.wd-partners-api-form) { display:grid;gap:8px;min-width:0;width:100%;font-size:13px; }
+  .wd-partners-embedded .wd-partners-panel-body { gap:12px; }
+  .wd-partners-embedded :is(select,input,[data-slot="native-select-wrapper"]) { width:100%;min-width:0; }
+  .wd-partners-embedded :is(.wd-partners-actions,.wd-partners-account-status,.wd-partners-api-footer) { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+  .wd-partners-embedded .wd-partners-api-footer { justify-content:space-between; }
+  .wd-partners-embedded .wd-partners-fields { display:grid;gap:12px; }
+  .wd-partners-embedded :is(.wd-partners-auth-input,.wd-partners-add-account) { display:grid;gap:10px; }
+  .wd-partners-embedded .wd-partners-state { display:inline-flex;padding:3px 8px;border-radius:14px;background:var(--connect-tint);font-size:12px; }
+  .wd-partners-embedded .wd-partners-state[data-state="AUTHENTICATED"] { color:var(--connect-accent); }
+  .wd-partners-embedded :is(a,summary) { color:var(--connect-accent);font-size:13px;cursor:pointer; }
+  .wd-partners-embedded .wd-partners-error { color:light-dark(#994038,#f0a49a); }
   @media(max-width:740px) {
     .wd-connect { grid-template-columns:minmax(0,1fr);width:min(500px,calc(100% - 24px));margin:0 auto;padding-block:14px; }
     .wd-connect-intro { border-radius:15px 15px 0 0;gap:16px; }

@@ -19,6 +19,9 @@ class CoreRuntimeTests(unittest.TestCase):
         source.parent.mkdir(parents=True)
         source.write_text('VERSION = 1\n', encoding='utf-8')
         self.source = source
+        self.catalog = source.parent / 'partners/api_providers.json'
+        self.catalog.parent.mkdir()
+        self.catalog.write_text('{"schema":1,"api_providers":[]}', encoding='utf-8')
         contract = self.locations.base / 'contracts/core-v2.json'
         contract.parent.mkdir(parents=True)
         contract.write_text(json.dumps({'storage_schema': 2}), encoding='utf-8')
@@ -44,6 +47,17 @@ class CoreRuntimeTests(unittest.TestCase):
         Path(self.manifest['executable']).unlink()
         with self.assertRaisesRegex(ValueError, '缺失'):
             core_runtime.selection(self.locations)
+
+    def test_provider_catalog_is_frozen_and_changes_refuse_new_work(self):
+        from researchos.workdesk.workspace import io_path
+        snapshot = io_path(self.locations.data / 'implementations' / self.manifest['implementation_revision'])
+        saved = snapshot / 'src/researchos/workdesk/partners/api_providers.json'
+        original = self.catalog.read_bytes()
+        self.assertEqual(saved.read_bytes(), original)
+        self.catalog.write_text('{"schema":1,"api_providers":[{"id":"changed"}]}', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, '源码已变化'):
+            core_runtime.expected_implementation(self.locations)
+        self.assertEqual(saved.read_bytes(), original)
 
     def test_snapshot_can_reconstruct_source_and_runtime(self):
         from researchos.workdesk.workspace import io_path

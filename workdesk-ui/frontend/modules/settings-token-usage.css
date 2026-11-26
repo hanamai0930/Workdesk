@@ -41,6 +41,7 @@
   .wd-token-call-table :is(th,td):nth-child(2) { text-align:left; }
   .wd-token-section .wd-settings-theme button[aria-pressed="true"] { color:var(--wk-good);font-weight:650; }
   .wd-token-table tbody tr:last-child :is(th,td) { border-bottom:none; }
+  .wd-token-usage-note { display:block; max-width:280px; margin-top:4px; white-space:normal; color:var(--wk-muted); font-size:12px; line-height:1.6; }
   .wd-token-report .wd-settings-note svg { display:inline-block;width:13px;height:13px;vertical-align:text-bottom; }
   @media(max-width:680px) {
     .wd-token-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }

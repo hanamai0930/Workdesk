@@ -10,7 +10,8 @@ using Microsoft.Web.WebView2.WinForms;
 internal sealed partial class WorkdeskHost {
     readonly Dictionary<string,Form> chatLogins = new Dictionary<string,Form>();
     readonly Dictionary<string,string> chatNames = new Dictionary<string,string> {
-        {"codex","ChatGPT"}, {"deepseek","DeepSeek"}, {"qwen","Qwen"}
+        {"codex","ChatGPT"}, {"deepseek","DeepSeek"}, {"qwen","Qwen"},
+        {"claude","Claude"}, {"grok","Grok"}, {"gemini","Gemini"}, {"kimi","Kimi"}, {"glm","GLM"}
     };
 
     string ChatProfile(string provider) {
