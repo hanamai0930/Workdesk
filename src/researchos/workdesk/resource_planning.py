@@ -7,6 +7,18 @@ import time
 from .model_catalog import reference
 
 
+def model_reference(member, connection):
+    if connection.get('execution') != 'partner_native':
+        return reference(member['provider'], member['model'])
+    # An official endpoint name does not identify the API driving its model.
+    if connection.get('route') == 'api' and connection.get('api_provider') == 'deepseek':
+        try:
+            return reference('deepseek', member['model'])
+        except ValueError:
+            pass
+    return {'price':None,'sources':[],'checked':None}
+
+
 def token_count(value, label):
     if type(value) is not int or not 0 <= value <= 100_000_000:
         raise ValueError(label + '须为0至1亿之间的整数。')
@@ -40,7 +52,7 @@ def cost_estimate(entry, input_tokens, output_tokens):
 
 
 def context(service, db, member, connection, quota):
-    entry = reference(member['provider'], member['model'])
+    entry = model_reference(member, connection)
     samples = []
     for row in db.execute("""SELECT a.started,a.result FROM attempts a JOIN tasks t ON a.task_id=t.id
             WHERE a.state='COMPLETED' AND json_extract(t.spec,'$.provider')=?
@@ -90,7 +102,7 @@ def preview(resources, db, payload):
                          'cost': {'status': 'UNKNOWN'}, 'latency': {'status': 'UNKNOWN'}})
             continue
         evidence = context(resources.s, db, member, connection, quota)
-        entry = reference(member['provider'], member['model'])
+        entry = model_reference(member, connection)
         elapsed = evidence['latency']['median_seconds']
         relation = ('UNKNOWN' if elapsed is None or deadline is None else
                     'WITHIN_OBSERVED_MEDIAN' if elapsed <= deadline else 'ABOVE_OBSERVED_MEDIAN')

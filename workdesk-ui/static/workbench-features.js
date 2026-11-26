@@ -12,7 +12,7 @@ window.WorkdeskFeatures = function(B) {
     services:()=>data.chat_services?.services||[],
     apiServices:()=>data.chat_services?.api_services||[data.chat_services?.api].filter(Boolean),
     adopt:id=>{currentKey='composer:chat:'+id;}});
-  const draftFields=['input','chatInput','scene','type','provider','model','workAccess','workEffort','workTier','workPlanOnly','project','files','attachments','roles','formDraft','chatProvider','chatModel','chatApiProvider','chatApiModel','chatThinking','chatSearch','chatSearchQuery','chatFiles'];
+  const draftFields=['input','chatInput','scene','type','provider','model','connectionId','connectionRevision','workAccess','workEffort','workTier','workPlanOnly','project','files','attachments','roles','formDraft','chatProvider','chatModel','chatApiProvider','chatApiModel','chatThinking','chatSearch','chatSearchQuery','chatFiles'];
   const readDraft=()=>Object.fromEntries(draftFields.map(k=>[k,structuredClone(v[k])]));
   const localKey=key=>'composer-backup:'+key;
   async function refresh(){

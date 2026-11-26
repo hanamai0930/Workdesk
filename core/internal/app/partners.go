@@ -366,7 +366,15 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 		current["verified_secret_version"] = run["secret_version"]
 		current["verified_api_provider"] = connectionAPIProvider(connection)
 	}
-	return putPartner(s, "connection", current)
+	// Authentication/verification observations do not change the selected
+	// connection configuration. Queued cooperation roles retain that revision.
+	current["updated"] = now()
+	raw, err := json.Marshal(current)
+	if err != nil {
+		return err
+	}
+	_, err = s.Execute(`UPDATE core_partner_objects SET data=?,updated=? WHERE kind='connection' AND id=?`, []any{string(raw), now(), current["id"]})
+	return err
 }
 
 func (a *App) partnerBusy() bool {
@@ -553,6 +561,9 @@ func validPartner(id string) bool {
 	return false
 }
 func (a *App) partnerCommand(command map[string]any) (any, error) {
+	return a.partnerCommandWithParent(command, nil)
+}
+func (a *App) partnerCommandWithParent(command map[string]any, parent map[string]any) (any, error) {
 	schema, _ := a.DB.Schema()
 	if schema != "3" {
 		return nil, errors.New("伙伴操作须先完成显式备份迁移")
@@ -918,6 +929,18 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				return errors.New("请选择已登记项目")
 			}
 			run := map[string]any{"id": ID(), "partner_id": account["partner_id"], "account_id": account["id"], "secret_version": account["secret_version"], "connection_id": connection["id"], "connection_revision": connection["revision"], "connection_snapshot": connection, "release_id": release["id"], "release_snapshot": release, "mode": mode, "state": "QUEUED", "project_id": project, "workspace": r.Rows[0][0], "prompt": p["prompt"], "created": now(), "owner_epoch": a.Epoch, "process_instance": a.Process, "implementation_revision": a.Implementation, "data_root": a.Profile.DataRoot}
+			if mode == "run" {
+				permission, source, err := a.freezePartnerPermission(str(account["partner_id"]), connection, p)
+				if err != nil {
+					return err
+				}
+				run["resolved_permission"], run["permission_source"] = permission, source
+				if parent != nil {
+					for _, key := range []string{"parent_task_id", "parent_attempt_id", "parent_spec_hash", "parent_prompt_sha256", "workspace"} {
+						run[key] = parent[key]
+					}
+				}
+			}
 			if str(connection["route"]) == "api" {
 				run["api_provider"], run["driver_provider"] = connectionAPIProvider(connection), connectionAPIProvider(connection)
 				run["api_provider_snapshot"], run["api_catalog_sha256"] = connection["api_provider_snapshot"], connection["api_catalog_sha256"]
@@ -932,6 +955,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			run["owner_core_identity"] = coreIdentity
 			run["owner_core_pid"] = os.Getpid()
 			if mode == "login" {
+				account["auth_generation"] = run["id"]
 				account["login_run_id"], account["login_release_id"] = run["id"], run["release_id"]
 				if e = putPartner(s, "account", account); e != nil {
 					return e
@@ -1315,6 +1339,7 @@ func (a *App) runPartner(run map[string]any) {
 	connection, _ := run["connection_snapshot"].(map[string]any)
 	release, _ := run["release_snapshot"].(map[string]any)
 	config := map[string]any{"partner_id": run["partner_id"], "route": connection["route"], "mode": run["mode"], "entry": release["entry"], "home": filepath.Join(a.Profile.UserRoot, "providers", str(run["partner_id"]), "accounts", str(run["account_id"])), "workspace": run["workspace"], "model": connection["model"], "prompt": run["prompt"], "options": connection["options"], "run_id": rid, "instance_id": a.Profile.InstanceID, "owner_epoch": a.Epoch}
+	config["resolved_permission"], config["permission_source"] = run["resolved_permission"], run["permission_source"]
 	if str(connection["route"]) == "api" {
 		config["api_provider"], config["driver_provider"] = connectionAPIProvider(connection), connectionAPIProvider(connection)
 		config["api_provider_snapshot"], config["api_catalog_sha256"] = connection["api_provider_snapshot"], connection["api_catalog_sha256"]

@@ -5,16 +5,13 @@
   const key='workdesk-management-pending';
   let pending='';try{pending=sessionStorage.getItem(key)||'';}catch{}
   let pollTimer=null;
-  const v={data:null,busy:false,pending,error:'',sequence:0,draft:{kind:'scene',parser_provider:'',parser_model:'',target_provider:'',target_model:'',target_id:'',intent:'inspect',text:''}};
+  const v={data:null,busy:false,pending,error:'',sequence:0,draft:{kind:'scene',parser_provider:'',parser_id:'',parser_model:'',target_provider:'',target_model:'',target_id:'',intent:'inspect',text:''}};
+  const parserKey=row=>row.id||JSON.stringify([row.selection?.connection_id,String(row.selection?.connection_revision),row.model,row.selection?.effort,row.selection?.tier]);
   v.onField=(field,value)=>{
     v.draft[field]=value;
     if(field==='kind'){v.draft.target_id='';v.draft.target_provider='';v.draft.target_model='';v.draft.intent=value==='skills'?'inspect':'change';}
-    if(field==='parser_provider')v.draft.parser_model='';
+    if(field==='parser_provider'){v.draft.parser_model='';v.draft.parser_id='';}
     if(field==='target_provider'){v.draft.target_model='';v.draft.target_id='';}
-    if(field==='target_model'){
-      const matches=(v.data?.members||[]).filter(member=>member.provider===v.draft.target_provider&&member.model===value);
-      v.draft.target_id=matches.length===1?matches[0].id:'';
-    }
     paint();
   };
   let snapshot={...v,draft:{...v.draft}};
@@ -60,11 +57,11 @@
     event.preventDefault();if(v.busy||v.pending)return;v.error='';v.busy=true;
     try{
       const draft={...v.draft},scope={kind:draft.kind,intent:draft.kind==='skills'?draft.intent:'change'};
-      const parser=v.data?.parser_models?.find(model=>model.provider===draft.parser_provider&&model.model===draft.parser_model&&model.available);
+      const parser=v.data?.parser_models?.find(model=>model.provider===draft.parser_provider&&parserKey(model)===draft.parser_id&&model.available);
       if(!parser)throw Error('请选择当前可用的解析大模型和型号。');
       if(draft.kind==='settings'){if(!v.data.settings)throw Error('外观设置管理尚未接通。');scope.revision=v.data.settings.appearance.revision;}
-      else if(draft.kind!=='development'){const target=(draft.kind==='member'?v.data.members:v.data.scenes).find(t=>t.id===draft.target_id);if(!target||target.revision==null)throw Error('请选择准确的生效目标。');scope.target_id=target.id;scope.revision=target.revision;}
-      await command('management.submit',{text:draft.text,scope,parser_selection:structuredClone(parser.selection)});v.draft.text='';await load();
+      else if(draft.kind!=='development'){const target=(draft.kind==='member'?v.data.members:v.data.scenes).find(t=>t.id===draft.target_id);if(!target||target.revision==null)throw Error('请选择准确的生效目标。');if(draft.kind==='member'&&target.management_editable===false)throw Error(target.management_reason||'请在账号与模型中调整此伙伴连接。');scope.target_id=target.id;scope.revision=target.revision;}
+      await command('management.submit',{text:draft.text,scope,...(parser.reference?{parser_reference:structuredClone(parser.reference)}:{parser_selection:structuredClone(parser.selection)})});v.draft.text='';await load();
     }catch(error){v.error=error.message;}finally{v.busy=false;paint();poll();}
   });
   document.addEventListener('click',async event=>{

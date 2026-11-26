@@ -25,6 +25,7 @@ func partnerFixture(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	installPartnerAPICatalogFixture(t, a)
+	installPartnerPermissionFixture(t, a)
 	return a
 }
 

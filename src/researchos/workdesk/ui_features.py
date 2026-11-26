@@ -92,6 +92,7 @@ class UIFeatures:
             raise ValueError('旧记录数量不支持。')
         existing = {r['id'] for r in self.c.all(db, 'ui_chat')}|{r['chat_id'] for r in self.c.all(db,'ui_chat_deleted')}
         imported = []
+        from .chat import WEB_PROVIDERS
         for c in chats:
             identity = 'web-' + bounded_text(c.get('id'), '旧聊天身份', 80)
             if identity in existing:
@@ -101,7 +102,7 @@ class UIFeatures:
                    'prompt': str(c.get('prompt') or '')[:16000],
                    'created': time.time(), 'pinned': c.get('pinned') is True, 'archived': c.get('archived') is True,
                    'messages': [], 'revision': 1, 'web_url': None}
-            if row['provider'] not in {'codex', 'deepseek', 'qwen'}:
+            if row['provider'] not in WEB_PROVIDERS:
                 raise ValueError('旧聊天工作端不支持。')
             self.c.put(db, 'ui_chat', row); existing.add(identity); imported.append(identity)
         ids = {d['id'] for d in self.c.all(db, 'ui_draft')}

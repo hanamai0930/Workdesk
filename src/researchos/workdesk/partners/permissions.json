@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "reviewed_at": "2026-11-27",
+  "scope": "OFFICIAL_NATIVE_APPROVAL; A_WORKING_DIRECTORY_IS_NOT_EXECUTION_ISOLATION",
+  "partners": [
+    {"partner_id":"codex","default":"workspace","version":"0.172.0","modes":[
+      {"id":"workspace","name":"请求批准","description":"工作区写入模式，官方工作端按需向你请求批准。","supported":true,"native":{"transport":"codex","thread":{"approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":"workspace-write"}}},
+      {"id":"auto","name":"官方自动审核","description":"保留按需审批，由 Codex 官方自动审核器审核请求。","supported":true,"native":{"transport":"codex","thread":{"approvalPolicy":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}}},
+      {"id":"full","name":"完全访问权限","description":"使用官方完整访问模式，不再逐项请求批准。","supported":true,"native":{"transport":"codex","thread":{"approvalPolicy":"never","approvalsReviewer":"user","sandbox":"danger-full-access"}}}
+    ]},
+    {"partner_id":"deepseek","default":"workspace","version":"0.2.2-rc.5","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 workspace-write 权限预设，并将审批请求交给你。","supported":true,"native":{"transport":"deepseek","sandbox":"workspace-write","approval":"ask","preset":"workspace-write"}},
+      {"id":"auto","name":"官方自动审核","description":"当前 SDK 配置没有加载官方自动审核服务。","supported":false,"reason":"当前固定版本的 SDK 配置没有已核实的自动审核接点；可选择请求批准。"},
+      {"id":"full","name":"完全访问权限","description":"使用官方 danger-full-access / never 预设。","supported":true,"native":{"transport":"deepseek","sandbox":"danger-full-access","approval":"never","preset":"danger-full-access"}}
+    ]},
+    {"partner_id":"qwen","default":"workspace","version":"0.28.4","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 default 模式，编辑文件或运行命令时请求批准。","supported":true,"native":{"transport":"acp","mode_id":"default"}},
+      {"id":"auto","name":"官方自动审核","description":"使用官方 auto 分类器，自动批准安全操作并拦截风险操作。","supported":true,"native":{"transport":"acp","mode_id":"auto"}},
+      {"id":"full","name":"完全访问权限","description":"使用官方 yolo 模式，自动批准所有工具。","supported":true,"native":{"transport":"acp","mode_id":"yolo"}}
+    ]},
+    {"partner_id":"claude","default":"workspace","version":"2.1.332","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 manual 模式，将权限提示交回 Workdesk 请求你批准。","supported":true,"native":{"transport":"claude","permission_mode":"manual"}},
+      {"id":"auto","name":"官方自动审核","description":"使用 Claude 官方 auto 权限模式；是否可用仍受官方账号和策略约束。","supported":true,"native":{"transport":"claude","permission_mode":"auto"}},
+      {"id":"full","name":"完全访问权限","description":"明确选择官方 bypassPermissions 模式。","supported":true,"native":{"transport":"claude","permission_mode":"bypassPermissions"}}
+    ]},
+    {"partner_id":"grok","default":"workspace","version":"1.0.92","modes":[
+      {"id":"workspace","name":"请求批准","description":"保留官方工作端逐次工具审批，通过原生请求交给你处理。","supported":true,"native":{"transport":"grok","argv":[]}},
+      {"id":"auto","name":"官方自动审核","description":"当前版本只提供完全自动批准，未提供已核实的风险自动审核模式。","supported":false,"reason":"官方 --always-approve 会批准全部工具，不能冒充风险自动审核；可选择请求批准。"},
+      {"id":"full","name":"完全访问权限","description":"明确启用官方 --always-approve，自动批准全部工具。","supported":true,"native":{"transport":"grok","argv":["--always-approve"]}}
+    ]},
+    {"partner_id":"gemini","default":"workspace","version":"0.71.1","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 default 模式，请求操作批准。","supported":true,"native":{"transport":"acp","mode_id":"default"}},
+      {"id":"auto","name":"自动批准编辑","description":"使用官方 autoEdit，只自动批准编辑工具，其他操作仍按官方规则审批。","supported":true,"native":{"transport":"acp","mode_id":"autoEdit"}},
+      {"id":"full","name":"完全访问权限","description":"使用官方 yolo 模式，自动批准全部工具。","supported":true,"native":{"transport":"acp","mode_id":"yolo"}}
+    ]},
+    {"partner_id":"kimi","default":"workspace","version":"2.8.0","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 default 模式，保留人工批准。","supported":true,"native":{"transport":"acp","mode_id":"default"}},
+      {"id":"auto","name":"自动批准安全操作","description":"使用官方 auto 模式，由原生工作端自动批准安全操作。","supported":true,"native":{"transport":"acp","mode_id":"auto"}},
+      {"id":"full","name":"完全访问权限","description":"使用官方 yolo 模式，自动批准全部操作。","supported":true,"native":{"transport":"acp","mode_id":"yolo"}}
+    ]},
+    {"partner_id":"glm","default":"workspace","version":"4.0.0 / Agent 0.18.0","modes":[
+      {"id":"workspace","name":"请求批准","description":"使用官方 build 模式，在修改文件前请求批准。","supported":true,"native":{"transport":"zcode","mode":"build"}},
+      {"id":"auto","name":"官方风险审核","description":"使用官方 guarded 自主模式，遇到风险时请求批准。","supported":true,"native":{"transport":"zcode","mode":"guarded"}},
+      {"id":"full","name":"完全访问权限","description":"明确选择官方 yolo 完整访问模式。","supported":true,"native":{"transport":"zcode","mode":"yolo"}}
+    ]}
+  ]
+}

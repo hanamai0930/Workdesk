@@ -39,6 +39,9 @@ def exited(record):
 
 
 def inspect(service,task,attempt,db,active,probe_codex=False):
+    if task['spec'].get('execution')=='partner_native':
+        from .partner_task import inspect as inspect_partner
+        return inspect_partner(service,task,attempt,db,active)
     report={'checked_at':time.time(),'local_worker_owned_alive':active,'saved_state':attempt['state'],
             'no_resend':True,'known_local_scopes_exited':False,'remote_model_state':'UNKNOWN',
             'arbitrary_external_processes':'UNKNOWN','protocol_terminal':None}

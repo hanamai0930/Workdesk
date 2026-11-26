@@ -87,8 +87,9 @@ class Operations:
             raise ValueError('旧工作副本在收尾后发生变化，先明确新版本。')
         usage=self.store.usage(task=task_id,db=db);budget=task['spec']['budget']
         remaining={**budget,'attempts':budget['attempts']-usage['attempts'],'tools':budget['tools']-usage['tool_calls'],
-                   'requests':budget['requests']-usage['model_requests'],'cny':round(budget['cny']-usage['reserved_cny'],6)}
-        if remaining['attempts']<1 or min(remaining['tools'],remaining['requests'],remaining['cny'])<0:raise ValueError('原任务剩余预算不足接管，不清零重来。')
+                   'requests':budget['requests']-usage['model_requests'],'cny':round(budget['cny']-usage['reserved_cny'],6) if usage['reserved_cny'] is not None else None}
+        if remaining['attempts']<1 or min(remaining['tools'],remaining['requests'])<0 or (remaining['cny'] is not None and remaining['cny']<0):raise ValueError('原任务剩余预算不足接管，不清零重来。')
+        if remaining['cny'] is None and budget.get('cny') is not None:raise ValueError('原任务累计费用未知，不能确认剩余费用预算。')
         decisions=[d for d in self.c.all(db,'decision') if any(p['id']==d['plan_id'] for p in self.c.all(db,'plan') if any(i['task_id']==task_id for i in p['items']))]
         value={'task_id':task_id,'spec_hash':task['spec_hash'],'attempt_id':latest['id'] if latest else None,
                'original_materials':original,'candidate_manifest':manifest,'alternatives':alternatives,

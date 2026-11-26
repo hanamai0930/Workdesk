@@ -10,6 +10,7 @@ from . import workspace
 from .contracts import bounded_text
 from .paths import atomic_json, implementation_matches
 from .store import ACTIVE, UNKNOWN, canonical, digest, uid
+from . import partner_task
 
 
 def is_official(task):
@@ -23,6 +24,7 @@ def send(service, db, payload, *, cooperative=None):
     # Public callers have already passed resources.before; internal callers
     # must freeze exactly the same connection before reserving an attempt.
     if '_connection_binding' not in payload:payload,_=service.resources.before(db,'independent.send',payload)
+    binding=payload['_connection_binding'];partner=partner_task.is_binding(binding)
     allowed={'task_id','attempt_id','owner','project_id','provider','model','effort','tier','goal','work_scene','files','attachments','access','_connection_binding','work_directory_confirmation','plan_only'}
     if set(payload)-allowed:raise ValueError('独立Work直接发送不接收任务范围、预算或工具限制。')
     if type(payload.get('plan_only',False)) is not bool:raise ValueError('计划模式设置无效。')
@@ -34,6 +36,8 @@ def send(service, db, payload, *, cooperative=None):
         task=service.store.task(payload['task_id'],db)
         if task['spec'].get('work_mode')=='cooperative':raise ValueError('合作单元须通过合作派发明确安排；不能从独立发送接续绕过累计授权。')
         if not is_official(task):raise ValueError('历史任务仍使用原来的执行流程；请新建独立Work。')
+        if partner_task.selected(task):
+            raise ValueError('此伙伴任务的准确原生会话续跑尚未核实；原会话保留，请新建工作。')
         service.work_records.guard(db,'task',task['id'])
         attempts=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(task['id'],)).fetchone()
         prior=service.store.attempt_row(attempts) if attempts else None
@@ -68,29 +72,40 @@ def send(service, db, payload, *, cooperative=None):
         if not project:raise ValueError('请选择有效工作区。')
         service.work_records.guard_project(db,project_id)
         provider=payload.get('provider','codex')
+        if partner and (binding.get('partner_id',binding.get('provider'))!=provider or binding.get('provider')!=provider):
+            raise ValueError('伙伴与所选准确连接不一致，未启动。')
         interface=None
-        if provider=='qwen':
+        if provider=='qwen' and not partner:
             frozen_route=(cooperative or {}).get('runtime_route') or {}
             interface=({'Query':'query','Daemon':'daemon'}[frozen_route['interface']] if frozen_route
                        else 'query' if cooperative is not None else service.independent.qwen_selection(db)['interface'])
             if interface=='daemon' and not service.independent.qwen_daemon_present():
                 raise ValueError('Qwen Daemon SDK 不可用，请检查本机安装。')
-        runtime=service.independent.describe(provider,interface)
-        defaults=service.profiles.defaults(provider)
-        model,effort,tier=(payload.get(k) or defaults[k] for k in ('model','effort','tier'))
-        selection=service.profiles.selection_snapshot(provider,model,effort,tier)
+        if partner:
+            runtime=partner_task.descriptor(binding)
+            model=binding.get('model','')
+            if payload.get('model') and payload['model']!=model:
+                raise ValueError('模型与已冻结伙伴连接不一致，请重新选择连接。')
+            effort,tier=(payload.get(k) or 'default' for k in ('effort','tier'))
+            selection=partner_task.model_selection(binding)
+        else:
+            runtime=service.independent.describe(provider,interface)
+            defaults=service.profiles.defaults(provider)
+            model,effort,tier=(payload.get(k) or defaults[k] for k in ('model','effort','tier'))
+            selection=service.profiles.selection_snapshot(provider,model,effort,tier)
         from .workbench import scene
         from .native_permissions import choice
-        if provider=='deepseek':
+        if provider=='deepseek' and not partner:
             from .native_permissions import deepseek_preset
             deepseek_preset(payload.get('access'))
         spec={'schema':1,'runtime_mode':'official','project_id':project_id,'goal':note,'access':choice(payload.get('access')),
               'provider':provider,'model':model,'effort':effort,'tier':tier,'model_selection':selection,
               'execution':runtime['execution'],'work_mode':'cooperative' if cooperative is not None else 'independent','work_scene':scene(payload.get('work_scene')),
-              'independent_service':{**runtime,'configuration':'VENDOR_DEFAULTS'},
+              'independent_service':{**runtime,'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS'},
               'role':'executor','acceptance':'','materials':{},'writable':[],'checks':[],'alternatives':[],
-              'budget':{},'campaign':None,'native':{'configuration':'VENDOR_DEFAULTS'},
+              'budget':{},'campaign':None,'native':{'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS'},
               'execution_connection':payload['_connection_binding']}
+        if partner:spec['partner_connection']=dict(binding)
         if interface:spec['qwen_runtime']=interface
         if payload.get('plan_only'):spec['plan_only']=True
         if cooperative is not None:
@@ -107,12 +122,12 @@ def send(service, db, payload, *, cooperative=None):
         manifest,_=workspace.snapshot(project['root'],names+[i['file'] for i in items],service.locations.data/'tasks'/identity/'input',service.locations.data,binary_names={i['file'] for i in items})
         freeze(items,project['root'],manifest)
         for item in items:
-            item['delivery']='NATIVE_IMAGE_INPUT' if item['kind']=='image' and provider!='qwen' else 'NATIVE_FILE_TOOLS'
+            item['delivery']='NATIVE_IMAGE_INPUT' if item['kind']=='image' and provider!='qwen' and not partner else 'NATIVE_FILE_TOOLS'
         spec.update(materials=manifest,attachments=items)
         now=time.time()
         db.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?)',(identity,project_id,note[:100],canonical(spec),digest(spec),'DRAFT',None,now,now))
         task=service.store.task(identity,db)
-        service.store.event(identity,None,'cooperative_unit_created' if cooperative is not None else 'independent_conversation_created',{'runtime_mode':'official','configuration':'VENDOR_DEFAULTS','extra_task_limits':False},db)
+        service.store.event(identity,None,'cooperative_unit_created' if cooperative is not None else 'independent_conversation_created',{'runtime_mode':'official','configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS','extra_task_limits':False},db)
     project=db.execute('SELECT * FROM projects WHERE id=?',(task['project_id'],)).fetchone()
     root=Path(project['root'])
     if not root.is_dir():raise ValueError('工作区目录不存在。')
@@ -126,9 +141,9 @@ def send(service, db, payload, *, cooperative=None):
     db.execute("UPDATE tasks SET state='RESERVED',updated=? WHERE id=?",(now,task['id']))
     service.store.event(task['id'],identity,'execution_reserved',{'owner':owner,'runtime_mode':'official','human_note':note if prior or fork else '',
         'implementation_revision':service.implementation,'resume_mode':'native' if prior else 'native_fork' if fork else None,
-        'configuration_snapshot':{**{k:task['spec'][k] for k in ('provider','model','effort','tier')},'access':task['spec'].get('access','inherit'),'configuration':'VENDOR_DEFAULTS',
+        'configuration_snapshot':{**{k:task['spec'][k] for k in ('provider','model','effort','tier')},'access':task['spec'].get('access','inherit'),'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS',
                                   **({'qwen_runtime':task['spec'].get('qwen_runtime','query')} if task['spec']['provider']=='qwen' else {})},
-        'credential_selection_revision':service.resources.context(task['spec']['execution_connection']).credential_revision,
+        'credential_selection_revision':(binding.get('account_revision') if partner else service.resources.context(task['spec']['execution_connection']).credential_revision),
         'execution_connection':task['spec']['execution_connection'],'extra_task_limits':False},db)
     return {'task_id':task['id'],'spec_hash':task['spec_hash'],'launch_attempt':identity,'resume_mode':'native' if prior else 'native_fork' if fork else None,'note':note if prior or fork else '','state':'RESERVED'}
 
@@ -172,6 +187,34 @@ def run(service, identity, stop, resume_mode, note):
     resume=prior[-1] if prior and resume_mode=='native' else task['spec'].get('native_fork') if resume_mode=='native_fork' else None
     entered=False
     try:
+        if partner_task.selected(task):
+            # The Go owner verifies the frozen connection and exact parent
+            # attempt after the reserving transaction has committed.
+            result=partner_task.run(service,task,attempt,stop,resume,note)
+        else:
+            result=_legacy_run(service,task,attempt,tools,stop,resume,note)
+    except Exception as exc:
+        result={'state':'SEND_UNKNOWN' if entered else 'FAILED_NO_SEND','answer':'','errors':[{'class':type(exc).__name__,'message':str(exc)[:1200]}],
+                'known_tools_exited':not entered,'owned_job':{'active_processes':0} if not entered else None}
+    finally:
+        stop.set();service.native_controls.ended(identity)
+    result.update(attempt_id=identity,task_id=task['id'],owner=attempt['owner'],ended_at=time.time(),runtime_mode='official',
+                  configuration='FROZEN_PARTNER_CONNECTION' if partner_task.selected(task) else 'VENDOR_DEFAULTS',extra_task_limits=False,implementation_revision=service.implementation)
+    from .attachments import summary
+    result['attachments']=summary(service.store,task,attempt) if not resume else []
+    if result['state']=='COMPLETED' and (not result.get('known_tools_exited') or (result.get('owned_job') or {}).get('active_processes')!=0):result['state']='SEND_UNKNOWN'
+    try:atomic_json(service.locations.data/'tasks'/task['id']/'attempts'/identity/'result.json',result)
+    except OSError as exc:
+        result['state']='SEND_UNKNOWN';result.setdefault('errors',[]).append({'artifact_save_error':str(exc)})
+    with service.store.write() as db:
+        service.store.update_attempt(identity,result['state'],db=db,result=result)
+        db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),identity))
+        service.store.event(task['id'],identity,'attempt_result_saved',result,db)
+
+
+def _legacy_run(service,task,attempt,tools,stop,resume,note):
+    entered=False
+    try:
         locations=service.resources.verify_run(task)
         from .attachments import prepare
         if not resume:
@@ -194,16 +237,5 @@ def run(service, identity, stop, resume_mode, note):
         result={'state':'SEND_UNKNOWN' if entered else 'FAILED_NO_SEND','answer':'','errors':[{'class':type(exc).__name__,'message':str(exc)[:1200]}],
                 'known_tools_exited':not entered,'owned_job':{'active_processes':0} if not entered else None}
     finally:
-        stop.set();service.native_controls.ended(identity)
-    result.update(attempt_id=identity,task_id=task['id'],owner=attempt['owner'],ended_at=time.time(),runtime_mode='official',
-                  configuration='VENDOR_DEFAULTS',extra_task_limits=False,implementation_revision=service.implementation)
-    from .attachments import summary
-    result['attachments']=summary(service.store,task,attempt) if not resume else []
-    if result['state']=='COMPLETED' and (not result.get('known_tools_exited') or (result.get('owned_job') or {}).get('active_processes')!=0):result['state']='SEND_UNKNOWN'
-    try:atomic_json(service.locations.data/'tasks'/task['id']/'attempts'/identity/'result.json',result)
-    except OSError as exc:
-        result['state']='SEND_UNKNOWN';result.setdefault('errors',[]).append({'artifact_save_error':str(exc)})
-    with service.store.write() as db:
-        service.store.update_attempt(identity,result['state'],db=db,result=result)
-        db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),identity))
-        service.store.event(task['id'],identity,'attempt_result_saved',result,db)
+        stop.set()
+    return result

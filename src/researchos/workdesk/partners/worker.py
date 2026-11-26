@@ -20,6 +20,7 @@ import uuid
 
 from .gateway import RunGateway
 from .launch import build_launch
+from .permissions import checked as checked_permission, apply_acp, validate_codex_receipt
 from .auth import LoginOutput, redact_login_chunk
 from .providers import validate_binding
 
@@ -122,6 +123,7 @@ class PartnerWorker:
         self.process = None
         self.rpc = None
         self.spec = None
+        self.permission = None
         self.session_id = config.get("session_id") or (("sess_" + uuid.uuid4().hex) if config.get("partner_id") == "glm" else str(uuid.uuid4()))
         self.thread_id = self.turn_id = None
         self.requests = {}
@@ -164,6 +166,8 @@ class PartnerWorker:
         self.output(self.clean(data))
 
     def start(self):
+        if self.config.get("mode", "run") == "run":
+            self.permission = checked_permission(self.config)
         if self.config.get("route") == "api" and self.config.get("mode", "run") == "run":
             provider = validate_binding(self.config)
             self.config["api_provider"] = provider["id"]
@@ -190,6 +194,9 @@ class PartnerWorker:
                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.emit(type="event", kind="native_process_started", pid=self.process.pid, native_protocol=self.spec.protocol,
                   limitations=self.spec.limitations, route=self.spec.route)
+        if self.permission:
+            self.emit(type="event", kind="native_permission_configured", resolved_permission=self.permission,
+                      permission_source=self.config.get("permission_source", "SAFE_DEFAULT"), source="FROZEN_NATIVE_CONFIGURATION")
         self.stderr_thread = threading.Thread(target=self._stderr, daemon=True)
         self.stderr_thread.start()
         self.run_thread = threading.Thread(target=self._run, daemon=True)
@@ -408,6 +415,10 @@ class PartnerWorker:
         else:
             result = self.rpc.request("session/new", {"cwd": self.spec.cwd, "mcpServers": []})
             self.session_id = result["sessionId"]
+        permission = self.permission or checked_permission(self.config)
+        if permission["native"]["transport"] == "acp":
+            receipt = apply_acp(self.rpc, result, self.session_id, permission)
+            self.emit(type="event", kind="native_permission_applied", resolved_permission=permission, native=receipt)
         if self.spec.partner_id == "gemini" and self.gateway:
             aliases = {m.get("modelId") for m in (result.get("models") or {}).get("availableModels", [])}
             aliases.discard(None)
@@ -465,12 +476,16 @@ class PartnerWorker:
             return
         options = self.config.get("options") or {}
         params = {"cwd": self.spec.cwd, "model": self.config.get("model")}
-        for key in ("approvalPolicy", "sandbox", "serviceTier", "personality"):
+        for key in ("serviceTier", "personality"):
             if key in options:
                 params[key] = options[key]
+        permission = self.permission or checked_permission(self.config)
+        params.update(permission["native"]["thread"])
         if self.config.get("resume"):
             params["threadId"] = self.session_id
         result = self.rpc.request("thread/resume" if self.config.get("resume") else "thread/start", params)
+        validate_codex_receipt(result, permission)
+        self.emit(type="event", kind="native_permission_applied", resolved_permission=permission, source="OFFICIAL_THREAD_CONFIGURATION_RECEIPT")
         self.thread_id = self.session_id = result["thread"]["id"]
         self.emit(type="event", kind="native_session_bound", native=result)
         result = self.rpc.request("turn/start", {"threadId": self.thread_id,
@@ -556,10 +571,16 @@ class PartnerWorker:
             return
         workspace = {"workspaceKey": str(uuid.uuid5(uuid.NAMESPACE_URL, self.spec.cwd)), "workspacePath": self.spec.cwd}
         params = {"sessionId": self.session_id, "workspace": workspace}
+        permission = self.permission or checked_permission(self.config)
         if not self.config.get("resume"):
-            params["mode"] = (self.config.get("options") or {}).get("mode", "guarded")
+            params["mode"] = permission["native"]["mode"]
         result = self.rpc.request("session/resume" if self.config.get("resume") else "session/create", params)
         self.session_revision = result.get("revision")
+        if self.config.get("resume"):
+            result = self.rpc.request("session/setMode", {"sessionId": self.session_id, "expectedRevision": self.session_revision,
+                                                          "mode": permission["native"]["mode"]})
+            self.session_revision = result.get("revision", self.session_revision)
+        self.emit(type="event", kind="native_permission_applied", resolved_permission=permission, source="OFFICIAL_SESSION_MODE_RECEIPT")
         self.emit(type="ready", native=result)
         self.rpc.request("session/subscribe", {"sessionId": self.session_id, "deliveryKind": "desktop-continuous", "includeSnapshot": False})
         self.rpc.request("session/send", {"sessionId": self.session_id, "content": self.config.get("prompt", ""), "inputId": str(uuid.uuid4())})

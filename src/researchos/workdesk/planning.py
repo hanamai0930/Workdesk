@@ -11,6 +11,7 @@ from .contracts import bounded_text,integer
 from .store import ACTIVE,UNKNOWN,digest,uid
 
 MARKER='WORKDESK_GOAL_COMPLETE'
+PARTNER_CONTINUATION_REASON='此伙伴连接的原会话自动接续尚未接通；请使用普通工作或合作重复计划，不以新会话代替原上下文。'
 
 
 def zone(locations,name):
@@ -46,10 +47,23 @@ class Planning:
 
     def catalog(self):
         with self.s.store.read() as db:
+            from .partner_connections import projection
+            partners=projection(db)
+            profiles=self.s.profiles.list(db)
+            legacy={p['id'] for p in profiles}
+            tasks=[{'id':r['id'],'title':r['title'],'state':r['state'],
+                    'can_schedule':self.s.store.task(r['id'],db)['spec'].get('execution')!='partner_native',
+                    'reason':PARTNER_CONTINUATION_REASON if self.s.store.task(r['id'],db)['spec'].get('execution')=='partner_native' else ''}
+                   for r in self.s.work_records.catalog(db,True)['records'] if r['kind']=='task' and r['state']=='COMPLETED'
+                   and self.s.store.task(r['id'],db)['spec'].get('runtime_mode')=='official']
             return {**self.cooperative.catalog(db),'schedules':self.c.all(db,'scheduled_job'),'goals':self.c.all(db,'goal_job'),'legacy':self.c.all(db,'ui_schedule'),
                     'fixed_schedules':self.s.work_flows.schedule_catalog(db),
-                    'projects':self.s.work_records.projects(db),'tasks':[{'id':r['id'],'title':r['title'],'state':r['state']} for r in self.s.work_records.catalog(db,True)['records'] if r['kind']=='task' and r['state']=='COMPLETED' and self.s.store.task(r['id'],db)['spec'].get('runtime_mode')=='official'],
-                    'providers':[{'id':p['id'],'name':p['name']} for p in self.s.profiles.list()],
+                    'projects':self.s.work_records.projects(db),'tasks':tasks,
+                    'providers':[{**p,'legacy_auto_goal_supported':p['id'] in legacy,'legacy_available':p['id'] in legacy,
+                                  'auto_goal_supported':False,'reason':PARTNER_CONTINUATION_REASON} for p in partners['partners']],
+                    'partner_connections':[{**c,'auto_continue_supported':False,'auto_goal_supported':False,
+                                            'continuation_reason':PARTNER_CONTINUATION_REASON,'reason':c.get('reason') or PARTNER_CONTINUATION_REASON}
+                                           for c in partners['connections']],
                     'service_required':True,'wake_when_closed':False,'missed_policy':'SKIP_NO_CATCHUP','no_dispatch':True}
 
     def checked(self,db,p):
@@ -62,6 +76,7 @@ class Planning:
     def eligible(self,db,identity):
         t=self.s.store.task(identity,db);self.s.work_records.guard(db,'task',identity);self.s.monitor.guard(db,{'task_id':identity})
         if t['spec'].get('runtime_mode')!='official':raise ValueError('本页自动接续只用于官方独立工作；有限任务沿用原计划机制。')
+        if t['spec'].get('execution')=='partner_native':raise ValueError(PARTNER_CONTINUATION_REASON)
         if not self.s.independent.describe(t['spec']['provider'])['native_resume']:raise ValueError('此工作端不支持当前原生接续。')
         a=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(identity,)).fetchone()
         a=self.s.store.attempt_row(a) if a else None
@@ -87,8 +102,13 @@ class Planning:
 
     def goal_save(self,db,p):
         if p.get('confirm') is not True:raise ValueError('请确认目标会连续调用所选官方工作端。')
+        if any(k in p for k in ('connection_id','connection_revision','partner_connection','resource_selection','parser_reference')):
+            raise ValueError(PARTNER_CONTINUATION_REASON)
         project=p.get('project_id');self.s.file_inspector.project(db,project)
-        provider=p.get('provider','codex');defaults=self.s.profiles.defaults(provider)
+        provider=p.get('provider','codex')
+        from .independent import SERVICES
+        if provider not in SERVICES:raise ValueError(PARTNER_CONTINUATION_REASON)
+        defaults=self.s.profiles.defaults(provider)
         from .native_permissions import choice
         access=choice(p.get('access'));checks=p.get('checks',[])
         if not isinstance(checks,list) or len(checks)>20:raise ValueError('完成文件检查最多20项。')
@@ -107,7 +127,11 @@ class Planning:
         if state not in {'RUNNING','PAUSED','CANCELLED'} or row['state'] in {'COMPLETE','MODEL_COMPLETE_REVIEW','CANCELLED'}:raise ValueError('此状态不能继续操作。')
         if state=='RUNNING':
             if p.get('confirm') is not True:raise ValueError('请明确确认自动运行。')
+            if row.get('partner_connection') or row.get('connection_id'):
+                raise ValueError(PARTNER_CONTINUATION_REASON)
             if row.get('task_id'):
+                if self.s.store.task(row['task_id'],db)['spec'].get('execution')=='partner_native':
+                    raise ValueError(PARTNER_CONTINUATION_REASON)
                 self.s.monitor.guard(db,{'task_id':row['task_id']});self.s.work_records.guard(db,'task',row['task_id'])
             if kind=='scheduled_job' and row['due']<=time.time():
                 if row['frequency']=='once':raise ValueError('一次计划已错过，请新建执行时间，不补发。')
@@ -122,6 +146,8 @@ class Planning:
     def advance(self,db,p):
         kind,row=self.checked(db,p)
         if row['state']!='RUNNING':return {'no_dispatch':True}
+        if row.get('partner_connection') or row.get('connection_id'):
+            raise ValueError(PARTNER_CONTINUATION_REASON)
         if row.get('credential_revision')!=self.s.locations.credential_revision:raise ValueError('账号引用已变化，请核对后重新确认自动计划。')
         if kind=='scheduled_job' and row['due']>time.time():return {'no_dispatch':True}
         if kind=='scheduled_job' and time.time()-row['due']>300:
@@ -132,6 +158,7 @@ class Planning:
         scope=None
         if row.get('task_id'):
             task=self.s.store.task(row['task_id'],db);self.s.monitor.guard(db,{'task_id':task['id']});self.s.work_records.guard(db,'task',task['id'])
+            if task['spec'].get('execution')=='partner_native':raise ValueError(PARTNER_CONTINUATION_REASON)
             a=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(task['id'],)).fetchone();a=self.s.store.attempt_row(a)
             worker=self.s.workers.get(a['id'])
             if a['state'] in ACTIVE or worker and worker['thread'].is_alive():return {'no_dispatch':True}

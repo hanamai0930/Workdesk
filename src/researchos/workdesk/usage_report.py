@@ -109,7 +109,7 @@ def gateway_records(db,start,end):
                AND json_extract(e.payload,'$.request_id')=r.id ORDER BY e.seq LIMIT 1),
             json_extract(a.result,'$.model'),json_extract(t.spec,'$.model')) AS model
         FROM requests r JOIN tasks t ON t.id=r.task_id JOIN attempts a ON a.id=r.attempt_id
-        WHERE r.created>=? AND r.created<?
+        WHERE r.created>=? AND r.created<? AND coalesce(json_extract(t.spec,'$.execution'),'')!='partner_native'
     """, (start,end)):
         yield record(row['provider'],row['model'],'gateway',row['created'],row['state'],
                      usage(json.loads(row['usage']) if row['usage'] else None),id=row['id'],time_basis='request_created',
@@ -124,6 +124,7 @@ def sdk_records(db,start,end):
                       ORDER BY e.seq LIMIT 1),json_extract(t.spec,'$.model')) AS model
         FROM attempts a JOIN tasks t ON t.id=a.task_id
         WHERE a.started>=? AND a.started<? AND json_extract(t.spec,'$.provider')='qwen'
+          AND coalesce(json_extract(t.spec,'$.execution'),'')!='partner_native'
           AND json_type(a.result,'$.protocol_result.usage')='object'
           AND NOT EXISTS (SELECT 1 FROM requests WHERE attempt_id=a.id)
     """,(start,end)):
@@ -139,6 +140,7 @@ def sdk_records(db,start,end):
         FROM attempts a JOIN tasks t ON t.id=a.task_id
         JOIN events e ON e.task_id=t.id AND e.attempt_id=a.id
         WHERE e.at<? AND json_extract(t.spec,'$.provider')='deepseek'
+          AND coalesce(json_extract(t.spec,'$.execution'),'')!='partner_native'
           AND json_extract(t.spec,'$.runtime_mode')='official' AND e.kind='model_event'
           AND json_extract(e.payload,'$.payload.event.type')='assistant/message'
           AND json_type(e.payload,'$.payload.event.data.usage')='object'
@@ -174,6 +176,7 @@ def codex_records(db,start,end):
         FROM attempts a JOIN tasks t ON t.id=a.task_id
         JOIN events e ON e.task_id=t.id AND e.attempt_id=a.id
         WHERE a.started<? AND json_extract(t.spec,'$.provider')='codex' AND a.session_id IS NOT NULL
+          AND coalesce(json_extract(t.spec,'$.execution'),'')!='partner_native'
           AND e.kind IN ('turn_send_intent','native_token_usage_observation')
         ORDER BY a.started,a.id,e.seq
     """,(end,)):

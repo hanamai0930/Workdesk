@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from decimal import Decimal
 
 from .deepseek_pricing import estimate
 
@@ -128,20 +129,23 @@ def _record(run, account, value, at, source, identity, *, protocol=None, model=N
     price = estimate(api, model, numbers, at, 'response_observed') if api == 'deepseek' and connection.get('route') == 'api' else None
     return {'id': identity, 'provider': api or partner, 'partner_id': partner, 'api_provider': api,
             'account_id': run.get('account_id'), 'account_label': account.get('label'), 'route': connection.get('route') or 'account',
-            'run_id': run['id'], 'task_id': run['id'], 'attempt_id': run['id'], 'model': model, 'source': source,
+            'run_id': run['id'], 'task_id': run.get('parent_task_id') or run['id'], 'attempt_id': run.get('parent_attempt_id') or run['id'],
+            'parent_task_id':run.get('parent_task_id'),'parent_attempt_id':run.get('parent_attempt_id'), 'model': model, 'source': source,
             'at': at, 'status': run.get('state'), **numbers, 'estimate': price,
             'request_intents': intents, 'has_request_receipt': received, 'usage_scope': scope,
             'usage_complete': numbers['tokens'] is not None and scope != 'UNIDENTIFIED_NATIVE_MESSAGE',
             'usage_note': '仅最后原生用量观测；缺少消息身份，不能证明全程计费总量' if scope == 'UNIDENTIFIED_NATIVE_MESSAGE' else None}
 
 
-def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None):
+def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None,parent_attempt_ids=None):
     if not has_partner_tables(db):
         return
     accounts = {row['id']: row for row in objects(db, 'account')}
     event_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_events'").fetchone()
     for run in objects(db, 'run'):
         if run.get('mode') != 'run' or (run_id is not None and run['id'] != run_id):
+            continue
+        if parent_attempt_ids is not None and run.get('parent_attempt_id') not in parent_attempt_ids:
             continue
         connection = run.get('connection_snapshot') or {}
         if any(selected != 'all' and selected != actual for selected, actual in ((partner_id, run.get('partner_id')),
@@ -246,6 +250,8 @@ def work_report(db, identity=None, records=None):
     for run in runs.values():
         if identity is not None and run['id'] != identity:
             continue
+        if identity is None and run.get('parent_task_id'):
+            continue
         rows = by_run.get(run['id'], [])
         if bounded and not rows:
             continue
@@ -289,3 +295,24 @@ def account_overview(db, records):
                     'request_intents': sum(row.get('request_intents', 0) for row in observed),
                     'unknown_usage_records': sum(not row['usage_complete'] for row in observed)})
     return rows
+
+
+def parent_budget_usage(db, attempt_ids,task_by_attempt=None):
+    """Additive budget view; no mirrored request or usage rows are written."""
+    runs={run['id']:run for run in objects(db,'run') if run.get('mode')=='run' and run.get('parent_attempt_id') in attempt_ids
+          and (task_by_attempt is None or run.get('parent_task_id')==task_by_attempt[run['parent_attempt_id']])}
+    rows=[row for row in run_records(db,parent_attempt_ids=attempt_ids) if row['run_id'] in runs]
+    rows=[row for row in rows if not (runs[row['run_id']].get('state') in {'FAILED_NO_SEND','CANCELLED'}
+          and row.get('request_intents',0)==0 and not row.get('has_request_receipt') and row['tokens'] is None)]
+    values=lambda key:[row[key] for row in rows if row[key] is not None]
+    estimates=[Decimal(row['estimate']['amount']) for row in rows if row.get('estimate')]
+    unknown_charge=sum(not row.get('estimate') or not row.get('usage_complete') for row in rows)
+    pending=sum(run.get('state') not in {'COMPLETED','FAILED','FAILED_NO_SEND','CANCELLED','STOPPED_RUNTIME'} for run in runs.values())
+    return {'model_requests':sum(max(row.get('request_intents',0),int(row.get('has_request_receipt') is True)) for row in rows),
+            'request_intents':sum(row.get('request_intents',0) for row in rows),
+            'api_known_input_tokens':sum(values('input')),'api_known_output_tokens':sum(values('output')),
+            'api_requests_without_token_receipt':sum(row['tokens'] is None for row in rows),
+            'unknown_usage_records':sum(not row.get('usage_complete') for row in rows),
+            'unknown_requests':pending,'unknown_charge_records':unknown_charge,
+            'known_estimated_cny':float(sum(estimates,Decimal(0))),
+            'partner_run_ids':list(runs),'accounting_source':'CORE_PARTNER_RECEIPTS; INTENTS_ARE_NOT_BILLED_CALLS'}

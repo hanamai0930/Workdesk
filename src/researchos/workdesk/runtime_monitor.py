@@ -4,6 +4,26 @@ import time
 
 from .store import ACTIVE,UNKNOWN,uid
 from .execution_constraints import blockers,remote_state
+from .partner_usage import objects as partner_objects
+
+_PARTNER_TERMINAL={'COMPLETED','FAILED','FAILED_NO_SEND','CANCELLED','STOPPED_RUNTIME'}
+
+
+def _partner_row(run,accounts):
+    account=accounts.get(run.get('account_id'),{})
+    connection=run.get('connection_snapshot') or {}
+    pending=run.get('pending_requests') or []
+    return {'id':run['id'],'kind':'partner_run','href':'#work/partners/run/'+run['id'],
+            'title':str(run.get('prompt') or '伙伴工作')[:160],'partner_id':run.get('partner_id'),'provider':run.get('partner_id'),
+            'account_id':run.get('account_id'),'account_label':account.get('label'),'route':connection.get('route'),
+            'api_provider':(connection.get('api_provider') or connection.get('driver_provider') or 'deepseek') if connection.get('route')=='api' else None,
+            'model':run.get('resolved_model') or connection.get('model'),'state':run.get('state'),'created':run.get('created'),
+            'started':run.get('created'),'stop_requested':run.get('stop_requested') is True,
+            'pending_approvals':sum(row.get('kind')=='approval' for row in pending),
+            'pending_inputs':sum(row.get('kind')=='input' for row in pending),
+            'remote_state':run.get('remote_state','UNKNOWN'),'known_tools_exited':run.get('local_exit_confirmed') is True,
+            'local_worker_alive':False if run.get('local_exit_confirmed') is True else None,
+            'owned_process':run.get('owned_process'),'error':run.get('error'),'read_only':True}
 
 
 class RuntimeMonitor:
@@ -14,16 +34,22 @@ class RuntimeMonitor:
         if scope not in {'attention','all'}:raise ValueError('监控筛选无效。')
         rows=[]
         with self.s.store.read() as db:
+            partners=partner_objects(db,'run')
+            accounts={row['id']:row for row in partner_objects(db,'account')}
             manual={r['task_id']:r for r in self.c.all(db,'manual_control')}
             for r in db.execute("SELECT coalesce(json_extract(d.data,'$.title'),t.title) AS title,json_extract(t.spec,'$.provider') AS provider,json_extract(t.spec,'$.runtime_mode') AS runtime_mode,a.* FROM tasks t JOIN attempts a ON a.id=(SELECT id FROM attempts WHERE task_id=t.id ORDER BY started DESC LIMIT 1) LEFT JOIN collaboration d ON d.kind='display' AND d.id='display:task:'||t.id WHERE coalesce(json_extract(d.data,'$.deleted'),0)=0 AND coalesce(json_extract(t.spec,'$.interaction'),'')!='chat' ORDER BY a.started DESC"):
                 a=self.s.store.attempt_row(r);task_id=a['task_id'];control=manual.get(task_id)
                 task=self.s.store.task(task_id,db);reasons=blockers(self.s,db,task,a)
+                candidates=[run for run in partners if run.get('mode')=='run' and run.get('parent_task_id')==task_id and run.get('parent_attempt_id')==a['id']]
+                linked=[run for run in candidates if not run.get('parent_spec_hash') or run['parent_spec_hash']==task.get('spec_hash')]
+                partner=linked[0] if len(linked)==1 else None
+                association_unknown=bool(candidates) and partner is None
                 items=[]
                 for item in db.execute("SELECT w.id,w.title FROM work_items w JOIN work_item_records r ON w.id=r.item_id WHERE r.kind='task' AND r.record_id=?",(task_id,)):
                     hold=self.s.work_runtime.manual(db,item['id'])
                     items.append({**dict(item),'manual':bool(hold and hold['state']=='MANUAL'),
                                   'driver_held':self.s.work_drivers.held(db,item['id'])})
-                if scope=='attention' and not reasons and a['state'] not in ACTIVE|UNKNOWN and not (control and control['state']=='MANUAL') and not any(i['manual'] for i in items):continue
+                if scope=='attention' and not reasons and a['state'] not in ACTIVE|UNKNOWN and not (control and control['state']=='MANUAL') and not any(i['manual'] for i in items) and not (partner and partner.get('state') not in _PARTNER_TERMINAL) and not association_unknown:continue
                 worker=self.s.workers.get(a['id']);result=a.get('result') or {}
                 pending=db.execute("SELECT COUNT(*) FROM native_requests WHERE attempt_id=? AND state='PENDING'",(a['id'],)).fetchone()[0]
                 pending+=db.execute("SELECT COUNT(*) FROM approvals WHERE attempt_id=? AND state='PENDING'",(a['id'],)).fetchone()[0]
@@ -47,6 +73,17 @@ class RuntimeMonitor:
                              'local_worker_alive':bool(worker and worker['thread'].is_alive()),'known_tools_exited':self.s.operations.exit_proved(a),
                               'remote_state':remote_state(task,a),'block_reasons':reasons,'pending_approvals':pending,
                              'manual_control':control,'work_items':items,'reconciliation':a.get('reconciliation'),'native_operations':[{k:o.get(k) for k in ('id','attempt_id','operation','state','error','created')} for o in self.s.native_controls.rows(db,task_id)[:3]]})
+                if partner:
+                    core_row=_partner_row(partner,accounts)
+                    rows[-1].update(partner_run_id=partner['id'],partner_run_state=partner.get('state'),partner_href='#work/partners/run/'+partner['id'],
+                                    state=partner.get('state'),can_steer=False,partner_run=core_row,
+                                    pending_approvals=core_row['pending_approvals'],pending_inputs=core_row['pending_inputs'])
+                elif association_unknown:
+                    rows[-1].update(state='ORPHANED_UNKNOWN',can_steer=False,partner_run_ids=[run['id'] for run in candidates],
+                                    partner_binding_problem='子运行数量或冻结任务身份不符；保留未知，不推断完成')
+            partner_runs=[_partner_row(run,accounts) for run in partners if run.get('mode')=='run' and not run.get('parent_task_id')
+                          and (scope=='all' or run.get('state') not in _PARTNER_TERMINAL or run.get('pending_requests'))]
+            partner_runs.sort(key=lambda row:(-(row['started'] or 0),row['id']))
             api_chats=[];seen=set()
             for turn in sorted(self.c.all(db,'ui_chat_turn'),key=lambda t:t['created'],reverse=True):
                 if turn['chat_id'] in seen:continue
@@ -57,7 +94,7 @@ class RuntimeMonitor:
                                   'local_worker_alive':bool(worker and worker['thread'].is_alive()),'stop_requested':turn.get('stop_requested',False),
                                   'error':turn.get('error'),'usage':turn.get('usage'),'model':turn['config']['model'],
                                   'can_stop':chat.get('pending')==turn['id'] and turn['state'] in ACTIVE,'remote_state':'UNKNOWN','agent_dispatch':False})
-        return {'runs':rows[:200],'api_chats':api_chats[:200],'limited':len(rows)>200 or len(api_chats)>200,'scope':scope,'checked_at':time.time(),'no_dispatch':True,'health':self.s.health()}
+        return {'runs':rows[:200],'partner_runs':partner_runs[:200],'api_chats':api_chats[:200],'limited':len(rows)>200 or len(api_chats)>200 or len(partner_runs)>200,'scope':scope,'checked_at':time.time(),'no_dispatch':True,'health':self.s.health()}
 
     def takeover(self,db,p):
         task,a=self.s._latest(db,p);self.s.work_records.guard(db,'task',task['id'])

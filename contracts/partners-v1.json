@@ -98,6 +98,23 @@
     "quota": "NATIVE_ACCOUNT_QUOTA_UNKNOWN_UNLESS_OFFICIALLY_REPORTED; LEGACY_QUOTA_STAYS_LEGACY"
   },
   "connection_launcher": "ORIGINAL_connect_FULL_PAGE; SAME_VERSIONED_WORK_AND_API_RECORDS; WEBSITE_CHAT_CONFIRMATIONS_INDEPENDENT",
+  "business_projection": "workspace.partner_connections; EXACT_CONNECTION_ACCOUNT_RELEASE_API_AND_MODEL; PER_CONNECTION_MEMBERS; LEGACY_RECORDS_RETAIN_THEIR_ORIGINAL_ROUTE",
+  "permission_catalog": {
+    "path": "src/researchos/workdesk/partners/permissions.json",
+    "binding": "resolved_permission={partner_id,value,native,catalog_sha256}; permission_source_FROZEN_AT_ADMISSION",
+    "defaults": "EIGHT_PARTNERS; OLD_THREE_PREFERENCES_PRESERVED; SUPPORTED_NATIVE_MODES_ONLY",
+    "full_access": "EXPLICIT_PER_WORK_CONFIRMATION; NEVER_INFERRED_FROM_AUTO",
+    "configuration_revision": "VERIFICATION_OBSERVATIONS_DO_NOT_CHANGE_CONNECTION_CONFIGURATION_REVISION"
+  },
+  "partner_task_bridge": {
+    "transport": "PRIVATE_OWNER_EPOCH_BOUND_RPC_AFTER_PARENT_TRANSACTION_COMMIT",
+    "methods": ["partner.task.start", "partner.task.poll", "partner.task.stop"],
+    "binding": "EXACT_TASK_ATTEMPT_SPEC_HASH_CONNECTION_REVISION_ACCOUNT_CREDENTIAL_GENERATION_RELEASE_WORKSPACE",
+    "admission": "ONE_RUN_PER_PARENT_ATTEMPT; SAME_COMMAND_ID; UNKNOWN_REUSES_ORIGINAL_RUN; NO_REPLACEMENT_DISPATCH",
+    "relationship": "parent_task_id; parent_attempt_id; parent_spec_hash; ORIGINAL_RUN_RESULT_AND_SESSION",
+    "accounting": "ORIGINAL_CHILD_RECEIPTS_ONCE; PARENT_MIRRORS_EXCLUDED; UNKNOWN_COST_NOT_ZERO",
+    "continuation": "UNVERIFIED_ORIGINAL_SESSION_RESUME_AND_PER_TASK_MCP_COMBINATIONS_EXPLICITLY_UNAVAILABLE"
+  },
   "official_account_state": {
     "auth_state": ["AUTHENTICATED", "UNAUTHENTICATED", "UNKNOWN"],
     "login_attempt": "login_run_id; login_state; login_release_id; SEPARATE_FROM_AUTHENTICATION_FACT",

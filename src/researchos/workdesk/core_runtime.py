@@ -78,6 +78,9 @@ def freeze(base, data, executable):
     api_catalog = base / 'src/researchos/workdesk/partners/api_providers.json'
     if api_catalog.is_file():
         names.append(api_catalog)
+    permission_catalog = base / 'src/researchos/workdesk/partners/permissions.json'
+    if permission_catalog.is_file():
+        names.append(permission_catalog)
     names.extend(p for p in (base / 'workdesk-ui').glob('*.py') if p.is_file())
     names.extend(p for p in (base / 'workdesk-ui/archive_sources').glob('*.py') if p.is_file())
     for folder in ('workdesk-ui/static', 'workdesk-ui/dist'):

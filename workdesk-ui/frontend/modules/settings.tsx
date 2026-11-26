@@ -15,7 +15,13 @@ import { SettingsExtensions, SettingsManagementSummary } from './settings-extens
 
 type Destination = { name: string; href: string; Icon: ComponentType; aliases: string };
 type NoticeKind = 'approval' | 'failure' | 'review';
-type WorkProvider = 'codex' | 'deepseek' | 'qwen';
+type WorkAccessValue = 'workspace' | 'auto' | 'full';
+type WorkAccessOption = {
+  partner_id: string;
+  name: string;
+  default: WorkAccessValue;
+  modes: { id: WorkAccessValue; name: string; description?: string; supported: boolean; reason?: string }[];
+};
 type Snapshot = {
   launch: string;
   close: string;
@@ -24,10 +30,12 @@ type Snapshot = {
   assistantNickname?: string;
   notifications: Record<NoticeKind, boolean>;
   connectionNoticeSeconds: number;
-  workAccess: Record<WorkProvider, 'workspace' | 'auto'>;
+  workAccess: Record<string, WorkAccessValue>;
+  workAccessOptions?: WorkAccessOption[];
   lastRecovery?: {at: number; source: 'defaults' | 'backup'; original: string};
-  recovery?: {revision: string; backup: {workDirectory: string; workAccess: Record<WorkProvider, string>} | null};
+  recovery?: {revision: string; backup: {workDirectory: string; workAccess: Record<string, string>} | null};
   chatApiModels?: Record<string, string[]>;
+  chatWebProviders?: {id: string; name: string}[];
   chatDefaults?: {route: string; model: string; provider: string; apiProvider?: string} | null;
   workDirectory?: string;
 };
@@ -88,7 +96,6 @@ const searchable = [
 ];
 const overview: Destination = { name: '总览', href: '#settings', Icon: LayoutGrid, aliases: '设置 概览' };
 const noticeLabels: Record<NoticeKind, string> = { approval: '需要我审批', failure: '运行失败', review: '成果待验收' };
-const providerLabels: Record<WorkProvider, string> = { codex: 'Codex', deepseek: 'DeepSeek', qwen: 'Qwen' };
 const shortcutRows = [
   ['在设置中搜索', ['Ctrl', 'K']],
   ['在工作台搜索记录', ['Ctrl', 'K']],
@@ -389,7 +396,7 @@ export function SettingsPage(props: SettingsProps) {
   const { page = '', theme, appearance, focus } = props;
   const active = destinations.find(item => item.href === '#settings/' + page);
   const [search, setSearch] = useState('');
-  const [provider, setProvider] = useState<WorkProvider>('codex');
+  const [provider, setProvider] = useState('codex');
   const [pendingPreference, setPendingPreference] = useState(false);
   const [message, setMessage] = useState('');
   const [messageKind, setMessageKind] = useState<'saving'|'success'|'error'>('success');
@@ -465,6 +472,10 @@ export function SettingsPage(props: SettingsProps) {
   }
 
   const blocked = pendingPreference || !!preferences?.recovery;
+  const accessOptions = preferences?.workAccessOptions || [];
+  const selectedAccess = accessOptions.find(option => option.partner_id === provider) || accessOptions[0];
+  const selectedAccessValue = selectedAccess && (preferences?.workAccess[selectedAccess.partner_id] || selectedAccess.default);
+  const selectedAccessMode = selectedAccess?.modes.find(mode => mode.id === selectedAccessValue);
   async function confirmRestore(){
     if(!restore || !bridge || pendingPreference)return;
     setPendingPreference(true);
@@ -543,8 +554,10 @@ export function SettingsPage(props: SettingsProps) {
                 unavailableLabel={(chat.model || '未选择型号') + ' · 当前 API 厂商不可用，请重新选择'}
                 onChange={model=>void save('chatDefaults',{...chat,apiProvider,model})} disabled={blocked || !models[apiProvider]?.length}/>
             </>}
-            {chat.route==='web' && <SelectRow label="默认官网" value={chat.provider} values={{codex:'ChatGPT',deepseek:'DeepSeek',qwen:'Qwen'}}
-              onChange={provider=>void save('chatDefaults',{...chat,provider})} disabled={blocked}/>}
+            {chat.route==='web' && <SelectRow label="默认官网" value={chat.provider}
+              values={Object.fromEntries((preferences.chatWebProviders || []).map(item => [item.id,item.name]))}
+              unavailableLabel="原官网当前不可用，请重新选择"
+              onChange={provider=>void save('chatDefaults',{...chat,provider})} disabled={blocked || !preferences.chatWebProviders?.length}/>}
           </> : <Row label="启动默认渠道"><span>DeepSeek API</span></Row>}
           <Row label="打开聊天"><LinkButton href="#chat">打开 Chat</LinkButton></Row>
         </Group>
@@ -555,16 +568,29 @@ export function SettingsPage(props: SettingsProps) {
     case 'access':
       content = preferences ? <>
         <Group title="新工作默认权限">
-          <Row label="工作端"><div className="wd-settings-theme" role="group" aria-label="权限偏好工作端">{Object.entries(providerLabels).map(([id, name]) =>
-            <Button key={id} variant="ghost" aria-pressed={provider === id} onClick={() => setProvider(id as WorkProvider)}>{name}</Button>
-          )}</div></Row>
-          <SelectRow label="默认审批方式" target="default" value={preferences.workAccess[provider]} disabled={blocked}
-            values={provider === 'deepseek' ? { workspace: '请求批准' } : { workspace: '请求批准', auto: '帮我批准' }}
-            onChange={value => void save('workAccess', { ...preferences.workAccess, [provider]: value })}/>
+          <Row label="工作端"><NativeSelect aria-label="权限偏好工作端" value={selectedAccess?.partner_id || ''}
+            disabled={!accessOptions.length} onChange={event => setProvider(event.currentTarget.value)}>
+            {!accessOptions.length && <option value="">暂无可用工作端</option>}
+            {accessOptions.map(option => <option key={option.partner_id} value={option.partner_id}>{option.name}</option>)}
+          </NativeSelect></Row>
+          {selectedAccess ? <>
+            <Row label="默认审批方式" target="default"><NativeSelect aria-label="默认审批方式" value={selectedAccessValue}
+              disabled={blocked || !selectedAccess.modes.some(mode => mode.supported)} onChange={event => {
+                const mode = selectedAccess.modes.find(item => item.id === event.currentTarget.value && item.supported);
+                if (mode) void save('workAccess', { ...preferences.workAccess, [selectedAccess.partner_id]: mode.id });
+              }}>
+              {!selectedAccessMode && <option value={selectedAccessValue} disabled>原权限当前不可用，请重新选择</option>}
+              {selectedAccess.modes.map(mode => <option key={mode.id} value={mode.id} disabled={!mode.supported}>
+                {mode.name}{!mode.supported ? '（不可用）' : ''}
+              </option>)}
+            </NativeSelect></Row>
+            {selectedAccessMode?.description && <p className="wd-settings-note">{selectedAccessMode.description}</p>}
+            {selectedAccess.modes.filter(mode => !mode.supported).map(mode => <p key={mode.id} className="wd-settings-note">{mode.name}：{mode.reason || '此工作端暂未支持。'}</p>)}
+          </> : <p className="wd-settings-note" role="status">尚未读取工作端权限，请重新读取偏好。</p>}
         </Group>
         <Group title="本次工作的访问范围">
           <Row label="文件、命令与网络"><LinkButton href="#work">在 Work 中查看</LinkButton></Row>
-          <p className="wd-settings-note">开始工作前，可按工作端支持的方式确认本次权限。完全访问在本次工作中单独选择。执行限制由所选工作端落实。</p>
+          <p className="wd-settings-note">默认权限用于之后的新工作；本次可用范围由所选工作端的原生权限模式决定。</p>
         </Group>
       </> : <p role="status">暂无可用的权限偏好。</p>;
       break;
@@ -632,7 +658,10 @@ export function SettingsPage(props: SettingsProps) {
           <Button variant="outline" onClick={()=>bridge?.reload().catch(error=>{setMessageKind('error');setMessage(error.message);})}>重新读取偏好</Button>
         </div> : <>
           <p>项目外目录：{restore==='backup' && preferences.recovery.backup?.workDirectory || 'Workdesk 默认目录（资料库下的 unfiled-work）'}</p>
-          <p>审批策略：{Object.entries(providerLabels).map(([key,name])=>name+' '+(restore==='backup' && preferences.recovery?.backup?.workAccess[key as WorkProvider]==='auto'?'自动审核':'请求批准')).join('，')}</p>
+          <p>审批策略：{accessOptions.length ? accessOptions.map(option => {
+            const mode = restore === 'backup' ? preferences.recovery?.backup?.workAccess[option.partner_id] || option.default : option.default;
+            return option.name + ' ' + (option.modes.find(item => item.id === mode)?.name || '待重新选择');
+          }).join('，') : '尚未读取工作端权限'}</p>
           <div className="wd-settings-actions"><Button disabled={pendingPreference} onClick={()=>void confirmRestore()}>{restore==='backup'?'确认恢复副本':'确认恢复默认设置'}</Button>
             <Button variant="outline" disabled={pendingPreference} onClick={()=>setRestore(null)}>取消恢复</Button></div>
         </>}

@@ -102,7 +102,14 @@ class Teamwork:
         if not isinstance(ref,dict):raise ValueError('请选择明确成员及当前连接。')
         selected=self.s.resources.selection(db,ref.get('member_id'))
         if ref!=selected['reference']:raise ValueError('成员、连接或额度来源已变化，请刷新后重新准备。')
-        return {'reference':selected['reference'],**{k:selected['member'][k] for k in ('name','role','provider','model','effort','tier')}}
+        member={'reference':selected['reference'],**{k:selected['member'][k] for k in ('name','role','provider','model','effort','tier')}}
+        connection=selected.get('connection') or {}
+        from .partner_task import is_binding
+        if is_binding(connection):
+            member['partner_connection']=dict(connection)
+        elif selected['member'].get('partner_connection'):
+            member['partner_connection']=dict(selected['member']['partner_connection'])
+        return member
 
     def save(self,db,p,*,daily=False,pdca=None):
         if set(p)-{'id','revision','current_plan','mode','coordinator','integrator','max_parallel','hard_cash_limit_cny','units','file_handoffs','access','member_access'}:
@@ -154,6 +161,9 @@ class Teamwork:
             if definition.get('scene_preset') is not None:
                 snapshot=self.s.scenes.freeze_selection(db,definition['scene_preset'],fixed=mode=='fixed' or daily)
                 units[-1]['scene_preset']={k:snapshot[k] for k in ('id','revision','snapshot_hash')}
+        if cash is not None and any(member.get('partner_connection') for member in
+                                    (coordinator,integrator,*(unit['member'] for unit in units))):
+            raise ValueError('当前伙伴连接不支持运行期间的硬费用上限；请保留工作回合与派发时间限制，或使用原有限任务路线。')
         PlanCommands.validate_graph({u['key']:u['depends'] for u in units})
         for unit in units:
             if unit['role']=='coordinate' and (mode=='fixed' or unit['member']['reference']!=coordinator['reference'] or
@@ -181,7 +191,7 @@ class Teamwork:
             'work_requirements':{k:item[k] for k in ('title','goal','constraints_text','acceptance')},
             'mode':mode,'coordinator':coordinator,'integrator':integrator,'max_parallel':limit,'hard_cash_limit_cny':cash,
             'units':units,'previous_plan':prior['id'] if prior else None,'state':'PREPARED','created':time.time()}
-        if any(unit['member']['provider']=='qwen' for unit in units):
+        if any(unit['member']['provider']=='qwen' and not unit['member'].get('partner_connection') for unit in units):
             route=prior.get('qwen_runtime','query') if prior else self.s.independent.qwen_selection(db)['interface']
             if route=='daemon':value['qwen_runtime']=route
         if mode=='fixed':

@@ -119,6 +119,8 @@ class NativeControls:
 
     def request(self,db,p):
         task=self.s.store.task(p.get('task_id'),db)
+        if task['spec'].get('execution')=='partner_native':
+            raise ValueError('请在当前伙伴运行面板处理审批、补充与停止；此高级原生操作尚未接到该准确连接。')
         if task['spec'].get('runtime_mode')!='official':raise ValueError('此入口只用于官方独立Work。')
         self.s.work_records.guard(db,'task',task['id'])
         workspace_selection=(p.get('params') or {}).get('_workspace_selection') if isinstance(p.get('params'),dict) else None

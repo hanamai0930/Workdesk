@@ -44,8 +44,12 @@ window.WorkdeskWorkDetail=(()=>{
   async function load(id,tab='overview'){
     const S=window.WorkdeskSupport;
     const get=(route,query)=>S.request(route+'?'+new URLSearchParams(query));
-    const [detail,catalog,accounting]=await Promise.all([
-      get('task',{id,after:Number.MAX_SAFE_INTEGER}),
+    const detail=await get('task',{id,after:Number.MAX_SAFE_INTEGER});
+    if(detail.task?.id!==id)throw Error('找不到对应的工作记录。');
+    const partnerRunId=detail.partner_run_id||detail.task.partner_run_id||detail.task.spec?.partner_run_id;
+    if(partnerRunId||detail.task.spec?.execution==='partner_native')return {kind:'work',title:detail.task.title,subtitle:'伙伴原生工作',projectId:detail.task.project_id,
+      partnerNative:true,partnerRunId,backHref:'#work/task/'+encodeURIComponent(id),workItems:detail.work_items||[],metadata:[],summaries:[],runs:[]};
+    const [catalog,accounting]=await Promise.all([
       get('result-catalog',{task:id}),
       tab==='usage'?get('work-usage',{id}).catch(()=>null):null
     ]);

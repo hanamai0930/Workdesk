@@ -394,8 +394,9 @@ class WorkUnits:
                 'generation': driver['generation'], 'driver_revision': driver['revision'], 'plan_id': plan['id'],
                 'plan_version': plan['version'], 'unit_key': unit['key'], 'unit_revision': digest(unit),
                 'input_version': digest(frozen), 'authorization': self.auth_ref(auth)}
-        if plan['mode'] == 'fixed' or selected['member']['provider']=='qwen':
-            meta['runtime_route'] = runtime_route(self.s, selected['member']['provider'], plan.get('qwen_runtime'))
+        if plan['mode'] == 'fixed' or selected['member']['provider']=='qwen' or selected.get('connection',{}).get('execution')=='partner_native':
+            meta['runtime_route'] = runtime_route(self.s, selected['member']['provider'], plan.get('qwen_runtime'),
+                                                connection=selected.get('connection'))
         if pdca and unit['outputs']:
             meta['delivery_outputs'] = unit['outputs']
         if check_rework:

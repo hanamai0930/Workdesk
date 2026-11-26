@@ -233,6 +233,8 @@ def _implementation_content(locations):
     sources=[p for p in Path(__file__).parent.rglob('*') if p.suffix in {'.py','.mjs'} and '__pycache__' not in p.parts]
     catalog=Path(__file__).parent/'partners/api_providers.json'
     if catalog.is_file():sources.append(catalog)
+    permissions=Path(__file__).parent/'partners/permissions.json'
+    if permissions.is_file():sources.append(permissions)
     return {p.relative_to(locations.base).as_posix():p.read_bytes() for p in sources}
 
 

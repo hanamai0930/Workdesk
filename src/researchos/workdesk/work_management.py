@@ -48,15 +48,32 @@ class WorkManagement:
                     tiers = entry.get('tiers', [])
                     if not entry.get('runnable') or not efforts or not tiers:
                         continue
-                    parser_models.append({'provider': profile['id'], 'model': entry['model'],
+                    parser_models.append({'id':'legacy-parser:'+digest([connection['id'],entry['model']]),
+                        'name':profile['name']+' · '+entry['model']+' · 旧工作端配置',
+                        'label':profile['name']+' · '+entry['model']+' · 旧工作端配置',
+                        'source_label':'旧工作端配置','provider': profile['id'], 'model': entry['model'],
                         'available': connection['available'], 'selection': {
                             'provider': profile['id'], 'model': entry['model'],
                             'effort': profile['effort'] if profile['effort'] in efforts else efforts[0],
                             'tier': profile['tier'] if profile['tier'] in tiers else tiers[0],
                             'connection_id': connection['id'], 'connection_revision': connection['revision']}})
+            for member in resources['members']:
+                if member.get('kind')!='partner_connection':continue
+                connection=next(c for c in resources['connections'] if c['id']==member['connection_id'])
+                selected=self.s.resources.selection(db,member['id']) if member['available'] else None
+                label=connection['name']+' · '+connection.get('model_label',member['model'])
+                parser_models.append({'id':'partner-parser:'+connection['id'],'member_id':member['id'],
+                    'provider':member['provider'],'model':member['model'],'name':label,'label':label,
+                    'source_label':connection.get('source_label'),'account_label':connection.get('account_label'),
+                    'available':member['available'],'reason':connection.get('reason'),
+                    'reference':selected['reference'] if selected else None,
+                    'selection':{**{k:member[k] for k in ('provider','model','effort','tier')},
+                                 'connection_id':connection['id'],'connection_revision':connection['revision']}})
             appearance = getattr(self.s.ui_features, 'appearance', None)
             return {'requests': rows[:100], 'scenes': scenes,
-                    'members': resources['members'], 'connections': resources['connections'],
+                    'members':[{**member,'management_editable':member.get('kind')!='partner_connection',
+                                'management_reason':'此项由伙伴连接生成，请在伙伴连接页调整账号、API、模型或名称。' if member.get('kind')=='partner_connection' else ''}
+                               for member in resources['members']], 'connections': resources['connections'],
                     'endpoints': resources['endpoints'], 'parser_models': parser_models,
                     'settings': appearance.catalog(db) if appearance else None,
                     'scope_kinds': sorted(KINDS), 'authorization': 'ORIGINAL_USER_REQUEST',
@@ -85,6 +102,8 @@ class WorkManagement:
         if kind in {'scene', 'skills'}:
             return self.s.collaboration.get(db, 'scene_preset', scope.get('target_id'))
         if kind == 'member':
+            if any(m['id']==scope.get('target_id') and m.get('kind')=='partner_connection' for m in self.s.resources.catalog(db)['members']):
+                raise ValueError('此项由伙伴连接生成，请在伙伴连接页调整；这里仅修改独立保存的成员配置。')
             return self.s.resources.saved(db, 'member', scope.get('target_id'))
         return {'project_id': scope.get('project_id')}
 
@@ -108,9 +127,12 @@ class WorkManagement:
         return result
 
     def submit(self, db, p):
-        if set(p) not in ({'text', 'scope', 'member_id'}, {'text', 'scope', 'parser_selection'}):
+        if set(p) not in ({'text', 'scope', 'member_id'}, {'text', 'scope', 'parser_selection'}, {'text','scope','parser_reference'}):
             raise ValueError('须提供原请求、作用范围和准确的解析模型。')
         parser_selection = p.get('parser_selection')
+        parser_reference=p.get('parser_reference')
+        if 'parser_reference' in p and not isinstance(parser_reference,dict):
+            raise ValueError('请选择准确解析连接与当前版本。')
         if 'parser_selection' in p:
             from .execution_resources import PDCA_MODEL_FIELDS
             if (not isinstance(parser_selection, dict) or set(parser_selection) != PDCA_MODEL_FIELDS
@@ -141,7 +163,13 @@ class WorkManagement:
         row['scope_hash'] = digest({'scope': scope, 'target_hash': row['target_hash'], 'text_hash': digest(text)})
         # Persist exact waiting conditions. No automatic retry or account switching.
         try:
-            if parser_selection is not None:
+            if parser_reference is not None:
+                selected=self.s.resources.selection(db,parser_reference.get('member_id'))
+                if selected['reference']!=parser_reference:
+                    raise ValueError('解析连接、账号或版本已变化，请重新选择。')
+                row['parser_reference']=copy.deepcopy(parser_reference)
+                row['member_id']=parser_reference['member_id']
+            elif parser_selection is not None:
                 row['parser_selection'] = copy.deepcopy(parser_selection)
                 reference = self.s.resources.pdca_model(db, parser_selection)
                 row['member_id'] = reference['member_id']
@@ -165,7 +193,8 @@ class WorkManagement:
         attempt = self.s.store.attempt(receipt['launch_attempt'], db)
         row.update(task_id=task['id'], attempt_id=attempt['id'], owner=attempt['owner'],
                    spec_hash=task['spec_hash'], session_id=attempt['session_id'],
-                   selection=selected['reference'], parser_context=context)
+                   selection=selected['reference'], parser_context=context,
+                   parser_connection_snapshot=copy.deepcopy(selected['connection']))
         saved = self.save(db, row, 'PARSING')['request']
         return {**receipt, 'request': saved}
 
@@ -199,7 +228,16 @@ class WorkManagement:
             raise ValueError('解析回合原始结果回执不一致。')
         if db.execute("SELECT 1 FROM requests WHERE attempt_id=? AND state='UNKNOWN'", (attempt['id'],)).fetchone():
             raise ValueError('解析回合仍有未知模型回执。')
-        if task['spec']['provider'] == 'codex' and result.get('execution') == 'codex_native':
+        if task['spec'].get('execution')=='partner_native':
+            native=result.get('native_result') or {};binding=task['spec'].get('partner_connection') or {}
+            if (not result.get('partner_run_id') or native.get('run_id')!=result['partner_run_id']
+                    or native.get('partner_id')!=task['spec']['provider'] or native.get('session_id')!=attempt['session_id']
+                    or native.get('completion_scope')!='OFFICIAL_NATIVE_TURN' or native.get('receipt_unknown') is True
+                    or digest(binding)!=digest(row.get('parser_connection_snapshot'))
+                    or str((result.get('connection_snapshot') or {}).get('id'))!=str(binding.get('id'))
+                    or str((result.get('connection_snapshot') or {}).get('revision'))!=str(binding.get('revision'))):
+                raise ValueError('解析回合未取得同一伙伴连接与原生会话的准确回执。')
+        elif task['spec']['provider'] == 'codex' and result.get('execution') == 'codex_native':
             self.s.fixed_preparation.codex_terminal(db, attempt, event['seq'])
         elif attempt['session_id'] != row['session_id']:
             raise ValueError('解析回合会话身份已变化。')

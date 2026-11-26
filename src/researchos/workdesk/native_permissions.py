@@ -15,14 +15,18 @@ def choice(value):
 
 
 def catalog(provider):
-    mapping={'codex':{'workspace':'workspace-write / on-request','full':'danger-full-access / never'},
-             'deepseek':{'workspace':'workspace-write / ask','full':'danger-full-access / never'},
-             'qwen':{'workspace':'default','full':'yolo'}}
-    mapping['codex']['auto']='workspace-write / on-request / auto_review'
-    mapping['qwen']['auto']='auto'
-    return [{'id':key,**value,'supported':not (provider=='deepseek' and key=='auto'),
-             **({'description':'当前 DeepSeek SDK 配置未加载官方自动审核服务。'} if provider=='deepseek' and key=='auto' else {}),
-             'native_mode':mapping[provider].get(key,'UNAVAILABLE'),'scope':'THIS_CONVERSATION'} for key,value in ACCESS.items()]
+    from .partners.permissions import catalog as partners
+    row = next((row for row in partners() if row['partner_id'] == provider), None)
+    if row is None:raise ValueError('未知官方工作端。')
+    result=[]
+    for mode in row['modes']:
+        native=mode.get('native') or {}
+        thread=native.get('thread') or {}
+        label=((' / '.join((thread['sandbox'],thread['approvalPolicy'],thread['approvalsReviewer']))) if thread else
+               native.get('mode_id') or native.get('permission_mode') or native.get('mode') or native.get('preset') or
+               (' '.join(native['argv']) or 'native approval requests' if 'argv' in native else 'UNAVAILABLE'))
+        result.append({**mode,'scope':'THIS_CONVERSATION','native_mode':label})
+    return result
 
 
 def codex_policy(access):

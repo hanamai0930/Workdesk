@@ -9,6 +9,7 @@ from pathlib import Path
 from .chat_api import API_MODELS
 from .paths import atomic_bytes, atomic_json, data_owner_lock
 from .workspace import plain
+from .partners.permissions import catalog as permission_catalog, defaults as permission_defaults, resolve as resolve_permission
 
 
 DEFAULTS = {
@@ -20,7 +21,7 @@ DEFAULTS = {
     'workDirectory': '',
     'notifications': {'approval': True, 'failure': True, 'review': True},
     'connectionNoticeSeconds': 10,
-    'workAccess': {'codex': 'workspace', 'deepseek': 'workspace', 'qwen': 'workspace'},
+    'workAccess': permission_defaults(),
     'workProvider': 'codex',
     'chatDefaults': None,
     'lastLocation': 'chat',
@@ -38,6 +39,11 @@ def _directory(value):
     if not path.is_dir():
         raise ValueError('项目外工作目录不存在，请在设置中重新选择。')
     return path.resolve()
+
+
+def _metadata():
+    from .chat import web_providers
+    return {'workAccessOptions': permission_catalog(), 'chatWebProviders': web_providers()}
 
 
 def _checked(key, value):
@@ -60,17 +66,18 @@ def _checked(key, value):
         if type(value) is not int or value not in (0, 5, 10, 15, 30):
             raise ValueError('请选择可用的连接提示时长。')
     elif key == 'workAccess':
-        if (not isinstance(value, dict) or set(value) != set(DEFAULTS[key])
-                or any(mode not in ('workspace', 'auto') or provider == 'deepseek' and mode != 'workspace'
-                       for provider, mode in value.items())):
+        if not isinstance(value, dict) or not value or not set(value).issubset(DEFAULTS[key]):
             raise ValueError('请选择工作端支持的默认审批方式。')
+        for provider, mode in value.items():
+            resolve_permission(provider, mode)
     elif key == 'chatDefaults':
+        from .chat import web_providers
         if isinstance(value, dict) and value.get('model') == 'deepseek-pro':
             value = {**value, 'model': 'deepseek-v4-pro'}
         if value is not None and (not isinstance(value, dict) or set(value) not in ({'route','model','provider'}, {'route','model','provider','apiProvider'})
                 or value.get('route') not in ('api','web') or value.get('apiProvider', 'deepseek') not in API_MODELS
                 or value.get('model') not in API_MODELS.get(value.get('apiProvider', 'deepseek'), ())
-                or value.get('provider') not in ('codex','deepseek','qwen')):
+                or value.get('provider') not in ({row['id'] for row in web_providers()} if value.get('route') == 'web' else {'codex','deepseek','qwen'})):
             raise ValueError('请选择支持的 Chat 渠道与模型。')
     elif key == 'lastLocation':
         if not isinstance(value, str) or len(value) > 280 or not _ROUTE.fullmatch(value):
@@ -87,7 +94,8 @@ def _decode(raw):
     values = deepcopy(DEFAULTS)
     for key, value in stored['values'].items():
         if key in DEFAULTS:
-            values[key] = _checked(key, value)
+            checked = _checked(key, value)
+            values[key] = {**values[key], **checked} if key == 'workAccess' else checked
     return values
 
 
@@ -105,11 +113,11 @@ def read(user_root):
 def snapshot(user_root):
     """Preview damaged preferences without changing either file."""
     if not user_root:
-        return deepcopy(DEFAULTS)
+        return {**deepcopy(DEFAULTS), **_metadata()}
     directory = Path(user_root) / 'config/desktop'
     active = directory / 'preferences.json'
     if not active.is_file():
-        return deepcopy(DEFAULTS)
+        return {**deepcopy(DEFAULTS), **_metadata()}
     raw = active.read_bytes()
     try:
         values = _decode(raw)
@@ -118,7 +126,7 @@ def snapshot(user_root):
                 and type(receipt.get('at')) in (int, float)
                 and re.fullmatch(r'[0-9a-f]{64}', str(receipt.get('original')))):
             values['lastRecovery'] = receipt
-        return values
+        return {**values, **_metadata()}
     except (ValueError, TypeError):
         backup = None
         previous = directory / 'preferences.previous.json'
@@ -130,7 +138,7 @@ def snapshot(user_root):
                           'workAccess': saved['workAccess']}
             except (ValueError, TypeError):
                 pass
-        return {**deepcopy(DEFAULTS), 'recovery': {'revision': sha256(raw).hexdigest(), 'backup': backup}}
+        return {**deepcopy(DEFAULTS), **_metadata(), 'recovery': {'revision': sha256(raw).hexdigest(), 'backup': backup}}
 
 
 def recover(user_root, request):
@@ -177,7 +185,7 @@ def save(user_root, key, value):
         original = json.loads(path.read_text(encoding='utf-8')) if path.is_file() else {'schema': 1, 'values': {}}
         if path.is_file():
             atomic_bytes(directory / 'preferences.previous.json', path.read_bytes())
-        values[key] = value
+        values[key] = {**values[key], **value} if key == 'workAccess' else value
         original['values'].update(values)
         atomic_json(path, original)
         return snapshot(user_root)

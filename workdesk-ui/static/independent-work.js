@@ -2,18 +2,38 @@
 window.WorkdeskIndependent = function(B) {
   'use strict';
   const $=window.WorkdeskModules.dom('workbench');
-  const {v,call,command,modal,b,h,profile,project,lines}=B;
+  const {v,call,command,modal,b,h,profile,project,lines,names}=B;
   let catalog=null,cache=null;
   const terminal=new Set(['COMPLETED','FAILED','FAILED_NO_SEND','INTERRUPTED','STOPPED_RUNTIME','CANCELLED']);
+  const partnerCatalog=()=>!v.detail?v.data?.partner_connections:null;
+  const partnerConnection=()=>partnerCatalog()?.connections.find(row=>row.id===v.connectionId&&row.partner_id===v.provider);
+  const partnerModel=connection=>connection.model||'official-default';
   function install(data){catalog=data.independent_work||null;if(!v.detail&&!v.dialogue&&v.type==='independent')normalize();}
   function normalize(){
+    if(partnerCatalog()){
+      if(!v.connectionId){const rows=partnerCatalog().connections.filter(row=>row.partner_id===v.provider),connection=rows.find(row=>row.available)||rows[0];if(connection){v.connectionId=connection.id;v.connectionRevision=String(connection.revision);}}
+      const connection=partnerConnection();
+      if(connection)v.model=partnerModel(connection);
+      v.workEffort='default';v.workTier='standard';return;
+    }
     const p=profile();if(!p)return;
     const models=p.enabled_models||p.models||[];
     if(!models.includes(v.model))v.model=models.includes(p.model)?p.model:models[0]||'';
   }
   const service=()=>v.detail?.independent_service||v.detail?.task.spec.independent_service||catalog?.services.find(s=>s.provider===v.provider)||null;
-  function presentation(){return {service:service(),runtimePresent:catalog?.services.find(s=>s.provider===v.provider)?.runtime_present??false};}
+  function presentation(){
+    const connection=partnerConnection();
+    if(partnerCatalog())return {service:connection?{provider:v.provider,harness:names[v.provider]+' · '+(connection.route==='api'?(connection.api_name||connection.api_provider)+' API':'官方账号')+' · '+connection.account_label,access_modes:connection.permission_modes||[],partner_connection:true}:null,runtimePresent:!!connection?.available};
+    return {service:service(),runtimePresent:catalog?.services.find(s=>s.provider===v.provider)?.runtime_present??false};
+  }
   function requireService(){
+    if(partnerCatalog()){
+      const connection=partnerConnection();
+      if(!connection)throw Error('请选择已保存的伙伴连接。');
+      if(!connection.available)throw Error(connection.reason||'此连接当前不可用，请在账号与模型中核对。');
+      if(String(connection.revision)!==String(v.connectionRevision))throw Error('所选连接已更新，请重新选择后发送。');
+      return presentation().service;
+    }
     const s=catalog?.services.find(s=>s.provider===v.provider);
     if(!s)throw Error('控制服务尚未载入独立工作接口，请先在设置中重载空闲控制服务。');
     if(!s.runtime_present)throw Error(s.harness+' 尚未安装或不可用，请检查工作端配置。');
@@ -21,15 +41,14 @@ window.WorkdeskIndependent = function(B) {
   }
   const row=(label,value)=>`<div class="wk-approval"><span>${label}</span><span>${h(value)}</span></div>`;
   function selectedConfiguration(){
+    if(partnerCatalog())return {connection_id:v.connectionId,connection_revision:String(v.connectionRevision),model:v.model,effort:'default',tier:'standard',access:!v.workAccess||v.workAccess==='inherit'?'workspace':v.workAccess,plan_only:!!v.workPlanOnly};
     const p=profile(),entry=p.model_catalog?.models.find(m=>m.model===v.model),efforts=entry?.selection_efforts||entry?.efforts||[p.effort],tiers=entry?.tiers||[p.tier];
     return {model:v.model,effort:efforts.includes(v.workEffort)?v.workEffort:efforts.includes(p.effort)?p.effort:efforts[0],tier:tiers.includes(v.workTier)?v.workTier:tiers.includes(p.tier)?p.tier:tiers[0],access:!v.workAccess||v.workAccess==='inherit'?'workspace':v.workAccess,plan_only:!!v.workPlanOnly};
   }
   async function prepare(){
     if(!v.input.trim())return;
     normalize();requireService();
-    const p=profile(),entry=p.model_catalog?.models.find(m=>m.model===v.model);
     if(!v.model)throw Error('请选择已接通的模型。');
-    const efforts=entry?.selection_efforts||entry?.efforts||[p.effort],tiers=entry?.tiers||[p.tier];
     const saved=await command('independent.send',{project_id:v.project||undefined,goal:v.input,provider:v.provider,model:v.model,
       ...(!v.project&&!v.workPlanOnly&&v.workAccess==='full'?{work_directory_confirmation:window.WorkdeskSettingsPreferences?.get().workDirectory||''}:{}),
       ...selectedConfiguration(),
@@ -70,6 +89,11 @@ window.WorkdeskIndependent = function(B) {
     v.input='';$('#wb-dialog').close();await B.rerender(t.id);
   }
   function info(){
+    if(partnerCatalog()){
+      const connection=partnerConnection();
+      if(!connection){modal('官方运行服务','<p class="wk-note">请在账号与模型中保存可用连接。</p>','<a class="wk-button" href="#settings/accounts" data-wb-close-link>账号与模型</a>');return;}
+      modal('官方运行服务',row('工作端',names[v.provider])+row('连接',connection.route==='api'?(connection.api_name||connection.api_provider)+' API':'官方账号')+row('账号',connection.account_label)+row('模型',connection.model_label||connection.model||'官方默认模型')+row('版本',connection.version||'待核对')+(connection.reason?'<p class="wk-note">'+h(connection.reason)+'</p>':''),b('关闭','close'));return;
+    }
     const s=service()||requireService(),selected=s.route_selection;
     const choice=!v.detail&&s.provider==='qwen'&&s.daemon_present&&selected;
     const select=choice?`<label class="wk-field">新 Qwen 工作使用<select class="wk-input" id="wb-qwen-route"><option value="query" ${selected.interface==='query'?'selected':''}>Qwen Code Query</option><option value="daemon" ${selected.interface==='daemon'?'selected':''}>Qwen Code Daemon</option></select></label><p class="wk-note">此选择用于新建独立工作和合作方案。继续已有会话时沿用记录的工作端接口。</p>`:'';
@@ -226,6 +250,7 @@ window.WorkdeskIndependent = function(B) {
     }
     if(action==='native-access-select'){
       const access=el.dataset.access,a=v.detail?.attempts.at(-1);
+      if(partnerCatalog()&&!partnerConnection()?.permission_modes?.some(mode=>mode.id===access&&mode.supported))throw Error('所选工作端没有支持此权限模式。');
       if(a&&['RESERVED','SEND_INTENT','RUNNING','WAITING_APPROVAL','WAITING_INPUT'].includes(a.state)){
         if(access==='full'&&el.dataset.confirmed!=='true'){
           modal('确认当前回合的完全访问','<p>工作端可以访问账号有权访问的文件、运行命令和使用网络。确认后会向当前回合提交权限变更。</p>',

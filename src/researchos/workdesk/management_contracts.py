@@ -71,6 +71,7 @@ def prompt(row, context):
         '只返回严格 JSON 对象，字段恰为 protocol,request_id,scope_hash,operation,arguments,summary。'
         'operation 只允许上下文列出的操作或 wait；arguments 只允许对应列出的字段。'
         'scene.save 和 resource.member-save 的 arguments 是需要修改的字段，未提到的字段不填。'
+        '成员目标按 context.target.id 精确定位；同一伙伴、同一型号可能对应不同账号和连接，不得按名称或型号猜测目标。'
         '撤回先前变更时使用 management.restore，request_id 必须来自 recent_changes。'
         'skill.install 必须使用上下文公开目录中的准确 name 和 commit；查找不等于安装。'
         'settings.appearance.save 的 themes 使用上下文默认结构中的区域与颜色、透明度字段。\n'

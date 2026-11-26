@@ -164,7 +164,11 @@ class TaskExecutionCommands:
         db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY')",(time.time(),attempt['id']))
         db.execute('UPDATE tasks SET state=?,updated=? WHERE id=?',(value,time.time(),task['id']))
         self.store.event(task['id'],attempt['id'],'stop_requested',{'stop_confirmed':False,'source':'Human explicit command'},db)
-        return {'task_id':task['id'],'registered':True,'signal_stop':attempt['id'] if owned else None,'state':value,'stop_confirmed':False}
+        receipt={'task_id':task['id'],'registered':True,'signal_stop':attempt['id'] if owned else None,'state':value,'stop_confirmed':False}
+        if task['spec'].get('execution')=='partner_native' and not owned:
+            receipt['stop_partner_task']={'task_id':task['id'],'attempt_id':attempt['id'],'spec_hash':task['spec_hash'],
+                                          'run_id':(attempt.get('result') or {}).get('partner_run_id','')}
+        return receipt
 
     def _pause(self,db,payload):
         task=self.store.task(payload.get('task_id'),db)
@@ -213,6 +217,8 @@ class TaskExecutionCommands:
             self.store.event(task['id'],attempt['id'],'retired_owner_reconciliation',report,db)
             return report
         if recovered and recovered.get('state') in TERMINAL and not active and report['known_local_scopes_exited']:
+            if task['spec'].get('execution')=='partner_native' and recovered.get('session_id'):
+                db.execute('UPDATE attempts SET session_id=? WHERE id=?',(recovered['session_id'],attempt['id']))
             db.execute('UPDATE attempts SET result=?,state=? WHERE id=?',(canonical(recovered),recovered['state'],attempt['id']))
             db.execute('UPDATE tasks SET state=?,updated=? WHERE id=?',(recovered['state'],time.time(),task['id']))
             report['recovered_state']=recovered['state']

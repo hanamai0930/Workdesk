@@ -123,6 +123,8 @@ class ExecutionResources:
             c['is_default']=defaults.get(c['provider'])==c['id']
             c['parallel_routing']='EXPLICIT_OFFICIAL_CONNECTION'
             c['supported_routes']=['official_independent']
+        from .partner_connections import projection
+        result.extend(projection(db)['connections'])
         return result
 
     def catalog(self,db=None,profiles=None,*,pdca_members=True):
@@ -143,6 +145,8 @@ class ExecutionResources:
                 quotas[c['quota_id']]['official_observations'].append({**observation,
                     'binding_status':'MATCH' if observation['connection_revision']==c['revision'] else 'REFERENCE_CHANGED'})
         members=self.rows(db,'member')
+        from .partner_connections import model_member
+        members.extend(model_member(c) for c in connections if c.get('kind') == 'partner_connection')
         if pdca_members:
             members.extend(m for m in self.rows(db,'pdca_member') if pdca_members is True or m['id'] in pdca_members)
         for m in members:
@@ -150,11 +154,23 @@ class ExecutionResources:
             m['available']=bool(m['enabled'] and c and c['available'])
             if m.get('managed') == 'pdca_model':
                 m['available'] = m['available'] and c['revision'] == m['connection_revision']
+        endpoints=[{'id':p['id'],'name':p['harness'],'execution_route':p['id']+'_native',
+                    'runtime_present':p['runtime_present'],'resume':p['resume'],'interrupt':p['interrupt'],
+                    'access_modes':access_catalog(p['id']),'model_catalog':p['model_catalog']} for p in profiles]
+        from .partner_connections import projection
+        view=projection(db)
+        for partner in view['partners']:
+            if any(endpoint['id']==partner['id'] for endpoint in endpoints):
+                continue
+            own=[c for c in view['connections'] if c['provider']==partner['id']]
+            models={c['model']:{'model':c['model'],'display_name':c['model_label'],'runnable':c['available'],
+                               'efforts':['default'],'selection_efforts':['default'],'tiers':['standard']} for c in own}
+            endpoints.append({'id':partner['id'],'name':partner['name']+' 官方工作端','execution_route':'partner_native',
+                              'runtime_present':any(c['available'] for c in own),'resume':False,
+                              'interrupt':'EXACT_PARTNER_RUN','access_modes':access_catalog(partner['id']),
+                              'model_catalog':{'models':list(models.values())}})
         return {'members':members,'connections':connections,'quota_sources':list(quotas.values()),
-            'endpoints':[{'id':p['id'],'name':p['harness'],'execution_route':p['id']+'_native',
-                'runtime_present':p['runtime_present'],'resume':p['resume'],'interrupt':p['interrupt'],
-                'access_modes':access_catalog(p['id']),
-                'model_catalog':p['model_catalog']} for p in profiles],
+            'endpoints':endpoints,
             'quota_policy':'INFORMATION_ONLY; UNKNOWN_IS_NOT_ZERO; SHARED_SOURCE_LISTED_ONCE',
             'routing':'EXPLICIT_OFFICIAL_CONNECTIONS; LEGACY_SCOPED_SELECTION_UNSUPPORTED','no_dispatch':True}
 
@@ -183,6 +199,13 @@ class ExecutionResources:
                 or any(not isinstance(value, str) or not 1 <= len(value) <= 200 for value in ref.values())):
             raise ValueError('请选择有效的工作端、模型、运行档位和当前连接。')
         provider, model = ref['provider'], ref['model']
+        from .partner_connections import selected
+        if any(c['id'] == ref['connection_id'] and c.get('kind') == 'partner_connection' for c in self.connections(db, self.s.profiles.list(db))):
+            connection = selected(db, ref['connection_id'], ref['connection_revision'])
+            if (connection['provider'] != provider or connection['model'] != model
+                    or ref['effort'] != 'default' or ref['tier'] != 'standard'):
+                raise ValueError('合作模型与准确伙伴连接不符，请重新选择。')
+            return self.selection(db, 'partner-member:' + connection['id'])['reference']
         profile = self.s.profiles.validate(provider, model, ref['effort'], ref['tier'])
         entry = next((row for row in profile['model_catalog']['models'] if row['model'] == model), None)
         if not entry or not entry['runnable']:
@@ -354,6 +377,9 @@ class ExecutionResources:
         return self.save(db,'member',value)
 
     def context(self,connection):
+        if connection.get('kind') == 'partner_connection':
+            from .partner_connections import PartnerConnectionContext
+            return PartnerConnectionContext(self.s.locations, connection)
         from .connection_context import context
         return context(self.s.locations,connection)
 
@@ -401,7 +427,8 @@ class ExecutionResources:
     def selection(self,db,member_id):
         data=self.catalog(db);m=next((m for m in data['members'] if m['id']==member_id),None)
         if not m or not m['available']:raise ValueError('成员或其当前连接不可用，请重新选择。')
-        self.s.profiles.validate(m['provider'],m['model'],m['effort'],m['tier'])
+        if m.get('kind') != 'partner_connection':
+            self.s.profiles.validate(m['provider'],m['model'],m['effort'],m['tier'])
         c=next(c for c in data['connections'] if c['id']==m['connection_id'])
         q=next(q for q in data['quota_sources'] if q['id']==c['quota_id'])
         return {'reference':{'member_id':m['id'],'member_revision':m['revision'],'connection_id':c['id'],
@@ -424,9 +451,17 @@ class ExecutionResources:
         if kind=='independent.send':
             if p.get('task_id'):
                 c=self.task_connection(self.s.store.task(p['task_id'],db),db)
+            elif p.get('connection_id'):
+                from .partner_connections import selected
+                c=selected(db,p.pop('connection_id'),p.pop('connection_revision',None))
             else:
                 c=selection['connection'] if selection else self.default_connection(db,p.get('provider','codex'))
             self.check_connection(c,db)
+            if c.get('kind') == 'partner_connection':
+                if p.get('provider', c['provider']) != c['provider'] or p.get('model', c['model']) != c['model']:
+                    raise ValueError('当前工作模型与所选伙伴连接不符。')
+                p.update(provider=c['provider'],model=c['model'],effort='default',tier='standard',_connection_binding=c)
+                return p,selection
             p['_connection_binding']={k:c[k] for k in ('id','provider','credential_reference')}
             # Retain the reference when a later global default points elsewhere.
             if not any(v['id']==c['id'] for v in self.references(db)):
@@ -457,7 +492,7 @@ class ExecutionResources:
         return next(c for c in self.connections(db,self.s.profiles.list()) if c['provider']==provider and c['is_default'])
 
     def task_connection(self,task,db):
-        spec=task['spec'];bound=spec.get('execution_connection') or (spec.get('execution_resource') or {}).get('connection')
+        spec=task['spec'];bound=spec.get('partner_connection') or spec.get('execution_connection') or (spec.get('execution_resource') or {}).get('connection')
         if bound:
             if bound['provider']!=spec['provider']:raise ValueError('任务与原连接工作端不一致。')
             return bound
@@ -474,6 +509,9 @@ class ExecutionResources:
         return self.default_connection(db,spec['provider'])
 
     def check_connection(self,c,db):
+        if c.get('kind') == 'partner_connection':
+            from .partner_connections import check_frozen
+            return self.context(check_frozen(db, c)).validate()
         metadata=next((v for v in self.rows(db,'connection') if v['id']==c['id']),{})
         if not metadata.get('enabled',True):raise ValueError('原工作连接已停用，未启动执行。')
         return self.context(c).validate()

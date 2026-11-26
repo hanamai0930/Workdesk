@@ -3,7 +3,7 @@
   'use strict';
   const endpoint='preferences';
   const defaults={launch:'chat',close:'keyboard',opener:'system',userNickname:'',assistantNickname:'',workDirectory:'',lastLocation:'chat',chatDefaults:null,workProvider:'codex',
-    notifications:{approval:true,failure:true,review:true},connectionNoticeSeconds:10,workAccess:{codex:'workspace',deepseek:'workspace',qwen:'workspace'}};
+    notifications:{approval:true,failure:true,review:true},connectionNoticeSeconds:10,workAccess:{codex:'workspace',deepseek:'workspace',qwen:'workspace',claude:'workspace',grok:'workspace',gemini:'workspace',kimi:'workspace',glm:'workspace'}};
   const launchRoute=/^(?:chat|work|work-items|resources|projects|records|results|files|monitor|control|operations|planning|libraries|extensions|management|collab|drafts|archives|schedules)(?:\/[A-Za-z0-9._:%-]+){0,5}$/;
   const failed=new Set(['FAILED','FAILED_NO_SEND']);
   let current=structuredClone(defaults),queue=Promise.resolve(),scheduled,ready=false,lastViewed='';
@@ -75,9 +75,11 @@
       flags.review?api('v1/work-items/acceptance-notices'):null
     ]);
     const items=[];
-    for(const run of runtime?.runs||[]){
-      const href='#control/task/'+encodeURIComponent(run.task_id);
-      if(flags.approval&&run.pending_approvals>0)items.push({kind:'approval',title:run.title,href,at:run.started});
+    for(const run of [...runtime?.runs||[],...runtime?.partner_runs||[]]){
+      const id=run.partner_run_id||run.run_id||run.id;
+      const href=run.partner_href||((run.kind==='partner_run'||run.partner_run_id)?run.href||'#work/partners/run/'+encodeURIComponent(id):'#control/task/'+encodeURIComponent(run.task_id));
+      if(flags.approval&&(run.pending_approvals>0||run.pending_inputs>0||['WAITING_APPROVAL','WAITING_INPUT'].includes(run.state)))items.push({kind:'approval',title:run.title,href,at:run.started||run.created});
+      else if(flags.approval&&['UNKNOWN','SEND_UNKNOWN','STOP_UNKNOWN','ORPHANED_UNKNOWN'].includes(run.state))items.push({kind:'approval',title:run.title+' · 状态待核对',href,at:run.started||run.created});
       if(flags.failure&&failed.has(run.state))items.push({kind:'failure',title:run.title,href,at:run.started});
     }
     for(const chat of runtime?.api_chats||[]){

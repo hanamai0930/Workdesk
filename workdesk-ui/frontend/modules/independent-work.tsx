@@ -13,14 +13,14 @@ const brands:Record<string,{initial:string;rgb:string;title:string;hint:string;p
   deepseek:{initial:'D',rgb:'77,107,254',title:'把复杂问题拆开，一步步推进',hint:'梳理问题、分析材料，把思路转为具体工作。',placeholder:'描述问题、提供材料，或说说你的目标…'},
   qwen:{initial:'Q',rgb:'112,81,220',title:'从材料到成果，一起完成这项工作',hint:'整理文档、处理文件，让任务有序展开。',placeholder:'描述需要整理、处理或完成的工作…'},
 };
-export const independentBrand=(provider:string)=>brands[provider]||brands.codex;
+const genericBrand={icon:'',rgb:'92,113,142',title:'从一个想法开始，把它做出来',hint:'使用所选官方工作端，逐步完成这项工作。',placeholder:'描述要构建、修改或检查的内容…'};
+export const independentBrand=(provider:string)=>brands[provider]||genericBrand;
 export function independentAppearance(provider:string){
-  const key=brands[provider]?provider:'codex';
-  return {'--work-rgb':`var(--wd-work-${key}-rgb,${brands[key].rgb})`,'--work-opacity':`var(--wd-work-${key}-opacity,.04)`};
+  return {'--work-rgb':`var(--wd-work-${provider}-rgb,${independentBrand(provider).rgb})`,'--work-opacity':`var(--wd-work-${provider}-opacity,.04)`};
 }
 export function IndependentProvider({v,names,isLocked}:any){
   return <div className="wk-independent-provider" data-independent-work="provider">
-    <span className="wk-work-brand-icon" aria-hidden="true">{independentBrand(v.provider).initial}</span>
+    {independentBrand(v.provider).icon?<span className="wk-work-brand-icon" aria-hidden="true">{independentBrand(v.provider).initial}</span>:<Terminal className="wk-work-brand-icon" aria-hidden="true"/>}
     <NativeSelect key={v.provider} id="wb-provider" aria-label="选择工作端" className="wk-model-select" defaultValue={v.provider} disabled={isLocked||v.workLoading||v.busy}>
       {Object.entries(names).map(([id,name]:any)=><option key={id} value={id}>{name}</option>)}
     </NativeSelect>
@@ -84,7 +84,7 @@ export function WorkModeSwitch({v,selected}:any){
 export function IndependentWelcome({provider}:any){
   const brand=independentBrand(provider);
   return <div className="wk-greeting wk-independent-welcome">
-    <span className="wk-work-brand-icon" aria-hidden="true">{brand.initial}</span>
+    {brand.icon?<span className="wk-work-brand-icon" aria-hidden="true">{brand.initial}</span>:<Terminal className="wk-work-brand-icon" aria-hidden="true"/>}
     <h1>{brand.title}</h1><p>{brand.hint}</p>
   </div>;
 }

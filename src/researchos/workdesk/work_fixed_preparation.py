@@ -242,7 +242,8 @@ class WorkFixedPreparation:
             'id': self.prefix + '-preparation:' + uid(), 'item_id': item_id, 'requested_revision': item['revision'],
             'requirements': {key: item[key] for key in ('title', 'goal', 'constraints_text', 'acceptance')},
             'planner_id': planner_id, 'members': members, 'presets': presets, 'organization': self.mode,
-            'runtime_route': runtime_route(self.s, planner['provider'], self.s.independent.qwen_selection(db)['interface'] if planner['provider']=='qwen' else None),
+            'runtime_route': runtime_route(self.s, planner['provider'], self.s.independent.qwen_selection(db)['interface'] if planner['provider']=='qwen' and not planner.get('partner_connection') else None,
+                                           connection=planner.get('partner_connection')),
             'max_attempts_total': limit, 'preparations_used': len(prior) + 1,
             'auto_rework_checks': auto_rework, 'access': access,
             'dispatch_before': deadline, 'instance': self.s.instance, 'created': now,
@@ -456,7 +457,19 @@ class WorkFixedPreparation:
             raise ValueError('无法核对准备回合的原始结果回执。')
         evidence = {'event_seq': event['seq'], 'result_digest': digest(result),
                     'session_id': attempt['session_id'], 'turn_id': attempt['turn_id']}
-        if task['spec']['provider'] == 'codex' and result.get('execution') == 'codex_native':
+        if task['spec'].get('execution') == 'partner_native':
+            binding=task['spec']['partner_connection'];native=result.get('native_result') or {}
+            if (not result.get('partner_run_id') or result.get('known_tools_exited') is not True
+                    or (result.get('owned_job') or {}).get('active_processes')!=0
+                    or native.get('run_id')!=result['partner_run_id']
+                    or native.get('partner_id')!=task['spec']['provider']
+                    or native.get('session_id')!=attempt['session_id']
+                    or native.get('completion_scope')!='OFFICIAL_NATIVE_TURN'
+                    or str((result.get('connection_snapshot') or {}).get('id'))!=str(binding['id'])
+                    or str((result.get('connection_snapshot') or {}).get('revision'))!=str(binding['revision'])):
+                raise ValueError('无法核对伙伴准备回合的准确连接、原生会话和退出回执。')
+            evidence.update(partner_run_id=result['partner_run_id'],connection_id=binding['id'],connection_revision=binding['revision'])
+        elif task['spec']['provider'] == 'codex' and result.get('execution') == 'codex_native':
             evidence.update(self.codex_terminal(db, attempt, event['seq']))
         elif attempt['session_id'] != row['session_id']:
             raise ValueError('准备回合的会话与预留身份不一致。')

@@ -292,6 +292,8 @@ func (a *App) callback(method string, raw json.RawMessage) (any, error) {
 		return nil, errors.New("旧运行身份或所有者代次；拒绝操作")
 	}
 	switch method {
+	case "partner.task.start", "partner.task.poll", "partner.task.stop":
+		return a.partnerTask(method, p)
 	case "db.begin":
 		s, e := a.DB.OpenSession(p["write"] == true)
 		if e != nil {

@@ -6,11 +6,12 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 
 const names:any={settings:'外观设置',scene:'场景说明',member:'模型与工作配置',skills:'查找与安装 Skill',development:'程序功能修改'};
-const providers:Record<string,string>={codex:'GPT',deepseek:'DeepSeek',qwen:'Qwen'};
+const providers:Record<string,string>={codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen',claude:'Claude',grok:'Grok',gemini:'Gemini',kimi:'Kimi',glm:'GLM'};
 const effortNames:Record<string,string>={off:'关闭',none:'关闭',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'极高',ultra:'最高'};
 const tierNames:Record<string,string>={fast:'快速',standard:'标准'};
 const modelLabel=(value:any)=>[providers[value?.provider]||value?.provider,value?.model].filter(Boolean).join(' · ');
-const configurationLabel=(value:any)=>`思考 ${effortNames[value.effort]||value.effort} · ${tierNames[value.tier]||value.tier} · 配置 ${value.id.split(':').at(-1).slice(0,8)}`;
+const configurationLabel=(value:any)=>value.kind==='partner_connection'?value.name:`思考 ${effortNames[value.effort]||value.effort} · ${tierNames[value.tier]||value.tier} · 配置 ${value.id.split(':').at(-1).slice(0,8)}`;
+const parserKey=(row:any)=>row.id||JSON.stringify([row.selection?.connection_id,String(row.selection?.connection_revision),row.model,row.selection?.effort,row.selection?.tier]);
 const states:any={PARSING:'正在解析',WAITING_INPUT:'等待具体条件',NEEDS_RECONCILIATION:'原回合待核对',APPLIED:'已处理',FAILED:'处理失败',CANCELLED:'已取消'};
 const effects:any={APPLICATION_APPEARANCE:'应用界面外观',NEW_WORK_ONLY:'该场景以后创建的工作',FUTURE_MEMBER_SELECTIONS:'以后选择该模型配置的工作',DEVELOPMENT_WORK_REGISTERED:'已登记开发工作，尚未修改程序',READ_ONLY_SEARCH:'仅查找，未安装',SELECTED_SCENE_NEW_WORK_ONLY:'所选场景以后创建的工作'};
 
@@ -22,18 +23,19 @@ function ManagementField({ label, compact, children }: { label: string; compact:
 export function ManagementForm({ data, draft, busy, pending, error, onField, compact = false }: any) {
   const members = data?.members || [];
   const parserModels=data?.parser_models||[];
-  const parser=parserModels.find((row:any)=>row.provider===draft.parser_provider&&row.model===draft.parser_model);
-  const parserFamilies=Object.entries(providers).filter(([provider])=>parserModels.some((row:any)=>row.provider===provider));
+  const parser=parserModels.find((row:any)=>row.provider===draft.parser_provider&&parserKey(row)===draft.parser_id);
+  const providerName=(id:string)=>data?.partners?.find((row:any)=>row.id===id)?.name||providers[id]||id;
+  const parserFamilies=[...new Set<string>(parserModels.map((row:any)=>row.provider))].map(id=>[id,providerName(id)]);
   const parserChoices=parserModels.filter((row:any)=>row.provider===draft.parser_provider);
-  const memberTargets=members.filter((row:any)=>row.provider===draft.target_provider&&row.model===draft.target_model);
-  const targetFamilies=Object.entries(providers).filter(([provider])=>members.some((row:any)=>row.provider===provider));
-  const targetModels=[...new Set<string>(members.filter((row:any)=>row.provider===draft.target_provider).map((row:any)=>row.model))];
+  const memberTargets=members.filter((row:any)=>row.provider===draft.target_provider);
+  const targetFamilies=[...new Set<string>(members.map((row:any)=>row.provider))].map(id=>[id,providerName(id)]);
   const targets=draft.kind==='member'?memberTargets:data?.scenes;
   const needsTarget = ['scene','skills','member'].includes(draft.kind);
   const target = targets?.find((row:any)=>row.id===draft.target_id);
   const missing = !data ? '正在读取模型和作用范围…' : !parserModels.some((row:any)=>row.available)
     ? '需要一个可用的官方工作端和解析型号。' : !parser?.available ? '请选择可用的解析大模型和型号。'
     : needsTarget && target?.revision==null ? '请选择本次请求的生效目标。'
+    : draft.kind==='member'&&target?.management_editable===false ? target.management_reason||'请在账号与模型中调整此伙伴连接。'
     : draft.kind==='settings' && !Number.isInteger(data.settings?.appearance?.revision) ? '请刷新外观设置版本。' : '';
   const Select = compact ? NativeSelect : 'select';
   return <form id="management-request-form">
@@ -44,19 +46,17 @@ export function ManagementForm({ data, draft, busy, pending, error, onField, com
       <ManagementField label="解析大模型" compact={compact}><Select name="parser_provider" value={draft.parser_provider} onChange={e=>onField('parser_provider',e.target.value)}>
         <option value="">选择大模型</option>{parserFamilies.map(([provider,label])=><option key={provider} value={provider} disabled={!parserModels.some((row:any)=>row.provider===provider&&row.available)}>{label}</option>)}
       </Select></ManagementField>
-      <ManagementField label="解析型号" compact={compact}><Select name="parser_model" value={draft.parser_model} disabled={!draft.parser_provider} onChange={e=>onField('parser_model',e.target.value)}>
-        <option value="">选择具体型号</option>{parserChoices.map((choice:any)=><option key={choice.model} value={choice.model} disabled={!choice.available}>{choice.model}</option>)}
+      <ManagementField label="解析连接与型号" compact={compact}><Select name="parser_id" value={draft.parser_id||''} disabled={!draft.parser_provider} onChange={e=>onField('parser_id',e.target.value)}>
+        <option value="">选择连接与型号</option>{parserChoices.map((choice:any)=>{const connection=data?.connections?.find((row:any)=>row.id===choice.selection?.connection_id);return <option key={parserKey(choice)} value={parserKey(choice)} disabled={!choice.available}>{choice.label||choice.name||[choice.model,connection?.name||choice.source_label,choice.account_label].filter(Boolean).join(' · ')}</option>;})}
       </Select></ManagementField>
       {draft.kind==='member'?<>
         <ManagementField label="目标大模型" compact={compact}><Select name="target_provider" value={draft.target_provider} onChange={e=>onField('target_provider',e.target.value)}>
           <option value="">选择大模型</option>{targetFamilies.map(([provider,label])=><option key={provider} value={provider}>{label}</option>)}
         </Select></ManagementField>
-        <ManagementField label="目标型号" compact={compact}><Select name="target_model" value={draft.target_model} disabled={!draft.target_provider} onChange={e=>onField('target_model',e.target.value)}>
-          <option value="">选择具体型号</option>{targetModels.map(model=><option key={model} value={model}>{model}</option>)}
+        <ManagementField label="生效配置" compact={compact}><Select name="target_id" value={draft.target_id} disabled={!draft.target_provider} onChange={e=>onField('target_id',e.target.value)}>
+          <option value="">选择准确配置</option>{memberTargets.map((row:any)=><option key={row.id} value={row.id} disabled={row.management_editable===false} title={row.management_reason||''}>{row.model} · {configurationLabel(row)}{row.management_editable===false?' · 在账号与模型中调整':''}</option>)}
         </Select></ManagementField>
-        {memberTargets.length>1&&<ManagementField label="生效配置" compact={compact}><Select name="target_id" value={draft.target_id} onChange={e=>onField('target_id',e.target.value)}>
-          <option value="">此型号有多份配置，请明确选择</option>{memberTargets.map((row:any)=><option key={row.id} value={row.id}>{configurationLabel(row)}</option>)}
-        </Select></ManagementField>}
+        {memberTargets.some((row:any)=>row.management_editable===false)&&<p className={compact?'wd-settings-empty':'wd-management-note'}>伙伴连接的模型与账号请在 <a href="#settings/accounts">账号与模型</a> 中调整。</p>}
       </>:['scene','skills'].includes(draft.kind)&&<ManagementField label="生效目标" compact={compact}>
         <Select name="target_id" value={draft.target_id} onChange={e=>onField('target_id',e.target.value)}><option value="">选择目标</option>
           {(targets||[]).map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}

@@ -11,7 +11,7 @@ import './partner-work.css';
 type Project = {id:string;name:string;root:string};
 type Receipt = {run_id?:string};
 const errorText=(value:unknown)=>value instanceof Error?value.message:'操作未完成，请核对当前状态。';
-export function PartnerWork({runId}: {runId?:string}) {
+export function PartnerWork({runId,task}: {runId?:string;task?:{id:string;title?:string}}) {
   const [data,setData]=useState<PartnersSnapshot|null>(null),[projects,setProjects]=useState<Project[]>([]),[run,setRun]=useState<PartnerRun|null>(null);
   const [connection,setConnection]=useState(''),[project,setProject]=useState(''),[prompt,setPrompt]=useState(''),[lookup,setLookup]=useState('');
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[notice,setNotice]=useState(''),[error,setError]=useState('');
@@ -63,7 +63,7 @@ export function PartnerWork({runId}: {runId?:string}) {
   const release=data?.components.find(item=>item.id===selected?.release_id),account=data?.accounts.find(item=>item.id===selected?.account_id),selectedProject=projects.find(item=>item.id===project);
   const available=selected&&selected.state!=='DISABLED'&&release&&['AVAILABLE','READY','INSTALLED','VERIFIED'].includes(release.state);
   return <section className="wd-partners wd-partner-work" data-partner-work>
-    <header className="wd-partner-work-header"><div><h1>独立 Work · 伙伴连接</h1><p className="wd-partners-note">选择已保存的官方工作端组合，在指定项目中工作。</p></div><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work">返回独立 Work</a></Button><Button asChild variant="outline"><a href="#settings/accounts">账号与模型</a></Button><Button variant="outline" disabled={busy||loading} onClick={()=>void refresh()}>刷新状态</Button></div></header>
+    <header className="wd-partner-work-header"><div><h1>{task?.title||'独立 Work · 伙伴连接'}</h1><p className="wd-partners-note">{task?'本次工作的原生运行与工具请求。':'选择已保存的官方工作端组合，在指定项目中工作。'}</p></div><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work">返回独立 Work</a></Button><Button asChild variant="outline"><a href="#settings/accounts">账号与模型</a></Button><Button variant="outline" disabled={busy||loading} onClick={()=>void refresh()}>刷新状态</Button></div></header>
     {error&&<p role="alert" className="wd-partners-error">{error}</p>}{notice&&<p role="status" className="wd-partners-note">{notice}</p>}
     {pending.length>0&&<div className="wd-partners-request" role="alert"><p>有操作回执待核对。新工作暂不发送；核对不会重复执行。</p>{pending.map(item=><Button key={item.id} variant="outline" disabled={busy} onClick={()=>void receipt(item.id)}>核对原操作 · {item.id.slice(0,8)}</Button>)}</div>}
     {loading&&<p role="status">正在读取伙伴连接与项目…</p>}
@@ -76,8 +76,8 @@ export function PartnerWork({runId}: {runId?:string}) {
       <div className="wd-partners-actions"><Button type="submit" disabled={blocked||!available||!selectedProject||!prompt.trim()}>开始伙伴工作</Button></div>
     </form>}
     {runId&&run&&<><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work/partners">开始另一项工作</a></Button><span className="wd-partners-note">同一运行记录 · {run.id}</span></div><PartnerRunList runs={[run]} busy={busy} blocked={blocked} perform={perform} apiProviders={data?.api_providers}/></>}
-    <section className="wd-partner-work-history"><h2>伙伴工作记录</h2>{!recent.length&&<p className="wd-partners-note">尚无伙伴工作记录。登录和本地检查不会作为工作列入。</p>}<ul>{recent.map(item=><li key={item.id}><a href={'#work/partners/run/'+encodeURIComponent(item.id)}>{item.prompt?.slice(0,100)||data?.partners.find(p=>p.id===item.partner_id)?.name||item.id}</a><span>{partnerStateLabel(item.state)}</span></li>)}</ul>
+    {!task&&<section className="wd-partner-work-history"><h2>伙伴工作记录</h2>{!recent.length&&<p className="wd-partners-note">尚无伙伴工作记录。登录和本地检查不会作为工作列入。</p>}<ul>{recent.map(item=><li key={item.id}><a href={'#work/partners/run/'+encodeURIComponent(item.id)}>{item.prompt?.slice(0,100)||data?.partners.find(p=>p.id===item.partner_id)?.name||item.id}</a><span>{partnerStateLabel(item.state)}</span></li>)}</ul>
       <form onSubmit={event=>{event.preventDefault();if(lookup.trim())location.hash='#work/partners/run/'+encodeURIComponent(lookup.trim());}}><label>按准确运行标识打开<Input aria-label="伙伴运行标识" value={lookup} onChange={event=>setLookup(event.currentTarget.value)}/></label><Button type="submit" variant="outline" disabled={!lookup.trim()}>打开原运行</Button></form>
-    </section>
+    </section>}
   </section>;
 }

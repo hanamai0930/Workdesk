@@ -40,6 +40,13 @@ class CooperativePlanning:
     def scope(self, db, item, driver, plan):
         return self.s.work_flows.scope(db, item, driver, plan)
 
+    @staticmethod
+    def connection_bindings(plan):
+        members=[plan['coordinator'],plan['integrator'],*(unit['member'] for unit in plan['units'])]
+        bindings={member['partner_connection']['id']:deepcopy(member['partner_connection'])
+                  for member in members if member.get('partner_connection')}
+        return list(bindings.values()),any(not member.get('partner_connection') for member in members)
+
     def binding(self, db, row, *, paused=False):
         item = self.s.work_items.item(db, row['item_id'])
         driver = self.s.work_drivers.current(db, item['id'])
@@ -54,7 +61,13 @@ class CooperativePlanning:
                 flow['item_revision'] != item['revision'] or item['state'] != 'OPEN' or
                 self.s.work_units.auth_ref(auth) != row['authorization']):
             raise ValueError('原任务、方案、推进责任、流程或授权已变化；重复计划未自动跟随。')
-        if row['credential_revision'] != self.s.locations.credential_revision:
+        bindings,has_legacy=self.connection_bindings(plan)
+        frozen=row.get('partner_connections',bindings)
+        for connection in frozen:
+            self.s.resources.check_connection(connection,db)
+        if sorted(c['id'] for c in frozen)!=sorted(c['id'] for c in bindings):
+            raise ValueError('合作重复计划的伙伴连接集合已变化，未改用其他账号。')
+        if (row.get('has_legacy_connections',has_legacy) and row['credential_revision'] != self.s.locations.credential_revision):
             raise ValueError('工作端凭据引用已变化，请取消并重新安排合作计划。')
         root = self.s.file_inspector.project(db, item['project_id'])['root']
         if str(Path(root).resolve()) != row['project_root']:
@@ -141,6 +154,7 @@ class CooperativePlanning:
                'limits': {k: auth[k] for k in ('dispatch_before', 'max_attempts_total', 'auto_rework_checks', 'long_term') if k in auth},
                'credential_revision': self.s.locations.credential_revision,
                'project_root': str(Path(self.s.file_inspector.project(db, item['project_id'])['root']).resolve()), 'created': time.time()}
+        row['partner_connections'],row['has_legacy_connections']=self.connection_bindings(plan)
         row = self.put(db, row)
         return {'job': row, 'no_dispatch': True}
 

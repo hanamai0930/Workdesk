@@ -245,6 +245,9 @@ class Store:
         selected = [a for a in attempts if (not task or a['task_id']==task) and
                     (not campaign or json.loads(a['spec']).get('campaign')==campaign) and (not attempt or a['id']==attempt) and
                     (members is None or a['task_id'] in members)]
+        partner_attempts={a['id'] for a in selected if json.loads(a['spec']).get('execution')=='partner_native'}
+        partner_tasks={a['task_id'] for a in selected if a['id'] in partner_attempts}
+        rows=[r for r in rows if r['task_id'] not in partner_tasks]
         identities={a['id'] for a in selected}
         tool_count=sum(r['attempt_id'] in identities for r in db.execute('SELECT attempt_id FROM tool_calls'))
         usage=[json.loads(r['usage']) if r['usage'] else {} for r in rows]
@@ -259,12 +262,25 @@ class Store:
                 'attempts':len(selected),'codex_turns':sum(json.loads(a['spec'])['provider']=='codex' for a in selected),
                 'unknown_requests':sum(r['state']=='UNKNOWN' for r in rows),
                 'account_charge':'UNKNOWN','subscription_remaining':'UNKNOWN'}
+        from .partner_usage import parent_budget_usage
+        partner=parent_budget_usage(db,partner_attempts,{a['id']:a['task_id'] for a in selected if a['id'] in partner_attempts}) if partner_attempts else {}
+        for key in ('model_requests','api_known_input_tokens','api_known_output_tokens','api_requests_without_token_receipt','unknown_requests'):
+            value[key]+=partner.get(key,0)
+        value.update(request_intents=partner.get('request_intents',0),unknown_usage_records=partner.get('unknown_usage_records',0),
+                     unknown_charge_records=partner.get('unknown_charge_records',0),partner_run_ids=partner.get('partner_run_ids',[]))
+        value['reserved_cny']+=partner.get('known_estimated_cny',0)
+        value['reserved_cny_known']=value['reserved_cny']
+        value['charge_complete']=not value['unknown_charge_records']
+        if not value['charge_complete']:value['reserved_cny']=None
         scope,identity=('chain',chain) if chain else ('campaign',campaign) if campaign else ('task',task) if task else ('attempt',attempt) if attempt else ('global','all')
         offset=db.execute('SELECT data FROM usage_offsets WHERE scope=? AND id=?',(scope,identity)).fetchone()
         if offset:
             debt=json.loads(offset[0])
             for key,extra in debt.items():
-                if key in value and type(value[key]) in (int,float):value[key]+=extra
+                if key=='reserved_cny' and type(extra) in (int,float):
+                    value['reserved_cny_known']+=extra
+                    if value[key] is not None:value[key]+=extra
+                elif key in value and type(value[key]) in (int,float):value[key]+=extra
             value['restoration_budget_debt']=debt
         return value
 
@@ -279,6 +295,9 @@ class Store:
                'tools':('tool_calls','tools'),'requests':('model_requests','requests'),
                'cny':('reserved_cny','cny'),'seconds':('elapsed_observed_seconds','seconds')}
         used,cap=pairs[resource]
+        if resource=='cny' and budget.get(cap) is None:return
+        if resource=='cny' and usage[used] is None:
+            raise ValueError('问题链费用回执或价格未知，不能核对费用约束；此处仅作回合间账本核对。')
         if usage[used]+increment>budget[cap]:raise ValueError('问题链累计'+resource+'预算不足；执行、诊断、审查和返工共用限额。')
 
     def reserve_request(self, attempt, body, reserve, limits):
@@ -291,13 +310,17 @@ class Store:
             pending=db.execute("SELECT COUNT(*) FROM requests WHERE attempt_id=? AND state='UNKNOWN'",(attempt,)).fetchone()[0]
             if pending:
                 raise ValueError('先前模型请求回执未知，先核对，不自动重发。')
-            if usage['model_requests']>=budget['requests'] or usage['reserved_cny']+reserve>budget['cny']:
+            if usage['reserved_cny'] is None and budget.get('cny') is not None:raise ValueError('已有费用回执或价格未知，不能确认任务费用限额；未发送。')
+            known_cost=usage['reserved_cny'] if usage['reserved_cny'] is not None else usage['reserved_cny_known']
+            if usage['model_requests']>=budget['requests'] or known_cost+reserve>budget['cny']:
                 raise ValueError('任务请求或费用限额已到，未发送。')
             for resource,increment in [('requests',1),('cny',reserve),('seconds',0)]:self.chain_guard(task['id'],db,resource,increment)
             if task['spec'].get('campaign'):
                 if db.execute('SELECT 1 FROM meta WHERE key=?',('campaign_closed:'+task['spec']['campaign'],)).fetchone():raise ValueError('本有限实施验证已封闭，不发送模型请求。')
                 total=self.usage(campaign=task['spec']['campaign'],db=db)
-                if total['model_requests']>=limits['requests'] or total['reserved_cny']+reserve>limits['cny']:
+                if total['reserved_cny'] is None and limits.get('cny') is not None:raise ValueError('累计费用回执或价格未知，不能确认本轮费用限额；未发送。')
+                known_total=total['reserved_cny'] if total['reserved_cny'] is not None else total['reserved_cny_known']
+                if total['model_requests']>=limits['requests'] or known_total+reserve>limits['cny']:
                     raise ValueError('本轮实施累计限额已到，未发送。')
             identity=uid()
             from .network_time import pricing_now

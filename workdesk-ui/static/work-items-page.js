@@ -38,7 +38,7 @@
   }
   const workReturnLink=record=>record?`<a class="wi-work-return" href="${workConversation(record.id)}"><span aria-hidden="true">‹</span>返回 Work 对话</a>`:'';
   const projectName=id=>v.projects.find(p=>p.id===id)?.name||'普通任务';
-  const record=r=>r.unavailable?`<p class="sp-note">${h(r.title)}</p>`:`<p><a href="${h(r.href)}">${h(r.title)}</a> <small>${r.kind==='task'?'执行记录':r.kind==='chat'?'Chat':'合作讨论'}</small></p>`;
+  const record=r=>r.unavailable?`<p class="sp-note">${h(r.title)}</p>`:`<p><a href="${h(r.href)}">${h(r.title)}</a> <small>${r.kind==='partner_run'?'伙伴工作':r.kind==='task'?'执行记录':r.kind==='chat'?'Chat':'合作讨论'}</small></p>`;
   function resourceRef(id){const m=v.resources.members.find(m=>m.id===id),c=v.resources.connections.find(c=>c.id===m?.connection_id),q=v.resources.quota_sources.find(q=>q.id===c?.quota_id);return m&&c&&q?{member_id:m.id,member_revision:m.revision,connection_id:c.id,connection_revision:c.revision,quota_id:q.id,quota_revision:q.revision}:null;}
   const presetValue=p=>p?JSON.stringify({id:p.id,revision:p.revision}):'';
   function presetOptions(selected){const options=[['','工作端现有配置（无任务附加预设）'],...v.presets.filter(p=>p.enabled).map(p=>[presetValue(p),p.name])];if(selected&&!options.some(o=>o[0]===presetValue(selected)))options.push([presetValue(selected),'原预设版本已变化，请重新选择']);return options;}
@@ -2059,7 +2059,7 @@
       do{
         const page=await S.request('record-catalog?'+new URLSearchParams({scope:'all',limit:'100',...(cursor?{cursor}:{})}));
         if(!form())return;
-        rows.push(...page.records);
+        rows.push(...page.records.filter(row=>row.kind!=='partner_run'&&!row.readonly));
         cursor=page.next_cursor;
       }while(cursor);
       v.available=rows;
@@ -2165,8 +2165,8 @@
   }
   function projectOverview(project,source){
     const tasks=v.data.work_items, name=projectName(project);
-    const discussions=v.records.filter(row=>row.kind!=='task');
-    const executions=v.records.filter(row=>row.kind==='task');
+    const discussions=v.records.filter(row=>!['task','partner_run'].includes(row.kind));
+    const executions=v.records.filter(row=>['task','partner_run'].includes(row.kind));
     const returnTo=source?workReturnTask(executions.filter(row=>row.independent_work),source):null;
     const taskLinks=tasks.map(task=>`<div class="wi-project-task-row"><a class="wi-project-task"
       href="${task.cooperation_conversation?cooperationHref(task.id):contextualTaskHref(task,'project')}" aria-label="${h(task.title)}">
@@ -2616,6 +2616,12 @@
       const adapter=work?window.WorkdeskWorkDetail:window.WorkdeskChatDetail;
       const data=await adapter.load(id,c.detailTab);
       if(!active())return;
+      if(work&&(data.partnerRunId||data.partnerNative)){
+        compactProject=data.projectId||null;
+        $('#main').innerHTML=window.WorkdeskConversationDetail.render({...fallback,...data,...back,tabs:[],
+          panelContent:`<section class="wd-detail-panel"><p>${data.partnerRunId?'此工作的原生结果、工具请求与用量保存在同一运行记录中。':'原生运行归属待核对，保留原记录，没有重新发送。'}</p><a class="wk-button" href="${data.partnerRunId?'#work/task/'+encodeURIComponent(id):'#settings/operations'}">${data.partnerRunId?'打开原生运行':'运行与恢复'}</a></section>`});
+        return;
+      }
       compactProject=data.projectId||null;
       compactHeading={id,kind,title:data.title,subtitle:data.subtitle};
       if(c.detailTab==='settings'){
@@ -2858,7 +2864,7 @@
       await S.command('work-item.update',{id:item.id,revision,changes:{...data,project_id:data.project_id||null}});
       if(v.controls?.item===item.id)v.controls.draft=null;
     }
-    if(f.id==='work-item-link'){const r=v.available.find(r=>r.kind+':'+r.id===data.record);if(!r)throw Error('请先选择记录。');await S.command('work-item.link',{id:item.id,revision:item.revision,kind:r.kind,record_id:r.id,record_revision:r.revision});}
+    if(f.id==='work-item-link'){const r=v.available.find(r=>r.kind+':'+r.id===data.record);if(!r||r.kind==='partner_run'||r.readonly)throw Error('请先选择可关联的记录。');await S.command('work-item.link',{id:item.id,revision:item.revision,kind:r.kind,record_id:r.id,record_revision:r.revision});}
     await load();await S.refreshChrome();
   });});
   document.addEventListener('click',e=>{const el=e.target.closest('[data-item-action]');if(!el||!current().active)return;act(async()=>{const c=current(),item=c.id?v.data.work_items[0]:null;if(el.dataset.itemAction==='refresh'){await load();return;}if(['takeover','release'].includes(el.dataset.itemAction)){const action=el.dataset.itemAction,payload={id:item.id,revision:item.revision,action,...(action==='release'?{control_revision:item.runtime.manual_control.revision}:{note:'从业务任务页转人工处理'})};if(!await S.confirm(action==='takeover'?'人工接管本任务':'结束人工接管','作用于本任务及关联执行；结束接管后由你明确安排下一步。',item.title))return;await S.command('work-item.control',payload);await load();return;}if(el.dataset.itemAction==='prepare'){const r=await S.command('work-item.prepare',{id:item.id,revision:item.revision,member_id:$('#main [name=execution_member]').value||undefined});location.hash='#work/draft/'+r.draft.id;return;}const r=await S.command('work-item.chat-create',{project_id:item?.project_id||c.project,...(item?{work_item_id:item.id,revision:item.revision}:{})});await S.refreshChrome();location.hash='#chat/'+r.chat.id;});});

@@ -61,6 +61,24 @@ _PUBLIC_TASK="""(kind!='task' OR EXISTS (
     AND json_type(t.spec,'$.cooperative') IS NOT 'object'
 ))"""
 
+_PARTNER_RECORDS=""" UNION ALL
+ SELECT 'partner_run',r.id,
+ coalesce(nullif(substr(json_extract(r.data,'$.prompt'),1,160),''),json_extract(r.data,'$.partner_id')||' 官方工作'),
+ json_extract(r.data,'$.partner_id'),json_extract(r.data,'$.state'),
+ coalesce(json_extract(r.data,'$.created'),r.updated,0),coalesce(json_extract(r.data,'$.updated'),r.updated,0),0,0,
+ coalesce(json_extract(r.data,'$.prompt'),'')||char(10)||coalesce(json_extract(r.data,'$.result.text'),json_extract(r.data,'$.result.output'),''),
+ json_extract(r.data,'$.project_id'),NULL
+ FROM core_partner_objects r WHERE r.kind='run' AND json_extract(r.data,'$.mode')='run'
+ AND coalesce(json_extract(r.data,'$.parent_task_id'),'')=''
+"""
+
+
+def _with_partner_records(db, cte):
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_objects'").fetchone():
+        before,after=cte.rsplit(')',1)
+        return before+_PARTNER_RECORDS+')'+after
+    return cte
+
 
 def _cooperation_fields(service, db, row):
     identity = row['id']
@@ -120,7 +138,7 @@ def catalog(service,query='',mode='all',archive='all',cursor='',limit=40,scope='
     if scope=='directory':where.append(_PUBLIC_TASK)
     if mode=='chat':where.append("kind='chat'")
     if mode=='work':where.append("kind!='chat'")
-    if mode=='independent':where.append("kind='task'")
+    if mode=='independent':where.append("kind IN ('task','partner_run')")
     if mode=='cooperation':where.append("kind IN ('dialogue','cooperation')")
     if archive!='all':where.append('archived=?');args.append(int(archive=='archived'))
     if query:
@@ -134,13 +152,13 @@ def catalog(service,query='',mode='all',archive='all',cursor='',limit=40,scope='
         try:
             if len(cursor)>1200:raise ValueError()
             last=json.loads(base64.urlsafe_b64decode(cursor+'='*(-len(cursor)%4)))
-            kinds={'task','chat','dialogue','cooperation'} if scope=='directory' else {'task','chat','dialogue'}
+            kinds={'task','chat','dialogue','cooperation','partner_run'} if scope=='directory' else {'task','chat','dialogue','partner_run'}
             if last['filters']!=filters or last['pinned'] not in (0,1) or not math.isfinite(last['created']) or last['kind'] not in kinds or not isinstance(last['id'],str):raise ValueError()
         except (ValueError,TypeError,KeyError,OverflowError):raise ValueError('分页位置无效，请重新搜索。') from None
         paged+=' AND (pinned<? OR pinned=? AND (created<? OR created=? AND (kind>? OR kind=? AND id>?)))'
         page_args.extend([last['pinned'],last['pinned'],last['created'],last['created'],last['kind'],last['kind'],last['id']])
     with service.store.read() as db:
-        cte=_DIRECTORY_CTE if scope=='directory' else CTE
+        cte=_with_partner_records(db,_DIRECTORY_CTE if scope=='directory' else CTE)
         total=db.execute(cte+'SELECT COUNT(*) FROM records WHERE '+filtered,args).fetchone()[0]
         rows=[dict(r) for r in db.execute(cte+'SELECT kind,id,title,provider,state,created,updated,pinned,archived,'+PROJECT_SCOPE+' AS project,scene FROM records WHERE '+paged+' ORDER BY pinned DESC,created DESC,kind,id LIMIT ?',[*page_args,limit+1])]
         for row in rows[:limit]:
@@ -149,6 +167,11 @@ def catalog(service,query='',mode='all',archive='all',cursor='',limit=40,scope='
                 row['project_name']=project_row['name'] if project_row else None
             if row['kind']=='cooperation':
                 _cooperation_fields(service,db,row)
+            elif row['kind']=='partner_run':
+                raw=db.execute("SELECT data FROM core_partner_objects WHERE kind='run' AND id=?",(row['id'],)).fetchone()
+                run=json.loads(raw[0])
+                row.update(revision=str(run.get('revision',0)),independent_work=True,run_id=row['id'],
+                           read_only=True,can_archive=False,can_delete=False,actions=[])
             elif row['kind']=='chat':
                 row['revision']=service.collaboration.get(db,'ui_chat',row['id'])['revision']
             else:
@@ -161,6 +184,8 @@ def catalog(service,query='',mode='all',archive='all',cursor='',limit=40,scope='
         last=rows[-1];value={k:last[k] for k in ('pinned','created','kind','id')};value['filters']=filters
         next_cursor=base64.urlsafe_b64encode(json.dumps(value,separators=(',',':')).encode()).decode().rstrip('=')
     for row in rows:
-        if row['kind']!='cooperation':
+        if row['kind']=='partner_run':
+            row['href']='#work/partners/run/'+row['id']
+        elif row['kind']!='cooperation':
             row['href']=('#chat/'+row['id']) if row['kind']=='chat' else '#work/'+row['kind']+'/'+row['id']
     return {'records':rows,'total':total,'next_cursor':next_cursor,'has_more':more,'limit':limit,'query':query,'mode':mode,'archive':archive,'scope':scope,'project_id':project,'no_dispatch':True}

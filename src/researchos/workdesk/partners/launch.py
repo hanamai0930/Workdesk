@@ -8,6 +8,7 @@ from pathlib import Path
 import uuid
 
 from .providers import validate_binding
+from .permissions import checked as checked_permission
 
 PARTNERS = ("codex", "deepseek", "qwen", "claude", "grok", "gemini", "kimi", "glm")
 
@@ -119,6 +120,7 @@ def build_launch(config: dict) -> LaunchSpec:
     partner, mode, route = config["partner_id"], config.get("mode", "run"), config.get("route", "account")
     if partner not in PARTNERS or mode not in {"run", "login", "inspect"} or route not in {"api", "account"}:
         raise ValueError("Unknown official partner, route or mode")
+    permission = checked_permission(config) if mode == "run" else None
     entry = config["entry"]
     if not isinstance(entry, list) or not entry or any(not isinstance(v, str) or not v or "\0" in v for v in entry):
         raise ValueError("A fixed official component argv is required")
@@ -277,6 +279,9 @@ def build_launch(config: dict) -> LaunchSpec:
             protocol = "auth-status"
         else:
             argv += ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"]
+            argv += ["--permission-mode", permission["native"]["permission_mode"], "--permission-prompts", "host"]
+            if permission["value"] == "full":
+                argv += ["--allow-dangerously-skip-permissions"]
             if config.get("resume") and config.get("session_id"):
                 argv += ["--resume=" + config["session_id"]]
             elif config.get("session_id"):
@@ -287,7 +292,7 @@ def build_launch(config: dict) -> LaunchSpec:
             argv += ["login", "--oauth" if auth_options.get("auth_method") == "oauth" else "--device-auth"]
             protocol = "login-text"
         else:
-            argv += ["agent", "--no-leader", "stdio"]
+            argv += ["agent", "--no-leader", *permission["native"]["argv"], "stdio"] if permission else ["agent", "--no-leader", "stdio"]
     elif partner == "gemini":
         argv += ["--experimental-acp"]
         if model and mode == "run":
@@ -309,5 +314,12 @@ def build_launch(config: dict) -> LaunchSpec:
         else:
             argv += ["app-server"]
             protocol = "zcode"
+    if partner == "deepseek" and mode == "run":
+        native = permission["native"]
+        overlay = home / ".dsh/.workdesk/permissions.patch.yml"
+        _write(overlay, json.dumps([{"id": "sandbox-policy", "config": {"mode": native["sandbox"]}},
+                                   {"id": "approval", "config": {"policy": native["approval"]}},
+                                   {"id": "permission", "config": {"defaultPreset": native["preset"]}}]))
+        argv += ["--patch", str(overlay)]
     return LaunchSpec(argv, env, str(workspace), protocol, partner, route, mode,
                       "OFFICIAL_NATIVE_RUNTIME", limitations)

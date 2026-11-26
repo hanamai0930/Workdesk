@@ -16,11 +16,18 @@ def summary(configuration):
     stages = configuration['stages']
     return {
         'rounds': configuration['rounds'],
-        'stages': {stage: {'member_id': member['reference']['member_id'], 'name': member['name'],
-                           'provider': member['provider'], 'model': member['model']}
+        'stages': {stage: member_summary(member)
                    for stage, member in stages.items()},
         'coordinator': configuration['coordinator'],
     }
+
+
+def member_summary(member):
+    value={'member_id':member['reference']['member_id'], 'name':member['name'],
+           'provider':member['provider'], 'model':member['model'], 'reference':member['reference']}
+    if member.get('partner_connection'):
+        value['partner_connection']=member['partner_connection']
+    return value
 
 
 def member(service, db, ref):
@@ -64,8 +71,7 @@ def setup(service, db, payload, *, separated=False):
         raise ValueError('请为负责人或主持人选择模型。')
     lead = coordinator or planner
     configuration = {'rounds': rounds, 'stages': members,
-                     'coordinator': {'member_id': lead['reference']['member_id'],
-                                     **{key: lead[key] for key in ('name', 'provider', 'model')}},
+                     'coordinator': member_summary(lead),
                      'work_scene': scene(source_scene), 'files': files, 'attachments': selected}
     if separated:
         configuration['confirmed_discussion'] = True

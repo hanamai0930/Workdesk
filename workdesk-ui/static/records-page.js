@@ -13,6 +13,7 @@
 
   function detailHref(r){
     const id=encodeURIComponent(r.id);
+    if(r.kind==='partner_run')return r.href||'#work/partners/run/'+id;
     if(r.kind==='chat')return '#work-items/view-chat/'+id+'/from-records';
     if(r.kind==='task'&&r.independent_work)return '#work-items/view-work/'+id+'/from-records';
     if(isCooperation(r)&&r.detail_href)return r.detail_href+'/from-records';
@@ -35,6 +36,7 @@
   }
 
   function recordActions(r){
+    if(r.kind==='partner_run')return '';
     const actions=[['rename','重命名'],['pin',r.pinned?'取消置顶':'置顶']];
     if(!isCooperation(r)||r.archived||r.can_archive)actions.push(['archive',r.archived?'取消归档':'归档']);
     if(!isCooperation(r))actions.push(['md','导出 Markdown'],['json','导出 JSON'],['delete','删除']);
@@ -46,7 +48,7 @@
 
   function recordCard(r){
     const type=r.kind==='chat'?modes.chat:isCooperation(r)?modes.cooperation:r.kind==='dialogue'?'合作 Work · 历史讨论':
-      r.independent_work?modes.independent:'独立／后台工作';
+      r.independent_work||r.kind==='partner_run'?modes.independent:'独立／后台工作';
     const detail=detailHref(r);
     return `<article class="sp-card records-card" data-record-kind="${h(r.kind)}">
       <div class="sp-row records-card-heading">
@@ -127,6 +129,7 @@
   }
 
   async function operate(action,r){
+    if(r.kind==='partner_run')throw Error('请在原生运行中查看此记录。');
     if(action==='rename'){
       v.edit=r;
       draw();

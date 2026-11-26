@@ -14,6 +14,7 @@ import { NativeAccess, NativeProcess, NativeUsage } from './native-work';
 import { nativeTrace } from './native-events';
 import { useQuickWorkspaceView } from './quick-workspace';
 import { ConversationScroll } from './conversation-scroll';
+import { PartnerWork } from './partner-work';
 
 const active = new Set(['RESERVED','SEND_INTENT','RUNNING','WAITING_APPROVAL','WAITING_INPUT','STOP_REQUESTED']);
 const ProviderName=createContext('AI');
@@ -99,7 +100,13 @@ function AssistantMessage() {
   </div></MessagePrimitive.Root>;
 }
 
-export function Conversation({v,scenes,names,isLocked,controls,independent,cooperation,chat:chatInfo}:any) {
+export function Conversation(props:any) {
+  const detail=props.v.detail,runId=detail?.partner_run_id||detail?.task?.partner_run_id||detail?.task?.spec?.partner_run_id;
+  if(props.v.mode!=='chat'&&runId)return <PartnerWork key={runId} runId={runId} task={detail.task}/>;
+  if(props.v.mode!=='chat'&&detail?.task?.spec?.execution==='partner_native')return <section className="wd-partners"><h1>{detail.task.title||'伙伴工作'}</h1><p role="status">原生运行归属待核对。保留原记录，没有重新发送。</p><a href="#settings/operations">运行与恢复</a></section>;
+  return <LegacyConversation {...props}/>;
+}
+function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooperation,chat:chatInfo}:any) {
   const bridge=window.WorkdeskWorkbench;
   const chat=v.mode==='chat', c=v.chats.find((c:any)=>c.id===v.activeChat);
   const detail=v.detail||v.dialogueRuntime;

@@ -8,13 +8,14 @@ import './native-work.css';
 export function NativeAccess({v}:any){
   const [open,setOpen]=useState(false);
   const raw=v.workAccess||v.detail?.task.spec.access||'workspace',access=raw==='inherit'?'workspace':raw;
-  const label=access==='full'?'完全访问权限':access==='auto'?'帮我批准':'请求批准';
+  const connection=!v.detail?v.data?.partner_connections?.connections.find((row:any)=>row.id===v.connectionId&&row.partner_id===v.provider):null;
   const service=v.detail?.independent_service||v.data?.independent_work?.services.find((s:any)=>s.provider===v.provider);
-  const options=service?.access_modes||[];
+  const options=!v.detail&&v.data?.partner_connections?connection?.permission_modes||[]:service?.access_modes||[];
+  const label=options.find((mode:any)=>mode.id===access)?.name||(access==='full'?'完全访问权限':access==='auto'?'官方自动审核':'请求批准');
   const icons:any={workspace:Hand,auto:ShieldCheck,full:ShieldAlert};const Icon=icons[access]||Shield;
   return <Popover.Root open={open} onOpenChange={setOpen}><Popover.Trigger asChild><Button type="button" variant="ghost" className={'wk-native-access '+(access==='full'?'is-full':'')} aria-label={'访问权限：'+label} disabled={v.workLoading||v.busy}><Icon/><span>{label}</span><ChevronDown/></Button></Popover.Trigger>
     <Popover.Portal><Popover.Content data-ui-module="workbench" className="wk-access-menu" side="top" align="start" sideOffset={9} collisionPadding={12} aria-label="访问权限">
-      <div className="wk-access-menu-heading">应如何批准操作？</div>{options.filter((m:any)=>m.id!=='inherit').map((m:any)=>{const ItemIcon=icons[m.id]||Shield;return <button key={m.id} type="button" className={'wk-access-menu-option '+(m.id==='full'?'is-full':'')} aria-pressed={m.id===access} disabled={m.supported===false||v.busy} onClick={async()=>{setOpen(false);await window.WorkdeskWorkbench.selectWorkAccess(m.id);}}><ItemIcon/><span><strong>{m.name}</strong><small>{m.description}</small></span>{m.id===access&&<Check/>}</button>;})}
+      <div className="wk-access-menu-heading">应如何批准操作？</div>{options.filter((m:any)=>m.id!=='inherit').map((m:any)=>{const ItemIcon=icons[m.id]||Shield;return <button key={m.id} type="button" className={'wk-access-menu-option '+(m.id==='full'?'is-full':'')} aria-pressed={m.id===access} disabled={m.supported===false||v.busy} onClick={async()=>{setOpen(false);await window.WorkdeskWorkbench.selectWorkAccess(m.id);}}><ItemIcon/><span><strong>{m.name}</strong><small>{m.supported===false?m.reason||m.description:m.description}</small></span>{m.id===access&&<Check/>}</button>;})}
     </Popover.Content></Popover.Portal>
   </Popover.Root>;
 }

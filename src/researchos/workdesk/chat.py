@@ -5,6 +5,22 @@ from .contracts import bounded_text
 from .store import ACTIVE, UNKNOWN, canonical, uid
 from .workbench import scratch
 
+WEB_PROVIDERS = {
+    'codex': {'name': 'ChatGPT', 'web_url': 'https://chatgpt.com/', 'brand_rgb': '16,163,127'},
+    'deepseek': {'name': 'DeepSeek Chat', 'web_url': 'https://chat.deepseek.com/', 'brand_rgb': '77,107,254'},
+    'qwen': {'name': 'Qwen Chat', 'web_url': 'https://chat.qwen.ai/', 'brand_rgb': '107,80,232'},
+    'claude': {'name': 'Claude', 'web_url': 'https://claude.ai/', 'brand_rgb': '168,106,76'},
+    'grok': {'name': 'Grok', 'web_url': 'https://grok.com/', 'brand_rgb': '95,103,112'},
+    'gemini': {'name': 'Gemini', 'web_url': 'https://gemini.google.com/', 'brand_rgb': '69,130,224'},
+    'kimi': {'name': 'Kimi', 'web_url': 'https://www.kimi.com/', 'brand_rgb': '76,115,91'},
+    'glm': {'name': 'GLM', 'web_url': 'https://chat.z.ai/', 'brand_rgb': '78,106,176'},
+}
+
+
+def web_providers():
+    """Official website choices, separate from API Chat and Work authentication."""
+    return [{'id': provider, 'name': item['name']} for provider, item in WEB_PROVIDERS.items()]
+
 
 class ChatService:
     def __init__(self,service):
@@ -23,16 +39,13 @@ class ChatService:
                 'cny_per_turn':0 if provider=='codex' else 8 if provider=='deepseek' else 2}
 
     def catalog(self):
-        names={'codex':'ChatGPT','deepseek':'DeepSeek Chat','qwen':'Qwen Chat'}
-        urls={'codex':'https://chatgpt.com/','deepseek':'https://chat.deepseek.com/','qwen':'https://chat.qwen.ai/'}
         greetings={'codex':'今天想聊点什么？','deepseek':'欢迎回来，随时开始吧','qwen':'有什么可以帮你的吗？'}
-        colors={'codex':'16,163,127','deepseek':'77,107,254','qwen':'107,80,232'}
-        return {'services':[{'provider':key,'name':names[key],'web_url':url,'default_route':'web',
-                             'greeting':greetings[key],'placeholder':{'codex':'询问 ChatGPT','deepseek':'给 DeepSeek 发送消息','qwen':'有什么我能帮你的吗？'}[key],
-                             'brand_rgb':colors[key],'brand_opacity':0.05,'view_mode':'DESKTOP_OFFICIAL_CHAT',
+        return {'services':[{'provider':key,**item,'default_route':'web',
+                             'greeting':greetings.get(key,'今天想聊点什么？'),'placeholder':{'codex':'询问 ChatGPT','deepseek':'给 DeepSeek 发送消息','qwen':'有什么我能帮你的吗？'}.get(key,'询问 '+item['name']),
+                             'brand_opacity':0.05,'view_mode':'DESKTOP_OFFICIAL_CHAT',
                              'context_mode':'OFFICIAL_WEBSITE','models_managed_by_website':True,
                              'agent_dispatch':False,'api_billing':False,'free_quota':'MANAGED_BY_OFFICIAL_ACCOUNT'}
-                            for key,url in urls.items()], 'api':self.api.describe(),
+                            for key,item in WEB_PROVIDERS.items()], 'api':self.api.describe(),
                 'api_services':[self.api.describe(provider) for provider in ('deepseek','qwen')],
                 'default_route':'api','no_dispatch':True}
 
@@ -64,7 +77,7 @@ class ChatService:
 
     def chat_create(self, db, p):
         provider=p.get('provider','codex')
-        if provider not in {'codex','deepseek','qwen'}:raise ValueError('未知聊天工作端。')
+        if provider not in WEB_PROVIDERS:raise ValueError('未知聊天工作端。')
         route=p.get('route','web')
         from .chat_api import API_MODELS
         if route not in {'web','api'} or route=='api' and provider not in API_MODELS:raise ValueError('当前仅接入 DeepSeek 和 Qwen API 聊天。')
@@ -210,8 +223,8 @@ class ChatService:
         if row.get('route')!='web':raise ValueError('仅官网聊天入口可绑定网页会话链接。')
         url = bounded_text(p.get('url'), '官方聊天链接', 2000)
         parsed = urlsplit(url)
-        hosts = {'codex': 'chatgpt.com', 'deepseek': 'chat.deepseek.com', 'qwen': 'chat.qwen.ai'}
-        if parsed.scheme != 'https' or parsed.netloc != hosts[row['provider']] or parsed.username or parsed.password:
+        host = urlsplit(WEB_PROVIDERS[row['provider']]['web_url']).netloc
+        if parsed.scheme != 'https' or parsed.netloc != host or parsed.username or parsed.password:
             raise ValueError('须填写所选工作端的 HTTPS 官方聊天链接。')
         if parsed.path in {'', '/'}:
             raise ValueError('请粘贴具体聊天链接，首页不能绑定为已恢复的会话。')

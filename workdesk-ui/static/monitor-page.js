@@ -4,15 +4,17 @@
   const $ = WorkdeskModules.dom('monitor'), S = WorkdeskSupport, {h} = S;
   const v = {data:null, scope:'attention', error:'', busy:false, seq:0, timer:null};
   const active = () => location.hash.split('/')[0] === '#monitor';
-  const live = new Set(['RESERVED','SEND_INTENT','RUNNING','WAITING_APPROVAL','WAITING_INPUT','STOP_REQUESTED']);
-  const unknown = new Set(['SEND_UNKNOWN','STOP_UNKNOWN','ORPHANED_UNKNOWN']);
+  const live = new Set(['RESERVED','QUEUED','SEND_INTENT','RUNNING','WAITING_APPROVAL','WAITING_INPUT','STOP_REQUESTED','RESULT_RECEIVED','ERROR_RECEIVED','STOP_RESULT_RECEIVED']);
+  const unknown = new Set(['UNKNOWN','SEND_UNKNOWN','STOP_UNKNOWN','ORPHANED_UNKNOWN']);
   const reconciliationReasons = new Set(['REQUEST_UNKNOWN','NATIVE_OPERATION','NATIVE_REPLY','REMOTE_UNKNOWN']);
   const reasonLabels = {
     CURRENT_TURN:'仍有在途回合', LOCAL_WORKER:'本地工作端尚未退出', EXIT_UNPROVED:'缺少本地退出证据',
     REMOTE_UNKNOWN:'远端状态待核对', REQUEST_UNKNOWN:'请求状态待核对',
     NATIVE_OPERATION:'原生操作回执待核对', NATIVE_REPLY:'审批或输入回执待核对'
   };
-  const providerLabels = {codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen'};
+  const providerLabels = {codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen',claude:'Claude',grok:'Grok',gemini:'Gemini',kimi:'Kimi',glm:'GLM'};
+  const apiLabels={openai:'OpenAI',deepseek:'DeepSeek',qwen:'Qwen',anthropic:'Anthropic',xai:'xAI',gemini:'Gemini',kimi:'Kimi',glm:'GLM'};
+  const runState=state=>({QUEUED:'排队中',UNKNOWN:'结果待核对',RESULT_RECEIVED:'正在确认退出',ERROR_RECEIVED:'正在核对退出',STOP_RESULT_RECEIVED:'正在核对退出',STOPPED_RUNTIME:'本地运行已停止'}[state]||S.state(state));
   const remoteLabels = {UNKNOWN:'待核对',UNREPORTED:'未记录',NOT_SENT:'未发送',completed:'已完成',failed:'失败',interrupted:'已中断'};
   const flowLabels = {RUNNING:'运行中',PAUSED:'已暂停',RESULTS_AVAILABLE:'文字结果已具备'};
   const groups = [
@@ -28,13 +30,13 @@
     if(hasManual(r))return ['manual','人工处理中'];
     if(r.state==='WAITING_APPROVAL')return ['attention','等待审批'];
     if(r.state==='WAITING_INPUT')return ['attention','等待补充输入'];
-    if(r.pending_approvals>0)return ['attention','有待处理请求'];
+    if(r.pending_approvals>0||r.pending_inputs>0)return ['attention','有待处理请求'];
     const reasons=r.block_reasons||[];
-    if(unknown.has(r.state))return ['attention',S.state(r.state)];
+    if(unknown.has(r.state))return ['attention',runState(r.state)];
     if(reasons.some(reason=>reconciliationReasons.has(reason))||(!live.has(r.state)&&reasons.length))
       return ['attention','状态待核对'];
-    if(live.has(r.state))return ['live',S.state(r.state)];
-    return ['recent',S.state(r.state)];
+    if(live.has(r.state))return ['live',runState(r.state)];
+    return ['recent',runState(r.state)];
   }
 
   function runEvidence(r, shown) {
@@ -112,14 +114,29 @@
     </article>`;
   }
 
+  function partnerCard(r,[group,label]){
+    r={...r,...r.partner_run,title:r.title};
+    const id=r.partner_run_id||r.run_id||r.id||r.task_id,href=r.partner_binding_problem?'#settings/operations':r.partner_href||r.href||'#work/partners/run/'+encodeURIComponent(id);
+    const api=r.api_name||apiLabels[r.api_provider]||r.api_provider||'所选 API';
+    const source=r.source_label||(r.route==='api'?api+' API':r.route==='account'?'官方账号':'来源待核对');
+    return `<article class="sp-card wd-monitor-card" data-partner-run="${h(id)}">
+      <div class="wd-monitor-row"><h3>${h(r.title||r.prompt?.slice(0,120)||'伙伴工作')}</h3><span class="wd-monitor-badge" data-monitor-state="${group}">${h(label)}</span></div>
+      <p class="wd-monitor-meta">Work · ${h(providerLabels[r.partner_id||r.provider]||r.partner_id||r.provider)} · ${h(source)}${r.account_label?' · '+h(r.account_label):''}${r.model?' · '+h(r.model):''}</p>
+      <p class="wd-monitor-meta">${h(S.when(r.started||r.created))}${r.project_name?' · '+h(r.project_name):''}${r.pending_approvals>0?' · '+h(r.pending_approvals)+' 项待审批':''}${r.pending_inputs>0?' · '+h(r.pending_inputs)+' 项待补充':''}</p>
+      ${r.partner_binding_problem?`<p class="sp-note">${h(r.partner_binding_problem)}</p>`:''}
+      <div class="sp-actions"><a class="wd-monitor-action" href="${h(href)}">${r.partner_binding_problem?'核对运行归属':'查看原生运行与请求'}</a></div>
+    </article>`;
+  }
+
   function draw() {
     if(!active()||!v.data)return;
     const main = $('#main');
     const shown = new Set([...main.querySelectorAll('[data-monitor-disclosure][open]')].map(node=>node.dataset.monitorDisclosure));
     const drafts = new Map([...main.querySelectorAll('[data-monitor-attempt] textarea')].map(node=>[node.form.dataset.monitorAttempt,node.value]));
     const rows = [
-      ...(v.data.runs||[]).map(row=>({row,group:status(row),api:false})),
-      ...(v.data.api_chats||[]).map(row=>({row,group:status(row),api:true}))
+      ...(v.data.runs||[]).map(row=>({row,group:status(row),kind:row.kind==='partner_run'||row.partner_run_id||row.partner_binding_problem?'partner_run':'task'})),
+      ...(v.data.partner_runs||[]).map(row=>({row,group:status(row),kind:'partner_run'})),
+      ...(v.data.api_chats||[]).map(row=>({row,group:status(row),kind:'api'}))
     ].sort((a,b)=>(b.row.started??b.row.created??0)-(a.row.started??a.row.created??0));
     const buckets = new Map(groups.map(([key])=>[key,[]]));
     for(const entry of rows)buckets.get(entry.group[0]).push(entry);
@@ -130,7 +147,7 @@
       const entries = buckets.get(key);
       if(!entries.length)return '';
       return `<section class="wd-monitor-group" aria-labelledby="wd-monitor-${key}"><h2 id="wd-monitor-${key}">${title} <span>${entries.length}</span></h2>
-        ${entries.map(({row,group,api})=>api?apiCard(row,group,shown):workCard(row,group,shown,drafts)).join('')}
+        ${entries.map(({row,group,kind})=>kind==='api'?apiCard(row,group,shown):kind==='partner_run'?partnerCard(row,group):workCard(row,group,shown,drafts)).join('')}
       </section>`;
     }).join('');
     const empty = v.scope==='all'?'暂无运行记录':'当前没有在途或待处理的回合';
@@ -143,7 +160,7 @@
       <dl class="wd-monitor-counts" aria-label="运行状态摘要">${highlights}</dl>
       <div class="wd-monitor-list-controls">
         <p class="sp-note">本页 ${rows.length} 条最近回合 · 更新于 ${h(S.when(v.data.checked_at))}
-          ${v.data.limited?'<br>Work 与 API Chat 各最多显示最近 200 项。':''}</p>
+          ${v.data.limited?'<br>各类运行最多显示最近 200 项。':''}</p>
         ${S.select('显示范围','scope',[['attention','需要关注'],['all','全部最近回合']],v.scope)}
       </div>
       ${lists||`<section class="sp-card wd-monitor-empty"><h2>${empty}</h2><p>${emptyNote}</p></section>`}

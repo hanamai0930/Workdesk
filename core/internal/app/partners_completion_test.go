@@ -29,6 +29,7 @@ func receivedPartnerFixture(t *testing.T) (*App, string, string, string) {
 
 func TestPartnerReconcileAcceptsOnlyReceivedResultAndDoesNotResend(t *testing.T) {
 	a, runID, accountID, connectionID := receivedPartnerFixture(t)
+	configurationRevision := number(readPartnerObject(t, a, "connection", connectionID)["revision"])
 	commandID := ID()
 	payload := map[string]any{"run_id": runID, "resolution": "accept_received_result"}
 	result := partnerCommandReceipt(t, a, commandID, "partner.reconcile", payload)
@@ -36,6 +37,9 @@ func TestPartnerReconcileAcceptsOnlyReceivedResultAndDoesNotResend(t *testing.T)
 		t.Fatal("saved result acceptance started work or did not complete")
 	}
 	run := readPartnerObject(t, a, "run", runID)
+	if number(readPartnerObject(t, a, "connection", connectionID)["revision"]) != configurationRevision {
+		t.Fatal("verification changed the connection configuration and invalidated queued roles")
+	}
 	if run["error"] != nil || run["result_acceptance"] != "EXPLICIT_ACCEPT_RECEIVED_RESULT" || run["local_exit_confirmed"] != true || run["session_id"] != "original-native-session" {
 		t.Fatalf("acceptance lost original evidence: %+v", run)
 	}

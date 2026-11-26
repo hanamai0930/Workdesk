@@ -4,10 +4,10 @@
   const $=window.WorkdeskModules.dom('workbench');
   const scenes={research:{name:'科研探索',icon:'research',hint:'检索资料、提出问题、验证想法'},documents:{name:'文档处理',icon:'file',hint:'阅读、整理与制作各类文档'},computer:{name:'电脑操控',icon:'pointer',hint:'浏览网页与操作桌面应用'},development:{name:'应用开发',icon:'terminal',hint:'编写代码、调试和构建应用'}};
   const roleNames={lead:['统筹 AI','规划目标、分配任务、整合结果','compass'],execute:['执行 AI','编写代码、处理材料、完成工作','terminal'],review:['评审 AI','审计过程、检查质量、评阅成果','review']};
-  const names={codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen'};
-  const urls={codex:'https://chatgpt.com/',deepseek:'https://chat.deepseek.com/',qwen:'https://chat.qwen.ai/'};
+  const names={codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen',claude:'Claude',grok:'Grok',gemini:'Gemini',kimi:'Kimi',glm:'GLM'};
+  const urls={codex:'https://chatgpt.com/',deepseek:'https://chat.deepseek.com/',qwen:'https://chat.qwen.ai/',claude:'https://claude.ai/',grok:'https://grok.com/',gemini:'https://gemini.google.com/',kimi:'https://www.kimi.com/',glm:'https://chat.z.ai/'};
   const v={mode:'chat',scene:'research',type:'independent',provider:'codex',model:'',project:'',input:'',files:'',attachments:[],roles:{lead:'codex',execute:'deepseek',review:'qwen'},roleDraft:null,
-    workAccess:'workspace',workEffort:'',workTier:'',workPlanOnly:false,data:null,co:null,extensions:null,detail:null,dialogue:null,pending:null,busy:false,timer:null,generation:0,menu:null,anchor:null,projectQuery:'',activeChat:null,
+    workAccess:'workspace',workEffort:'',workTier:'',connectionId:'',connectionRevision:'',workPlanOnly:false,data:null,co:null,extensions:null,detail:null,dialogue:null,pending:null,busy:false,timer:null,generation:0,menu:null,anchor:null,projectQuery:'',activeChat:null,
     chats:getLocal('web-chats',[]),chatProvider:getLocal('chat-provider','codex'),chatRoute:'api',chatApiProvider:'deepseek',chatApiModel:'deepseek-flash',chatThinking:false,chatSearch:false,chatSearchQuery:'',chatFiles:[],chatModel:'',chatInput:'',chatEmbedded:false,formDraft:{},workLoading:false,side:false,sidebar:getLocal('sidebar-open',true),mobileSidebar:false};
   if(!Array.isArray(v.chats))v.chats=[];
   const h=esc;
@@ -23,9 +23,13 @@
   const lines=value=>String(value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
   const project=()=>v.data?.projects.find(p=>p.id===v.project);
   const profile=(id=v.provider)=>v.data?.profiles.find(p=>p.id===id);
+  const partnerConnections=()=>v.data?.partner_connections;
+  const selectedPartnerConnection=()=>partnerConnections()?.connections.find(row=>row.id===v.connectionId&&row.partner_id===v.provider);
   const isWorkRoute=()=>location.hash.startsWith('#work');
   const task=()=>v.detail?.task;
   const composerCapabilities=()=>v.formDraft.composerCapabilities||[];
+  const partnerDocumentSkills=()=>!!partnerConnections()&&!task()&&!v.dialogue;
+  function checkPartnerCapabilities(){if(partnerDocumentSkills()&&composerCapabilities().some(ref=>ref.kind==='mcp'))throw Error('当前连接暂不支持本次加载 MCP，请在本次工作能力中移除 MCP 选择。');}
   const canPlan=()=>!v.dialogue&&(!task()||task().spec.runtime_mode==='official'&&
     !['RESERVED','RUNNING','SEND_INTENT','STOP_REQUESTED','WAITING_APPROVAL','WAITING_INPUT'].includes(task().state));
   const locked=()=>!!(v.detail?.attempts.length||v.dialogue?.pending||v.dialogue?.messages.some(m=>m.task_id));
@@ -36,6 +40,7 @@
   function leave(){fullSend=null;cooperationSend=null;clearTimeout(v.timer);v.timer=null;v.generation++;closeMenu();features.leave();chatRecords.leave();workRecords.leave();}
   async function command(kind,payload){
     if(kind==='independent.send'&&!payload.task_id){
+      checkPartnerCapabilities();
       const latest=await call('scenes'),preset=latest.presets.find(p=>p.scene===payload.work_scene&&p.default&&p.enabled);
       payload={...payload,scene_preset:preset?{id:preset.id,revision:preset.revision}:null};
       if(composerCapabilities().length)payload.composer_capabilities=structuredClone(composerCapabilities());
@@ -50,6 +55,11 @@
   }
   function config(id){const p=profile(id);if(!p)throw Error('尚未读取工作端配置。');return {provider:id,model:p.model,effort:p.effort,tier:p.tier,execution:id+'_native'};}
   function useWorkDefault(provider){
+    if(partnerConnections()){
+      const rows=partnerConnections().connections.filter(row=>row.partner_id===provider),connection=rows.find(row=>row.available)||rows[0];
+      Object.assign(v,{provider,connectionId:connection?.id||'',connectionRevision:connection?String(connection.revision):'',model:connection?.model||'official-default',workEffort:'default',workTier:'standard',workAccess:defaultAccess(provider)});
+      return;
+    }
     const {model,effort,tier}=config(provider);
     Object.assign(v,{provider,model,workEffort:effort,workTier:tier,workAccess:defaultAccess(provider)});
   }
@@ -61,7 +71,7 @@
   async function load({refresh=true,generation}={}){
     const [data,co]=await Promise.all([call('workspace?view=workbench'),call('collaboration?view=workbench'),...(refresh?[features.refresh()]:[])]);
     if(generation!==undefined&&generation!==v.generation)return;
-    v.data=data;v.co=co;if(!v.model)v.model=profile()?.model||'';independent.install(data);
+    v.data=data;v.co=co;for(const row of data.partner_connections?.partners||[])names[row.id]=row.name;if(!v.model)v.model=profile()?.model||'';independent.install(data);
   }
   const composerSizes=new WeakMap();
   function sizeComposer(el){
@@ -178,7 +188,7 @@
       const [kind,id,scene]=parts;
       if((kind==='task'||kind==='dialogue')&&display(kind,id).deleted){toast('该Work记录已删除，执行审计仍保留。');await go('#work');return;}
       if(kind==='task'){
-        const detail=await independent.readTask(id,true);if(generation!==v.generation)return;if(detail.task.spec.cooperative){location.hash='#control/task/'+encodeURIComponent(id);return;}v.detail=detail;const t=detail.task;v.scene=t.spec.work_scene||'legacy';v.project=t.project_id;v.provider=t.spec.provider;v.model=t.spec.model;v.workAccess=!t.spec.access||t.spec.access==='inherit'?'workspace':t.spec.access;v.workEffort=t.spec.effort;v.workTier=t.spec.tier;v.type=t.spec.work_mode||'independent';v.files=Object.keys(t.spec.materials).join('\n');v.attachments=t.spec.attachments||[];
+        const detail=await independent.readTask(id,true);if(generation!==v.generation)return;if(detail.task.spec.cooperative&&detail.task.spec.execution!=='partner_native'&&!detail.partner_run_id&&!detail.task.partner_run_id&&!detail.task.spec.partner_run_id){location.hash='#control/task/'+encodeURIComponent(id);return;}v.detail=detail;const t=detail.task;v.scene=t.spec.work_scene||'legacy';v.project=t.project_id;v.provider=t.spec.provider;v.model=t.spec.model;v.workAccess=!t.spec.access||t.spec.access==='inherit'?'workspace':t.spec.access;v.workEffort=t.spec.effort;v.workTier=t.spec.tier;v.type=t.spec.work_mode||'independent';v.files=Object.keys(t.spec.materials||{}).join('\n');v.attachments=t.spec.attachments||[];
       }else if(kind==='dialogue'){
         v.dialogue=v.co.dialogues.find(d=>d.id===id);if(!v.dialogue)throw Error('讨论记录不存在。');v.scene=v.dialogue.work_scene||'research';v.project=v.dialogue.project_id;v.type='cooperative';v.roles={...v.roles,...v.dialogue.work_roles};v.provider=v.dialogue.config.provider;v.files=v.dialogue.files.join('\n');v.attachments=v.dialogue.attachments||[];v.dialogueRuntime=v.dialogue.pending?await call('task?id='+encodeURIComponent(v.dialogue.pending)):null;
       }else if(kind==='records'||kind==='project'||kind==='archives'){
@@ -196,11 +206,11 @@
         }
         if(v.type==='independent'&&!v.input&&!v.files&&!v.attachments.length&&!v.formDraft.resourceSelection){
           const defaults=v.data.execution_resources?.connections||[];
-          const available=connections||Object.fromEntries(defaults.filter(row=>row.is_default&&row.available).map(row=>[row.provider,true]));
+          const available=partnerConnections()?Object.fromEntries(partnerConnections().connections.filter(row=>row.available).map(row=>[row.partner_id,true])):connections||Object.fromEntries(defaults.filter(row=>row.is_default&&row.available).map(row=>[row.provider,true]));
           const preferred=window.WorkdeskSettingsPreferences?.get().workProvider||'codex';
           const fallback=Object.keys(names).find(id=>available[id]);
           if(newWork||!restored)useWorkDefault(available[preferred]||!fallback?preferred:fallback);
-          else if(connections&&!connections[v.provider]&&fallback)useWorkDefault(fallback);
+          else if((partnerConnections()?!available[v.provider]:connections&&!connections[v.provider])&&fallback)useWorkDefault(fallback);
         }
       }
       if(kind==='task'||kind==='dialogue')features.restore('work',id);
@@ -230,6 +240,7 @@
   function sceneControl(){return `<button class="wk-chip" data-wb-menu="scene" aria-label="选择工作场景" ${locked()?'disabled':''}>${icon(scenes[v.scene]?.icon||'folder')}<span>${scenes[v.scene]?.name||'未分类'}</span>${icon(locked()?'lock':'chevron')}</button>`;}
   function modelControl(){
     if(v.type==='cooperative')return `<button type="button" class="wk-chip" data-wb="${v.dialogue?'roles':'cooperation-settings'}" aria-label="合作方式与分工">${icon('workflow')}<span>${v.dialogue?'协作分工':h(cooperationSummary())}</span>${icon('chevron')}</button>`;
+    if(!v.detail&&partnerConnections())return `<select class="wk-model-select" id="wb-provider" aria-label="选择工作端">${partnerConnections().partners.map(row=>`<option value="${h(row.id)}" ${v.provider===row.id?'selected':''}>${h(row.name)}</option>`).join('')}</select><select class="wk-model-select" id="wb-connection" aria-label="选择工作连接与模型"><option value="">选择连接</option>${partnerConnections().connections.filter(row=>row.partner_id===v.provider).map(row=>`<option value="${h(row.id)}" ${v.connectionId===row.id?'selected':''} ${row.available?'':'disabled'}>${h((row.model_label||row.model||'官方默认模型')+' · '+(row.source_label||'官方账号')+' · '+row.account_label+(row.available?'':' · '+row.reason))}</option>`).join('')}</select>`;
     const p=profile();return `<select class="wk-model-select" id="wb-provider" aria-label="选择工作端" ${locked()?'disabled':''}>${Object.entries(names).map(([k,n])=>`<option value="${k}" ${v.provider===k?'selected':''}>${n}</option>`).join('')}</select><select class="wk-model-select" id="wb-model" aria-label="选择工作模型" ${locked()?'disabled':''}>${options(p?.enabled_models||p?.models||[],v.model)}</select>${locked()?`<span class="wk-lock" title="独立工作已开始，工作端和模型固定">${icon('lock')}</span>`:''}`;
   }
   function thread(){
@@ -279,10 +290,10 @@
     else if(kind==='project')body=`<label class="wk-search">${icon('search')}<input id="wb-project-search" aria-label="搜索项目" placeholder="搜索项目"></label>${item('新建项目','new-project','plus')}${item('添加已有工作区','register-project','folder')}<div class="wk-menu-divider"></div><div id="wb-project-results">${projectResults()}</div><div class="wk-menu-divider"></div>${item('不在项目中工作','unfiled','close')}`;
     else if(kind==='work-tools'){
       const count=lines(v.files).length+v.attachments.length;
-      const capabilityHint=task()||v.dialogue?'查看工作已加载的能力':'随本次工作加载';
+      const documents=partnerDocumentSkills(),capabilityHint=documents?'随本次工作读取文档':task()||v.dialogue?'查看工作已加载的能力':'随本次工作加载';
       body=item('文件和文件夹'+(count?' · '+count:''),'files','file')+
-        item('Skills<small>'+capabilityHint+'</small>','work-capabilities','plug','data-kind="skill"')+
-        item('MCP<small>'+capabilityHint+'</small>','work-capabilities','plug','data-kind="mcp"')+
+        item((documents?'技能文档':'Skills')+'<small>'+capabilityHint+'</small>','work-capabilities','plug','data-kind="skill"')+
+        item('MCP<small>'+(documents?'当前连接暂不支持本次加载 MCP':capabilityHint)+'</small>','work-capabilities','plug','data-kind="mcp"'+(documents?' disabled':''))+
         '<div class="wk-menu-divider"></div>'+
         item('计划模式<small>'+(v.workPlanOnly?'已开启 · 点击关闭':'先出方案，再决定是否执行')+'</small>',
           'work-plan-mode','workflow',canPlan()?'':'disabled')+
@@ -359,7 +370,8 @@
       })});
   }
   async function capabilityDialog(kind){
-    const heading=kind==='skill'?'选择 Skills':kind==='mcp'?'选择 MCP':'本次工作能力';
+    const documents=partnerDocumentSkills(),heading=kind==='skill'?(documents?'选择技能文档':'选择 Skills'):kind==='mcp'?'选择 MCP':'本次工作能力';
+    if(documents&&kind==='mcp'){modal('本次加载 MCP','<p class="wk-note">当前连接暂不支持本次加载 MCP。</p>',b('完成','close'));return;}
     if(task()||v.dialogue){
       const snapshot=task()?.spec.scene_snapshot;
       const skillNames=snapshot?.bundles.flatMap(bundle=>bundle.skills.map(skill=>skill.name))||[];
@@ -377,13 +389,13 @@
       bundle.skills.map(skill=>({kind:'skill',id:bundle.id,revision:bundle.revision,name:skill.name,description:skill.description})));
     const servers=data.extensions.filter(server=>server.enabled).map(server=>
       ({kind:'mcp',id:server.id,revision:server.revision,name:server.name,description:server.source}));
-    capabilityOptions=[...skills,...servers].filter(row=>kind==='all'||row.kind===kind);
+    capabilityOptions=[...skills,...(documents?[]:servers)].filter(row=>kind==='all'||row.kind===kind);
     const rows=capabilityOptions.map((row,index)=>{
       const chosen=composerCapabilities().some(ref=>ref.kind===row.kind&&ref.id===row.id&&ref.name===row.name&&ref.revision===row.revision);
       return '<label class="wk-check wd-composer-option"><input type="checkbox" name="capability" value="'+index+'" '+(chosen?'checked':'')+
         '><span><strong>'+h(row.name)+'</strong><small>'+h(row.description||'')+'</small></span></label>';
     }).join('');
-    modal(heading,'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">暂无已启用的'+(kind==='mcp'?' MCP。':' Skills。')+'</p>')+'</form>',
+    modal(heading,(documents?'<p class="wk-note">技能文档由所选工作端的文件工具读取。当前连接暂不支持本次加载 MCP。</p>':'')+'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">暂无已启用的'+(kind==='mcp'?' MCP。':documents?'技能文档。':' Skills。')+'</p>')+'</form>',
       '<a class="wk-button" href="#settings/extensions" data-wb-close-link>管理 Skills 与 MCP</a>'+b('取消','close')+
       '<button class="wk-button primary" type="submit" form="wb-composer-capabilities">保存选择</button>');
     $('#wb-dialog').dataset.uiModule='workbench';
@@ -424,7 +436,7 @@
       (excerpt.length<content.length?'<p class="wk-note">已载入最近 10,000 字，可以编辑后加入。</p>':'')+'</form>',
       b('返回列表','work-context')+'<button class="wk-button primary" type="submit" form="wb-context-quote">插入输入框</button>');
   }
-  function rolesDialog(){v.roleDraft={...v.roles};modal('协作分工',Object.entries(roleNames).map(([key,[name,hint,glyph]])=>`<div class="wk-role-row"><div class="wk-role-copy"><div class="wk-role-name">${icon(glyph)}<label for="wb-role-${key}">${name}</label></div><p>${hint}</p></div><select class="wk-role-select" id="wb-role-${key}" data-wb-role="${key}" ${locked()?'disabled':''}>${Object.entries(names).map(([k,n])=>`<option value="${k}" ${v.roles[key]===k?'selected':''}>${n}</option>`).join('')}</select></div>`).join('')+'<p class="wk-role-hint">'+icon('circle')+'三个角色可以选择同一个大模型工作端。</p>',b('取消','close')+b(locked()?'完成':'保存分工',locked()?'close':'save-roles','',true));}
+  function rolesDialog(){v.roleDraft={...v.roles};const legacyNames=Object.fromEntries(['codex','deepseek','qwen'].map(id=>[id,names[id]]));modal('协作分工',Object.entries(roleNames).map(([key,[name,hint,glyph]])=>`<div class="wk-role-row"><div class="wk-role-copy"><div class="wk-role-name">${icon(glyph)}<label for="wb-role-${key}">${name}</label></div><p>${hint}</p></div><select class="wk-role-select" id="wb-role-${key}" data-wb-role="${key}" ${locked()?'disabled':''}>${Object.entries(legacyNames).map(([k,n])=>`<option value="${k}" ${v.roles[key]===k?'selected':''}>${n}</option>`).join('')}</select></div>`).join('')+'<p class="wk-role-hint">'+icon('circle')+'此处沿用原版讨论的分工。新合作可在主 Work 选择伙伴连接。</p>',b('取消','close')+b(locked()?'完成':'保存分工',locked()?'close':'save-roles','',true));}
   const cooperationModes={fixed:'固定流程',leader:'负责人带队',host_experts:'主持人—专家'};
   const pdcaStages=['plan','do','check','act'];
   const pdcaGroup={title:'PDCA 阶段',fields:[['plan','P · 计划'],['do','D · 执行'],['check','C · 检查'],['act','A · 改进']]};
@@ -435,10 +447,19 @@
     host_experts:[{title:'第 0 轮 · 需求讨论',fields:[['coordinator','主持人'],...discussionExperts]},pdcaGroup]
   };
   const staffingFields=mode=>cooperationStaffing[mode].flatMap(group=>group.fields);
-  const cooperationFamilies={codex:'GPT',deepseek:'DeepSeek',qwen:'Qwen'};
+  const cooperationFamilies=names;
+  const connectionModelKey=ref=>ref?.connection_id?JSON.stringify([ref.connection_id,String(ref.connection_revision),ref.model]):ref?.model||'';
   const cooperationModelName=entry=>entry.display_name||entry.model
     .replace(/^gpt-/i,'GPT-').replace(/-(sol|luna|astra|terra)$/i,(_,name)=>' '+name[0].toUpperCase()+name.slice(1));
   function cooperationModels(){
+    if(partnerConnections())return partnerConnections().partners.map(partner=>{
+      const rows=partnerConnections().connections.filter(row=>row.partner_id===partner.id);
+      const models=rows.filter(row=>row.available).map(row=>{
+        const model=row.model||'official-default',ref={provider:partner.id,model,effort:'default',tier:'standard',connection_id:row.id,connection_revision:String(row.revision)};
+        return {model,key:connectionModelKey(ref),label:(row.model_label||row.model||'官方默认模型')+' · '+(row.route==='api'?(row.api_name||row.api_provider)+' API':'官方账号')+' · '+row.account_label,ref};
+      });
+      return {id:partner.id,label:partner.name,models,defaultModel:models[0],connected:models.length>0,reason:rows.find(row=>row.reason)?.reason};
+    });
     const resources=v.data?.execution_resources;
     return Object.entries(cooperationFamilies).map(([id,label])=>{
       const p=profile(id);
@@ -458,7 +479,7 @@
   function cooperationConfig(){
     const families=cooperationModels(),first=families.find(family=>family.models.length);
     const blank={provider:'',model:''};
-    const defaultChoice=first?{provider:first.id,model:first.defaultModel.model}:blank;
+    const defaultChoice=first?{...first.defaultModel.ref}:blank;
     const saved=v.formDraft.cooperation||{};
     const mode=Object.hasOwn(cooperationModes,saved.mode)?saved.mode:'fixed';
     const rounds=[1,2,3,4].includes(saved.rounds)?saved.rounds:1;
@@ -466,12 +487,14 @@
     const choice=value=>{
       if(value===undefined)return defaultChoice;
       if(value&&typeof value==='object'&&Object.hasOwn(cooperationFamilies,value.provider)&&typeof value.model==='string'){
-        return {provider:value.provider,model:value.model};
+        if(value.connection_id)return {...value};
+        const matches=families.find(row=>row.id===value.provider)?.models.filter(row=>row.model===value.model)||[];
+        return matches.length===1?{...matches[0].ref}:{provider:value.provider,model:value.model};
       }
       const old=v.data?.execution_resources?.members.find(member=>member.id===value);
       if(!old)return blank;
       const family=families.find(row=>row.id===old.provider);
-      return {provider:old.provider,model:family?.connectionId===old.connection_id?old.model:''};
+      return {...(family?.models.find(row=>row.model===old.model&&row.ref.connection_id===old.connection_id)?.ref||{provider:old.provider,model:''})};
     };
     const assignments=Object.fromEntries(Object.keys(cooperationModes).map(key=>{
       const previous=key===mode?{...saved.stages,coordinator:saved.coordinator??saved.stages?.plan}:{};
@@ -487,12 +510,13 @@
     const {mode,rounds}=cooperationConfig();
     return cooperationModes[mode]+' · '+loopLabel(rounds);
   }
-  function modelOptions(family,selected=''){
+  function modelOptions(family,selected={}){
     const models=family?.models||[];
-    const unavailable=selected&&!models.some(entry=>entry.model===selected);
+    const key=connectionModelKey(selected);
+    const unavailable=key&&!models.some(entry=>connectionModelKey(entry.ref)===key);
     const placeholder=unavailable?'原型号不可用':models.length?'选择型号':'先选模型系列';
     return '<option value="">'+placeholder+'</option>'+models.map(entry=>
-      '<option value="'+h(entry.model)+'" '+(entry.model===selected?'selected':'')+'>'+h(entry.label)+'</option>').join('');
+      '<option value="'+h(connectionModelKey(entry.ref))+'" '+(connectionModelKey(entry.ref)===key?'selected':'')+'>'+h(entry.label)+'</option>').join('');
   }
   function roleModelSelect(label,key,selected,families,expertIndex){
     const family=families.find(row=>row.id===selected.provider&&row.models.length);
@@ -504,7 +528,7 @@
       '<select aria-label="'+h(label+' · 模型系列')+'" class="wk-input" data-pdca-family required>'+
         '<option value="">选择系列</option>'+options+'</select>'+
       '<select aria-label="'+h(label+' · 具体型号')+'" class="wk-input" data-pdca-model required '+(family?'':'disabled')+'>'+
-        modelOptions(family,selected.model)+'</select></div>';
+        modelOptions(family,selected)+'</select></div>';
   }
   function staffingPanel(mode,staff,families,active,expertCount){
     const host=mode==='host_experts';
@@ -576,10 +600,13 @@
     if(group)group.open=true;
   },true);
   function readCooperation(form){
+    const families=form.id==='wb-start-form'?cooperationSend.families:cooperationModels();
     const assignments=Object.fromEntries([...form.querySelectorAll('[data-pdca-mode]')].map(panel=>[
-      panel.dataset.pdcaMode,Object.fromEntries([...panel.querySelectorAll('[data-pdca-role]')].map(row=>[row.dataset.pdcaRole,{
-        provider:row.querySelector('[data-pdca-family]').value,model:row.querySelector('[data-pdca-model]').value
-      }]))
+      panel.dataset.pdcaMode,Object.fromEntries([...panel.querySelectorAll('[data-pdca-role]')].map(row=>{
+        const provider=row.querySelector('[data-pdca-family]').value,key=row.querySelector('[data-pdca-model]').value;
+        const ref=families.find(family=>family.id===provider)?.models.find(entry=>connectionModelKey(entry.ref)===key)?.ref;
+        return [row.dataset.pdcaRole,ref?{...ref}:{provider,model:''}];
+      }))
     ]));
     return {mode:form.elements.mode.value,rounds:Number(form.elements.rounds.value),
       expertCount:Number(form.elements.expert_count.value),assignments};
@@ -649,6 +676,7 @@
   }
   function prepare(){
     if(v.type==='independent')return independent.prepare();
+    checkPartnerCapabilities();
     const config=cooperationConfig(),hasModels=config.families.some(family=>family.models.length);
     const context={project_id:v.project||undefined,goal:v.input.trim(),work_scene:v.scene,
       files:lines(v.files),attachments:structuredClone(v.attachments)};
@@ -686,8 +714,8 @@
     if(!fields.has('host_permission'))throw Error('请确认本次本机工具权限。');
     const {mode,rounds,expertCount,assignments}=readCooperation(form);
     const resolve=key=>{
-      const {provider,model}=assignments[mode][key];
-      const ref=ready.families.find(row=>row.id===provider)?.models.find(row=>row.model===model)?.ref;
+      const selected=assignments[mode][key];
+      const ref=ready.families.find(row=>row.id===selected.provider)?.models.find(row=>connectionModelKey(row.ref)===connectionModelKey(selected))?.ref;
       if(!ref)throw Error('请选择每个角色可用的模型。');
       return ref;
     };
@@ -715,7 +743,7 @@
   }
   function fullSendContext(){
     return JSON.stringify({generation:v.generation,task:task()?.id,attempt:v.detail?.attempts.at(-1)?.id,
-      provider:v.provider,model:v.model,effort:v.workEffort,tier:v.workTier,access:v.workAccess,scene:v.scene,
+      provider:v.provider,model:v.model,connection_id:v.connectionId,connection_revision:v.connectionRevision,effort:v.workEffort,tier:v.workTier,access:v.workAccess,scene:v.scene,
       input:v.input,project:v.project,files:v.files,attachments:v.attachments,formDraft:v.formDraft});
   }
   async function sendWork(confirmed=false){
@@ -738,6 +766,7 @@
         const directory=project()?.name||(!v.detail?window.WorkdeskSettingsPreferences?.get().workDirectory:null)||'项目工作区';
         modal('确认本次完全访问', '<p>工作端可以访问账号有权访问的文件、运行命令和使用网络。相关操作可能直接执行。</p>'+
           '<div class="wk-approval"><span>工作端</span><span>'+h(names[v.provider])+'</span></div>'+
+          (selectedPartnerConnection()?'<div class="wk-approval"><span>连接</span><span>'+h(selectedPartnerConnection().name||selectedPartnerConnection().account_label)+'</span></div>':'')+
           '<div class="wk-approval"><span>工作位置</span><span>'+h(directory)+'</span></div>'+
           '<p class="wb-goal">'+h(v.input)+'</p>',b('返回修改','close')+b('确认并发送','confirm-full-send','',true));
         return;
@@ -812,7 +841,7 @@
     if(action==='unfiled'){if(v.detail||v.dialogue)throw Error('已有记录保留原工作区。');v.project='';closeMenu();draw();return;}
     if(action==='skills'){
       if(v.detail?.task.spec.runtime_mode==='official'){await independent.panel();return;}
-      const data=await call('extensions'),preset=data.scenes.presets.find(p=>p.scene===v.scene&&p.default&&p.enabled);modal((scenes[v.scene]?.name||'当前工作')+' · 能力预设',`<p class="wk-note">${preset?'新工作会使用预设：'+h(preset.name)+' · 版本 '+h(preset.revision.slice(0,8)):'当前场景没有启用的默认预设，使用工作端原有配置。'}</p>${preset?`<h3>提示词</h3><p class="wk-note">${h(preset.prompt)}</p><h3>输出要求</h3><p class="wk-note">${h(preset.output)}</p><p>能力组合：${preset.capabilities.length+preset.extensions.length} 项</p>`:''}<p class="wk-note">Skills 与 MCP 按所选官方工作端的原生机制加载。已有工作保留发送时的版本；保存和浏览不调用模型。</p>`,`<a class="wk-button" href="#extensions/scenes" data-wb-close-link>编辑场景预设</a><a class="wk-button" href="#extensions/skills" data-wb-close-link>管理 Skills 与插件</a><a class="wk-button" href="#extensions/records" data-wb-close-link>查看加载记录</a>`+b('完成','close'));return;
+      const data=await call('extensions'),preset=data.scenes.presets.find(p=>p.scene===v.scene&&p.default&&p.enabled);modal((scenes[v.scene]?.name||'当前工作')+' · 能力预设',`<p class="wk-note">${preset?'新工作会使用预设：'+h(preset.name)+' · 版本 '+h(preset.revision.slice(0,8)):'当前场景没有启用的默认预设，使用工作端原有配置。'}</p>${preset?`<h3>提示词</h3><p class="wk-note">${h(preset.prompt)}</p><h3>输出要求</h3><p class="wk-note">${h(preset.output)}</p><p>能力组合：${preset.capabilities.length+preset.extensions.length} 项</p>`:''}<p class="wk-note">新伙伴连接通过文件工具读取技能文档，暂不支持本次加载 MCP。兼容工作沿用原有能力机制。已有工作保留发送时的版本；保存和浏览不调用模型。</p>`,`<a class="wk-button" href="#extensions/scenes" data-wb-close-link>编辑场景预设</a><a class="wk-button" href="#extensions/skills" data-wb-close-link>管理 Skills 与插件</a><a class="wk-button" href="#extensions/records" data-wb-close-link>查看加载记录</a>`+b('完成','close'));return;
     }
     if(action==='details'){
       const organized=records().find(r=>r.kind===(v.dialogue?'dialogue':'task')&&r.id===(v.dialogue?.id||task()?.id));
@@ -856,9 +885,13 @@
     if(['wb-cooperation-form','wb-start-form'].includes(el.form?.id)){syncCooperationForm(el.form,el);return;}
     if(el.dataset.wbRole){v.roleDraft[el.dataset.wbRole]=el.value;return;}
     if(features.chatSelection(el.id,el.value)){features.autosave();return;}
+    if(el.id==='wb-connection'&&!v.detail&&partnerConnections()){
+      const connection=partnerConnections().connections.find(row=>row.id===el.value&&row.partner_id===v.provider&&row.available);
+      if(connection){Object.assign(v,{connectionId:connection.id,connectionRevision:String(connection.revision),model:connection.model||'official-default',workEffort:'default',workTier:'standard'});draw();features.autosave();}return;
+    }
     if(el.id==='wb-work-effort'){v.workEffort=el.value;features.autosave();return;}
     if(el.id==='wb-model'&&v.detail?.task.spec.runtime_mode==='official'){v.model=el.value;v.workEffort='';draw();features.autosave();return;}
-    if(el.id==='wb-provider'||el.id==='wb-model'){if(locked()){draw();return;}try{if(task()){const selected=el.id==='wb-provider'?config(el.value):{model:el.value};delete selected.execution;await configureDraft(selected);}else if(el.id==='wb-provider'){v.provider=el.value;v.workAccess=defaultAccess(v.provider);v.model=profile().model;v.workEffort='';v.workTier='';}else {v.model=el.value;v.workEffort='';}draw();}catch(exc){error(exc);draw();}}
+    if(el.id==='wb-provider'||el.id==='wb-model'){if(locked()){draw();return;}try{if(task()){const selected=el.id==='wb-provider'?config(el.value):{model:el.value};delete selected.execution;await configureDraft(selected);}else if(el.id==='wb-provider')useWorkDefault(el.value);else {v.model=el.value;v.workEffort='';}draw();}catch(exc){error(exc);draw();}}
   });
   document.addEventListener('submit',async e=>{
     const f=e.target;if(!f.id.startsWith('wb-'))return;e.preventDefault();

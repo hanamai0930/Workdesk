@@ -6,12 +6,14 @@ import time
 
 from .usage_report import add, codex_records, empty, gateway_records, sdk_records, summary
 from .partner_usage import work_report as partner_work_report
+from .partner_usage import run_records as partner_receipts
+from itertools import chain
 
 
 def model_rows(models):
-    return [{'provider': provider, 'partner_id': provider, 'api_provider': None, 'account_id': None, 'account_label': None,
-             'route': None, 'run_id': None, 'model': model, **summary(totals)}
-            for (provider, model), totals in models.items()]
+    keys=('provider','partner_id','api_provider','account_id','account_label','route','run_id','model')
+    return [{**(dict(zip(keys,key)) if len(key)==8 else {'provider':key[0],'partner_id':key[0],'api_provider':None,
+              'account_id':None,'account_label':None,'route':None,'run_id':None,'model':key[1]}),**summary(totals)} for key,totals in models.items()]
 
 
 def report(service, identity=None):
@@ -95,14 +97,15 @@ def report(service, identity=None):
 
         by_attempt = defaultdict(lambda: defaultdict(empty))
         end = time.time()
-        for reader in (gateway_records, sdk_records, codex_records):
-            for receipt in reader(db, 0, end):
-                task = tasks.get(receipt['task_id'])
-                if task is None:
-                    continue
-                key = (receipt['provider'], receipt['model'])
-                add(by_attempt[receipt['attempt_id']][key], receipt)
-                add(groups[task['group_id']]['models'][key], receipt)
+        receipts=chain(*(reader(db,0,end) for reader in (gateway_records,sdk_records,codex_records)),
+                       (row for row in partner_receipts(db,0,end) if row.get('parent_task_id')))
+        for receipt in receipts:
+            task = tasks.get(receipt['task_id'])
+            if task is None:
+                continue
+            key = tuple(receipt.get(field) for field in ('provider','partner_id','api_provider','account_id','account_label','route','run_id','model'))
+            add(by_attempt[receipt['attempt_id']][key], receipt)
+            add(groups[task['group_id']]['models'][key], receipt)
 
         # A versioned execution reservation preserves the requested model when
         # a run has no token receipt or the current task model later changed.

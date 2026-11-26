@@ -7,8 +7,34 @@ import './work-model-picker.css';
 const effortNames:Record<string,string>={off:'关闭思考',none:'关闭思考',minimal:'极低',low:'低',medium:'中',high:'高',xhigh:'很高',max:'极高',ultra:'最高'};
 const modelName=(id:string)=>id.replace(/^gpt-/i,'GPT-').replace(/-(sol|luna|astra|terra)$/i,(_,name)=>' '+name[0].toUpperCase()+name.slice(1));
 
+function PartnerConnectionPicker({v,disabled}:any){
+  const [open,setOpen]=useState(false);
+  const rows=(v.data.partner_connections.connections||[]).filter((row:any)=>row.partner_id===v.provider);
+  const selected=rows.find((row:any)=>row.id===v.connectionId),changed=selected&&String(selected.revision)!==String(v.connectionRevision);
+  const source=(row:any)=>row.route==='api'?(row.api_name||row.api_provider)+' API':'官方账号';
+  return <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Trigger asChild><Button id="wb-model" type="button" variant="ghost" role="combobox" aria-label="选择工作连接与模型" aria-expanded={open} disabled={disabled} className="wk-model-picker-trigger">
+      <span className="wk-model-picker-level">{selected?source(selected)+' · '+selected.account_label:'选择已保存的连接'}</span>
+      <span className="wk-model-picker-name">{changed?'连接已更新，请重新选择':selected?.model_label||selected?.model||'官方默认模型'}<ChevronRight/></span>
+    </Button></Popover.Trigger>
+    <Popover.Portal><Popover.Content data-ui-module="workbench" className="wk-model-picker" side="top" align="end" sideOffset={10} collisionPadding={12} aria-label="工作连接与模型">
+      <div className="wk-model-picker-list" role="listbox" aria-label="工作连接">
+        {rows.map((row:any)=><button type="button" key={row.id} role="option" aria-selected={selected?.id===row.id&&!changed} disabled={!row.available} title={row.reason||''} onClick={()=>{
+          window.WorkdeskWorkbench.selectIndependentConfig({connectionId:row.id,connectionRevision:String(row.revision),model:row.model||'official-default',workEffort:'default',workTier:'standard'});setOpen(false);
+        }}><Brain/><span>{row.model_label||row.model||'官方默认模型'}<small>{source(row)} · {row.account_label}{!row.available?' · '+(row.reason||'暂不可用'):''}</small></span>{selected?.id===row.id&&!changed&&<Check/>}</button>)}
+      </div>
+      {!rows.length&&<p className="wk-model-picker-note">尚未保存此工作端的连接。</p>}
+      <p className="wk-model-picker-note"><a href="#settings/accounts">账号与模型</a></p>
+    </Popover.Content></Popover.Portal>
+  </Popover.Root>;
+}
+
 /** Explicit native model/effort choices. No change is sent until the next turn. */
-export function WorkModelPicker({v,profile,disabled}:any){
+export function WorkModelPicker(props:any){
+  if(!props.v.detail&&props.v.data?.partner_connections)return <PartnerConnectionPicker {...props}/>;
+  return <NativeModelPicker {...props}/>;
+}
+function NativeModelPicker({v,profile,disabled}:any){
   const [open,setOpen]=useState(false);
   const entry=profile?.model_catalog?.models.find((m:any)=>m.model===v.model);
   const unavailableModels=(profile?.model_catalog?.models||[]).filter((m:any)=>m.access_status==='NOT_IN_CURRENT_ACCOUNT_CATALOG');

@@ -35,7 +35,7 @@ for raw in sys.stdin:
   send({'method':'item/agentMessage/delta','params':{'threadId':'native-thread','delta':'native-result'}})
   send({'id':m['id'],'result':{'turn':{'id':'native-turn'}}})
   send({'method':'turn/completed','params':{'threadId':'native-thread','turn':{'id':'native-turn','status':'completed'}}});continue
- elif method=='session/new':result={'sessionId':'native-session'}
+ elif method=='session/new':result={'sessionId':'native-session','modes':{'currentModeId':'default','availableModes':[{'id':'default','name':'Manual approvals'}]}}
  elif method=='session/prompt':
   send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'native-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'native-acp'}}}})
   result={'stopReason':'end_turn'}

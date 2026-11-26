@@ -24,7 +24,16 @@ def local_package(locations, relative, package):
     return None
 
 
-def runtime_route(service, provider, interface=None):
+def runtime_route(service, provider, interface=None, *, connection=None):
+    from .partner_task import is_binding, descriptor
+    if is_binding(connection):
+        runtime=descriptor(connection)
+        return {**{key: runtime[key] for key in ('provider','harness','execution','origin','agent_loop')},
+                'interface':'GO_OWNED_PARTNER', 'connection_id':connection['id'],
+                'connection_revision':connection['revision'], 'account_id':connection.get('account_id'),
+                'release_id':connection.get('release_id'), 'release_snapshot':connection.get('release_snapshot'),
+                'route':connection.get('route'), 'api_provider':connection.get('api_provider'),
+                'version_evidence':'FROZEN_OFFICIAL_RELEASE', 'local_packages':{}}
     runtime = service.independent.describe(provider, interface)
     route = {key: runtime[key] for key in ('provider', 'harness', 'execution', 'origin', 'agent_loop')}
     route['interface'] = {'codex': 'app-server', 'qwen': 'Query', 'deepseek': 'session/prompt'}[provider]

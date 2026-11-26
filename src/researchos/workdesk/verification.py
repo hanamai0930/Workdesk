@@ -89,7 +89,7 @@ class Verification:
         suites={s['suite']:s for s in report.get('suites',[])}
         if not required<=suites.keys() or any(suites[k].get('exit_code')!=0 for k in required):raise ValueError('最终必需检查未通过。')
         usage=self.store.usage(campaign=CAMPAIGN,db=db)
-        if usage['model_requests']>60 or usage['reserved_cny']>12 or usage['codex_turns']>12:raise ValueError('实施累计限额不符，保留问题，不能宣称通过。')
+        if usage['reserved_cny'] is None or usage['model_requests']>60 or usage['reserved_cny']>12 or usage['codex_turns']>12:raise ValueError('实施累计费用未知或限额不符，保留问题，不能宣称通过。')
         value={'campaign':CAMPAIGN,'state':'CLOSED','at':time.time(),'audit_id':identities[0],'audit_ids':identities,
                'implementation_revision':self.s.implementation,'scope_hash':digest(scope),'usage':usage,
                'checks_sha256':sha256(path.read_bytes()).hexdigest(),'human_acceptance':False,

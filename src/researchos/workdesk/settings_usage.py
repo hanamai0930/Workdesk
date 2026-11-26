@@ -103,6 +103,24 @@ def overview(service, days=7):
         """, (start, end, start, end)).fetchall()
         usage = {}
         receipts = list(period_records(db, start, end))
+        records=[dict(row) for row in records]
+        by_task={row['id']:row for row in records}
+        parent_receipts={}
+        for row in receipts:
+            if row.get('parent_task_id'):parent_receipts.setdefault(row['parent_task_id'],[]).append(row)
+        for task_id,observed in parent_receipts.items():
+            task=by_task.get(task_id)
+            if task is None:
+                original=db.execute(f"SELECT t.id,t.title,json_extract(t.spec,'$.provider') AS provider,{visible} AS visible,json_extract(t.spec,'$.budget.cny') AS budget_cny FROM tasks t WHERE t.id=?",(task_id,)).fetchone()
+                if original is None:continue
+                task=dict(original);records.append(task);by_task[task_id]=task
+            numbers=lambda key:[row[key] for row in observed if row[key] is not None]
+            priced=[row['estimate']['amount'] for row in observed if row.get('estimate') and row.get('usage_complete')]
+            task.update(activity_at=max(row['at'] for row in observed),attempts=len({row['attempt_id'] for row in observed}),
+                        input_tokens=sum(numbers('input')) if numbers('input') else None,
+                        output_tokens=sum(numbers('output')) if numbers('output') else None,
+                        reserved_cny=sum(float(value) for value in priced) if len(priced)==len(observed) else None,
+                        partner_run_ids=list(dict.fromkeys(row['run_id'] for row in observed)))
         for row in receipts:
             if row.get('run_id') is not None:
                 continue

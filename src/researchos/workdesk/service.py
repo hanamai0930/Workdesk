@@ -156,7 +156,11 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
             approvals=[dict(r) for r in db.execute("SELECT * FROM approvals WHERE state='PENDING' ORDER BY created")]
         from .attachments import choices
         profiles=self.profiles.list()
+        from .partner_connections import projection
+        with self.store.read() as db:
+            partner_connections = projection(db)
         return {'protocol':PROTOCOL_VERSION,'health':self.health(),'projects':projects,'tasks':tasks,'profiles':profiles,
+                'partner_connections':partner_connections,
                 'task_catalog_scope':'RECENT_200; FULL_RECORDS_USE_RECORD_CATALOG',
                 'independent_work':self.independent.catalog(profiles),'attachment_capabilities':choices(self.locations),
                 'pending_approvals':approvals,'campaign_usage':self.store.usage(campaign=CAMPAIGN),
@@ -191,11 +195,16 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
             member=db.execute('SELECT chain_id FROM chain_members WHERE task_id=?',(identity,)).fetchone()
             chain_usage=self.store.usage(chain=member[0],db=db) if member else None
         independent_service=task['spec'].get('independent_service')
-        if task['spec'].get('runtime_mode')=='official':independent_service=self.independent.describe(task['spec']['provider'],task['spec'].get('qwen_runtime'))
+        if task['spec'].get('runtime_mode')=='official' and task['spec'].get('execution')!='partner_native':independent_service=self.independent.describe(task['spec']['provider'],task['spec'].get('qwen_runtime'))
         if independent_service and task['spec'].get('cooperative'):independent_service={**independent_service,'scope':'COOPERATIVE_UNIT'}
         if not independent_service and task['spec'].get('work_mode','independent')=='independent' and task['spec'].get('execution','scoped')!='scoped':
             independent_service=self.independent.describe(task['spec']['provider'])
             if task['spec']['provider']=='deepseek':independent_service['native_resume']=False
+        if task['spec'].get('execution')=='partner_native':
+            with self.store.read() as db:
+                linked=db.execute("SELECT id FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.parent_task_id')=? ORDER BY json_extract(data,'$.created') DESC LIMIT 1",(identity,)).fetchone()
+            if linked:
+                task['partner_run_id']=linked[0]
         return {'task':task,'work_items':work_items,'attempts':attempts,'events':events,'cursor':events[-1]['seq'] if events else int(cursor),
                 'native_controls':self._native_control_rows(identity),
                 'independent_service':independent_service,
@@ -390,6 +399,13 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
             if fresh and receipt.get('launch_extension'):self.extensions.launch(receipt['launch_extension'])
             if fresh and receipt.get('launch_native_control'):self.native_controls.launch(receipt['launch_native_control'])
             if fresh and receipt.get('stop_native_control'):self.native_controls.signal_stop(receipt['stop_native_control'])
+            if fresh and receipt.get('stop_partner_task'):
+                from .bridge import call
+                try:call('partner.task.stop',receipt['stop_partner_task'])
+                except Exception:
+                    # The persisted STOP_UNKNOWN and original parent identity
+                    # remain available for explicit reconciliation; no resend.
+                    pass
             if fresh and receipt.get('signal_stop'):
                 worker=self.workers.get(receipt['signal_stop'])
                 if worker:worker['stop'].set()
