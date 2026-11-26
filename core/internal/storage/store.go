@@ -129,7 +129,7 @@ func (s *Store) validate() error {
 		return errors.New("database is retired; refusing to acquire execution ownership")
 	}
 	version := metadata["schema"]
-	if version != "1" && version != "2" {
+	if version != "1" && version != "2" && version != "3" {
 		return fmt.Errorf("unsupported database schema %q", version)
 	}
 	for _, key := range []string{"collaboration_schema", "persistence_schema", "work_objects_schema"} {
@@ -184,7 +184,7 @@ func (s *Store) InitializeCore() error {
 	if len(r.Rows) > 0 {
 		version, _ = r.Rows[0][0].(string)
 	}
-	if version != "1" && version != "2" {
+	if version != "1" && version != "2" && version != "3" {
 		return fmt.Errorf("unsupported database schema %q", version)
 	}
 	if version == "1" && !s.allowMigration && !s.initiallyEmpty {
@@ -196,7 +196,10 @@ func (s *Store) InitializeCore() error {
 	if _, err = tx.Execute("INSERT OR IGNORE INTO core_meta VALUES('owner_epoch','0')", nil); err != nil {
 		return err
 	}
-	if _, err = tx.Execute("UPDATE meta SET value='2' WHERE key='schema'", nil); err != nil {
+	if version == "1" {
+		_, err = tx.Execute("UPDATE meta SET value='2' WHERE key='schema'", nil)
+	}
+	if err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {
@@ -210,6 +213,35 @@ func (s *Store) Schema() (string, error) {
 	var value string
 	err := s.db.QueryRowContext(s.ctx, "SELECT value FROM meta WHERE key='schema'").Scan(&value)
 	return value, dbError(err)
+}
+
+// MigratePartners is explicitly invoked offline under the existing owner lock.
+// Normal startup never upgrades schema 2 to schema 3.
+func (s *Store) MigratePartners() error {
+	tx, err := s.OpenSession(true)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	r, err := tx.Execute("SELECT value FROM meta WHERE key='schema'", nil)
+	if err != nil {
+		return err
+	}
+	if len(r.Rows) != 1 || (r.Rows[0][0] != "2" && r.Rows[0][0] != "3") {
+		return errors.New("partner migration requires storage schema 2 or 3")
+	}
+	for _, q := range []string{
+		`CREATE TABLE IF NOT EXISTS core_partner_objects(kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,data TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(kind,id))`,
+		`CREATE TABLE IF NOT EXISTS core_partner_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,at REAL NOT NULL,data TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS core_partner_events_run ON core_partner_events(run_id,seq)`,
+		`INSERT OR REPLACE INTO core_meta VALUES('partners_schema','1')`,
+		`UPDATE meta SET value='3' WHERE key='schema'`,
+	} {
+		if _, err = tx.Execute(q, nil); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) OwnerEpoch() (int64, error) {

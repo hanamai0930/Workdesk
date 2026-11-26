@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "control_protocol": 2,
+  "storage_schema": 3,
+  "partners": [
+    "codex",
+    "deepseek",
+    "qwen",
+    "claude",
+    "grok",
+    "gemini",
+    "kimi",
+    "glm"
+  ],
+  "routes": [
+    "account",
+    "api"
+  ],
+  "api_driver_provider": "deepseek",
+  "credentials": "REFERENCES_ONLY; USER_SUPPLIED_AT_FINAL_VERIFICATION",
+  "commands": [
+    "component.prepare",
+    "component.update",
+    "component.disable",
+    "component.remove",
+    "account.create",
+    "account.set-key",
+    "account.login",
+    "account.inspect",
+    "account.disconnect",
+    "connection.save",
+    "connection.disable",
+    "connection.inspect",
+    "partner.run",
+    "partner.input",
+    "partner.approve",
+    "partner.stop",
+    "component.enable",
+    "component.reconcile",
+    "partner.reconcile"
+  ],
+  "reads": [
+    "/api/v2/partners",
+    "/api/v2/components",
+    "/api/v2/accounts",
+    "/api/v2/connections",
+    "/api/v2/component-operations",
+    "/api/v2/partner-runs"
+  ],
+  "worker": {
+    "transport": "inherited-json-lines",
+    "module": "researchos.workdesk.partners",
+    "initialize": {
+      "action": "start",
+      "config": "frozen-runtime-binding"
+    },
+    "controls": [
+      "input",
+      "approval",
+      "stop"
+    ]
+  },
+  "unknown_no_resend": true,
+  "native_execution": "OFFICIAL_AGENT; NO_REPLACEMENT_LOOP",
+  "official_auth": "HUMAN_MANAGED; NO_ACCOUNT_SWITCH_OR_RESET",
+  "component_removal": "MANAGED_EXACT_RELEASE_ONLY; REFERENCES_CHECKED; USER_DATA_RETAINED"
+}

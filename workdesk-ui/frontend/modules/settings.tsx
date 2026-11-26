@@ -8,6 +8,7 @@ import { Input } from '../components/ui/input';
 import { NativeSelect } from '../components/ui/native-select';
 import { AppearancePanel } from './settings-appearance';
 import { SettingsAccounts } from './settings-accounts';
+import { SettingsPartners } from './partners';
 import { SettingsUsage } from './settings-usage';
 import { SettingsTokenUsage } from './settings-token-usage';
 import { SettingsExtensions, SettingsManagementSummary } from './settings-extensions';
@@ -60,6 +61,7 @@ const groups: { title: string; items: Destination[] }[] = [
     { name: 'Chat 接入', href: '#settings/chat', Icon: MessageSquare, aliases: '渠道 DeepSeek API 官网 聊天 历史' },
     { name: 'Work 权限', href: '#settings/access', Icon: ShieldCheck, aliases: '审批 执行权限 文件 网络 命令 PowerShell 默认 工作端' },
     { name: '账号与模型', href: '#settings/accounts', Icon: Cpu, aliases: '账号 连接 工作端 模型 Codex Qwen DeepSeek' },
+    { name: '伙伴与连接', href: '#settings/partners', Icon: Plug, aliases: '官方端 安装 卸载 登录 API 伙伴 Codex Qwen DeepSeek Claude Grok Gemini Kimi GLM' },
     { name: '用量与预算', href: '#settings/usage', Icon: History, aliases: '额度 费用 使用情况 账单 预留' },
   ] },
   { title: '资料与扩展', items: [
@@ -598,6 +600,7 @@ export function SettingsPage(props: SettingsProps) {
       </>;
       break;
     case 'accounts': content = <SettingsAccounts key={(focus||'')+(preferences?.recovery?.revision||'ready')} initialProvider={focus} preferenceBlocked={blocked}/>; break;
+    case 'partners': content = <SettingsPartners key={focus || 'partners'} initialPartner={focus}/>; break;
     case 'usage': content = focus === 'activity' || focus === 'calls'
       ? <SettingsTokenUsage key={focus} mode={focus}/> : <SettingsUsage/>; break;
     case 'storage': content = <StorageSettings/>; break;

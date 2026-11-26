@@ -38,6 +38,7 @@ type App struct {
 	sessions                        map[string]*storage.Session
 	processes                       map[string]map[string]any
 	jobs                            map[string]*runningJob
+	partnerProcesses                map[string]*partnerProcess
 	Stop                            chan struct{}
 	stopOnce                        sync.Once
 	Log                             io.Writer
@@ -119,7 +120,7 @@ func wire(v any) any {
 }
 
 func New(p *instance.Profile, db *storage.Store, implementation, source string, log io.Writer) (*App, error) {
-	a := &App{Profile: p, DB: db, Process: ID(), Implementation: implementation, Source: source, Control: Token(32), Viewer: Token(32), UIToken: Token(24), sessions: map[string]*storage.Session{}, processes: map[string]map[string]any{}, jobs: map[string]*runningJob{}, Stop: make(chan struct{}), Log: log}
+	a := &App{Profile: p, DB: db, Process: ID(), Implementation: implementation, Source: source, Control: Token(32), Viewer: Token(32), UIToken: Token(24), sessions: map[string]*storage.Session{}, processes: map[string]map[string]any{}, jobs: map[string]*runningJob{}, partnerProcesses: map[string]*partnerProcess{}, Stop: make(chan struct{}), Log: log}
 	if err := a.loadSources(); err != nil {
 		return nil, err
 	}
@@ -132,6 +133,9 @@ func New(p *instance.Profile, db *storage.Store, implementation, source string, 
 	}
 	a.Epoch = epoch
 	if err = a.prepareTables(); err != nil {
+		return nil, err
+	}
+	if err = a.recoverPartners(); err != nil {
 		return nil, err
 	}
 	env := bridge.Environment(map[string]string{"WORKDESK_CORE_BRIDGE": "1", "WORKDESK_HOME": p.UserRoot, "WORKDESK_DATA_DIR": p.DataRoot, "WORKDESK_INSTANCE_CONFIG": p.ConfigPath, "PYTHONPATH": a.pythonSources()})
@@ -189,6 +193,9 @@ func (a *App) Close() {
 		a.Legacy.Close()
 	}
 	a.mu.Lock()
+	for _, p := range a.partnerProcesses {
+		p.cancel()
+	}
 	for _, j := range a.jobs {
 		if j.cancel != nil {
 			j.cancel()
@@ -388,7 +395,9 @@ func inside(path, root string) bool {
 	return true
 }
 func (a *App) Identity() map[string]any {
-	return map[string]any{"schema": 1, "channel": "development", "instance_id": a.Profile.InstanceID, "process_instance": a.Process, "program_root": a.Profile.ProgramRoot, "user_root": a.Profile.UserRoot, "data_root": a.Profile.DataRoot, "source_revision": a.Source, "source_dirty": a.SourceDirty, "implementation_revision": a.Implementation, "protocol": 2, "core_engine": "go", "storage_schema": 2, "owner_epoch": a.Epoch, "legacy_bridge_protocol": 1, "default_project_id": a.Profile.DefaultProjectID}
+	schema, _ := a.DB.Schema()
+	schemaNumber, _ := strconv.Atoi(schema)
+	return map[string]any{"schema": 1, "channel": "development", "instance_id": a.Profile.InstanceID, "process_instance": a.Process, "program_root": a.Profile.ProgramRoot, "user_root": a.Profile.UserRoot, "data_root": a.Profile.DataRoot, "source_revision": a.Source, "source_dirty": a.SourceDirty, "implementation_revision": a.Implementation, "protocol": 2, "core_engine": "go", "storage_schema": schemaNumber, "owner_epoch": a.Epoch, "legacy_bridge_protocol": 1, "default_project_id": a.Profile.DefaultProjectID}
 }
 func (a *App) legacyRequest(ctx context.Context, method, path string, body any) (int, any, error) {
 	var result struct {

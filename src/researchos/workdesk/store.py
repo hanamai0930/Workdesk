@@ -37,7 +37,7 @@ class Store:
                 has_meta=prior.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone()
                 if has_meta:
                     core=dict(prior.execute('SELECT key,value FROM meta'))
-                    if (core.get('schema','1') not in ({'1','2'} if self.offline_v2 else {'1'}) or
+                    if (core.get('schema','1') not in ({'1','2','3'} if self.offline_v2 else {'1'}) or
                             any(core.get(name,'1')!='1' for name in ('collaboration_schema','persistence_schema'))):
                         raise ValueError('不支持的后端数据版本；未覆盖或迁移已有库。')
                 version=prior.execute("SELECT value FROM meta WHERE key='work_objects_schema'").fetchone() if has_meta else None
@@ -49,7 +49,7 @@ class Store:
             with closing(sqlite3.connect(self.path.as_uri()+'?mode=ro',uri=True)) as prior:
                 present=prior.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
                 metadata=dict(prior.execute('SELECT key,value FROM meta')) if present else {}
-                if (metadata.get('schema','1') not in ({'1','2'} if self.offline_v2 else {'1'}) or
+                if (metadata.get('schema','1') not in ({'1','2','3'} if self.offline_v2 else {'1'}) or
                         metadata.get('collaboration_schema','1')!='1' or metadata.get('persistence_schema','1')!='1'):
                     raise ValueError('不支持的后端数据版本；未覆盖或迁移已有库。')
                 if present and 'persistence_schema' not in metadata:
@@ -112,7 +112,7 @@ class Store:
             for statement in schema.split(';'):
                 if statement.strip():db.execute(statement)
             prior = db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-            if prior and prior[0] not in ({'1','2'} if self.managed or self.offline_v2 else {'1'}):
+            if prior and prior[0] not in ({'1','2','3'} if self.managed or self.offline_v2 else {'1'}):
                 raise ValueError('不支持的后端数据版本；未覆盖已有库。')
             db.execute("INSERT OR IGNORE INTO meta VALUES('schema',?)",('2' if self.managed else '1',))
             db.execute("INSERT OR IGNORE INTO meta VALUES('collaboration_schema','1')")

@@ -90,6 +90,19 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 	}
 	if path == "/api/v1/command" && r.Method == "POST" {
 		kind := str(body["kind"])
+		if partnerKind(kind) {
+			result, e := a.partnerCommand(body)
+			if e != nil {
+				failed(w, e)
+			} else {
+				response(w, 200, result)
+			}
+			return
+		}
+		if (kind == "service.reload" || strings.HasPrefix(kind, "backup.") || strings.HasPrefix(kind, "storage.")) && a.partnerBusy() {
+			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
+			return
+		}
 		if kind == "tool.run" || kind == "tool.cancel" {
 			result, e := a.toolCommand(body)
 			if e != nil {
@@ -147,6 +160,14 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, error) {
 	q := r.URL.Query()
+	if path == "/api/v2/partners" || path == "/api/v2/components" || path == "/api/v2/accounts" || path == "/api/v2/connections" || path == "/api/v2/component-operations" || path == "/api/v2/partner-runs" {
+		return a.partnersView(path)
+	}
+	if strings.HasPrefix(path, "/api/v2/partner-runs/") && strings.HasSuffix(path, "/events") {
+		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api/v2/partner-runs/"), "/events")
+		after, _ := strconv.ParseInt(q.Get("after"), 10, 64)
+		return a.partnerRunEvents(id, after)
+	}
 	limit := bounded(q.Get("limit"), 50, 200)
 	switch {
 	case path == "/api/v2/projects":
@@ -215,17 +236,6 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 		}
 		a.mu.Unlock()
 		return map[string]any{"jobs": jobs, "processes": processes, "owner_epoch": a.Epoch, "process_instance": a.Process}, nil
-	case path == "/api/v2/components":
-		components := []any{}
-		for _, name := range []string{"codex", "deepseek-cli", "qwen-code"} {
-			location := filepath.Join(a.Profile.ProgramRoot, "runtime", name)
-			state := "MISSING"
-			if info, e := os.Stat(location); e == nil && info.IsDir() {
-				state = "AVAILABLE"
-			}
-			components = append(components, map[string]any{"component_id": name, "path": location, "state": state, "version": "UNVERIFIED", "connected": false})
-		}
-		return map[string]any{"components": components, "scope": "existing-components-only"}, nil
 	case strings.HasPrefix(path, "/api/v2/jobs/") && strings.HasSuffix(path, "/artifact"):
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/api/v2/jobs/"), "/artifact")
 		return nil, a.serveArtifact(w, r, id, q.Get("path"))

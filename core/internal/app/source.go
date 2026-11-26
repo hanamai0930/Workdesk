@@ -49,7 +49,7 @@ func (a *App) verifySources() error {
 }
 func ownerControl(kind string) bool {
 	switch kind {
-	case "service.reload", "task.stop", "task.pause", "task.cancel", "task.reconcile", "approval.resolve", "native.resolve", "chat.api-stop", "tool.cancel":
+	case "service.reload", "task.stop", "task.pause", "task.cancel", "task.reconcile", "approval.resolve", "native.resolve", "chat.api-stop", "tool.cancel", "partner.stop", "partner.input", "partner.approve":
 		return true
 	}
 	return strings.HasSuffix(kind, ".reconcile")

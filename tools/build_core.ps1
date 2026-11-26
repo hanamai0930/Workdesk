@@ -45,8 +45,18 @@ try {
   }
   $goVersion = & $GoExecutable version
   if ($LASTEXITCODE) { throw 'The configured Go executable could not report its version.' }
+  $buildSourceHashes = [ordered]@{}
+  Get-ChildItem -LiteralPath $coreDirectory -Recurse -File | Where-Object { $_.Extension -in @('.go','.mod','.sum') } | Sort-Object FullName | ForEach-Object {
+    $relativeName = [IO.Path]::GetRelativePath($repositoryDirectory, $_.FullName).Replace('\','/')
+    $buildSourceHashes[$relativeName] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+  }
   & $GoExecutable build -trimpath -buildvcs=false -o $outputPath ./cmd/workdesk-core
   if ($LASTEXITCODE) { throw 'Go core build failed.' }
+  foreach ($relativeName in $buildSourceHashes.Keys) {
+    if ((Get-FileHash -LiteralPath (Join-Path $repositoryDirectory $relativeName) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $buildSourceHashes[$relativeName]) {
+      throw 'Go source changed during the build; do not select this candidate.'
+    }
+  }
   $binaryHash = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
   $sourceRevision = & git -C $repositoryDirectory rev-parse HEAD
   if ($LASTEXITCODE) { $sourceRevision = '' }
@@ -57,6 +67,7 @@ try {
     binary = $outputPath
     sha256 = $binaryHash
     flags = @('-trimpath', '-buildvcs=false')
+    source_files = $buildSourceHashes
     built_utc = [DateTime]::UtcNow.ToString('o')
   }
   [IO.File]::WriteAllText(($outputPath + '.build.json'), ($manifest | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))

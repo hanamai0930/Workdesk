@@ -100,6 +100,10 @@ class Persistence:
         features=getattr(self.s,'ui_features',None)
         if features and features.chats.api.active():raise ValueError('API聊天仍在途，请先停止或等待结束，再切换凭据或保存位置。')
         if any(w['thread'].is_alive() for w in self.s.workers.values()):raise ValueError('仍有专属执行线程，先停止并核对，再快照/恢复/移动。')
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_objects'").fetchone():
+            terminal=('COMPLETED','FAILED','FAILED_NO_SEND','CANCELLED','STOPPED_RUNTIME')
+            if db.execute("SELECT 1 FROM core_partner_objects WHERE kind IN ('run','operation') AND json_extract(data,'$.state') NOT IN ("+','.join('?' for _ in terminal)+') LIMIT 1',terminal).fetchone():
+                raise ValueError('伙伴安装、登录或运行仍在途或结果未知；先核对原操作，再备份、恢复或切换资料。')
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_tool_jobs'").fetchone():
             blocked=('QUEUED','RUNNING','STOP_REQUESTED','ORPHANED_UNKNOWN','SEND_UNKNOWN','STOP_UNKNOWN','PAUSED')
             if db.execute('SELECT 1 FROM core_tool_jobs WHERE state IN ('+','.join('?' for _ in blocked)+') LIMIT 1',blocked).fetchone():
@@ -141,6 +145,10 @@ class Persistence:
             revision=json.loads(row[0]).get('implementation_revision')
             if revision:implementations.add(revision)
         implementations.add(self.s.implementation)
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_objects'").fetchone():
+            for row in db.execute("SELECT data FROM core_partner_objects WHERE kind='run'"):
+                revision=json.loads(row[0]).get('implementation_revision')
+                if revision:implementations.add(revision)
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_tool_jobs'").fetchone():
             unversioned=False
             for row in db.execute('SELECT data FROM core_tool_jobs'):
@@ -222,6 +230,14 @@ class Persistence:
                    'dependencies':'existing Python/Node/SDK and same-machine credential references; no runtime installers or auth copied',
                    'snapshot_point':'committed ledger plus per-file hashes; declared input/output versions cross-checked; not an OS-wide atomic snapshot','usage':self.store.usage(db=db)}
             value['manifest_hash']=digest(value);atomic_json(root/'manifest.json',value)
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_objects'").fetchone():
+                release_ids=set()
+                for item in db.execute("SELECT data FROM core_partner_objects WHERE kind IN ('connection','run')"):
+                    release=json.loads(item[0]).get('release_id')
+                    if release:release_ids.add(release)
+                reference={'id':identity,'state':'PROTECTED','release_ids':sorted(release_ids),
+                           'backup_root':str(root),'manifest_hash':value['manifest_hash'],'revision':1,'updated':time.time()}
+                db.execute("INSERT INTO core_partner_objects VALUES(?,?,?,?,?)",('recovery',identity,1,canonical(reference),reference['updated']))
             self.c.put(db,'backup',{'id':identity,'root':str(root),'manifest_hash':value['manifest_hash'],'created':value['created'],'state':'READY'})
             return {'backup_id':identity,'root':str(root),'manifest_hash':value['manifest_hash'],'bytes':total,'state':'READY','no_dispatch':True}
         except Exception as exc:
@@ -272,7 +288,7 @@ class Persistence:
             if any(secret in raw for secret in secrets):raise ValueError('快照包含指定凭据，拒绝导入。')
         with closing(sqlite3.connect('file:'+quote(str(workspace.io_path(root/'state/tasks.sqlite3')))+'?mode=ro',uri=True)) as source:
             if source.execute('PRAGMA integrity_check').fetchone()[0]!='ok':raise ValueError('快照数据库损坏。')
-            versions={'1','2'} if self.store.managed else {'1'}
+            versions={'1','2','3'} if self.store.managed else {'1'}
             if source.execute("SELECT value FROM meta WHERE key='schema'").fetchone()[0] not in versions:raise ValueError('不支持的快照数据库版本。')
             if source.execute("SELECT 1 FROM sqlite_master WHERE type IN ('trigger','view') OR upper(sql) LIKE 'CREATE VIRTUAL TABLE%' LIMIT 1").fetchone():raise ValueError('状态快照不能包含触发器、视图或虚拟表。')
             for table,columns in [('tasks',['id','project_id']),('attempts',['id','task_id']),('projects',['id'])]:

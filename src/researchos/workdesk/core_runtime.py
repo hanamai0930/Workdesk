@@ -97,7 +97,8 @@ def freeze(base, data, executable):
         if not target.exists():
             target.write_bytes(raw)
     (root / 'manifest.json').write_text(json.dumps(manifest, sort_keys=True), encoding='utf-8')
-    return {'schema': 1, 'engine': 'go', 'protocol': 2, 'storage_schema': 2,
+    contract = read_json(base / 'contracts/core-v2.json')
+    return {'schema': 1, 'engine': 'go', 'protocol': 2, 'storage_schema': contract['storage_schema'],
             'executable': str(executable), 'binary_sha256': binary_hash,
             'implementation_revision': revision, 'source_files': source}
 

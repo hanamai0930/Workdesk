@@ -32,12 +32,12 @@ class RequestUncertain(RuntimeError):
     """Transport failed; a submitted command must not be repeated automatically."""
 
 
-def read_json(path):
+def read_json(path, *, max_bytes=1024 * 1024):
     path = Path(path)
     physical = io_path(path)
     if physical.is_symlink() or (hasattr(physical, 'is_junction') and physical.is_junction()):
         raise ValueError('开发状态文件不能使用链接。')
-    if physical.stat().st_size > 1024 * 1024:
+    if physical.stat().st_size > max_bytes:
         raise ValueError('开发状态文件过大。')
     value = json.loads(physical.read_text(encoding='utf-8'))
     if not isinstance(value, dict):
@@ -388,10 +388,15 @@ def recovery_root(profile):
 def backup(profile):
     backend = required_backend(profile)
     receipt = command(profile, backend, 'backup.create', {})
+    return export_ready_backup(profile, receipt)
+
+
+def export_ready_backup(profile, receipt):
+    """Resume export from an already recorded READY receipt; never create again."""
     source = Path(receipt.get('root', '')).resolve()
     if receipt.get('state') != 'READY' or source.parent != Path(profile['data_root']) / 'backups':
         raise ValueError('开发备份回执位置或状态无效。')
-    manifest = read_json(source / 'manifest.json')
+    manifest = read_json(source / 'manifest.json', max_bytes=8 * 1024 * 1024)
     if manifest.get('manifest_hash') != receipt.get('manifest_hash'):
         raise ValueError('开发备份回执和清单不符。')
     recovery = recovery_root(profile)
@@ -415,7 +420,7 @@ def restore_check(profile, source):
     source = Path(source).resolve()
     if not source.is_relative_to(recovery.resolve()) or source == recovery.resolve():
         raise ValueError('恢复检查只接受开发 recovery 内的明确备份副本。')
-    exported, manifest = read_json(source / 'development-export.json'), read_json(source / 'manifest.json')
+    exported, manifest = read_json(source / 'development-export.json'), read_json(source / 'manifest.json', max_bytes=8 * 1024 * 1024)
     if exported.get('instance_id') != profile['instance_id'] or exported.get('manifest_hash') != manifest.get('manifest_hash'):
         raise ValueError('恢复副本不属于此开发实例。')
     for unused in package_files(source, manifest):

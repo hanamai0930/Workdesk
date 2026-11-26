@@ -1,0 +1,645 @@
+"""JSON-lines host for official Agents, never a model/tool execution loop.
+
+The Go owner admits this process to its Job before supplying its first frame.
+All subprocesses remain descendants; closing a stream is not remote-stop proof.
+"""
+from __future__ import annotations
+
+import json
+import io
+import os
+from pathlib import Path
+import queue
+import re
+import subprocess
+import sys
+import threading
+import time
+import uuid
+
+from .gateway import RunGateway
+from .launch import build_launch
+
+MAX_FRAME = 32 * 1024 * 1024
+SENSITIVE_NAMES = {"api_key", "apikey", "access_token", "refresh_token", "authorization", "auth_token", "id_token", "password", "credential", "credentials"}
+
+
+class NativeRejected(RuntimeError):
+    pass
+
+
+class ReceiptUnknown(RuntimeError):
+    pass
+
+
+class NativeRpc:
+    def __init__(self, process, protocol, notify):
+        self.process, self.protocol, self.notify = process, protocol, notify
+        self.pending, self.lock, self.write_lock = {}, threading.Lock(), threading.Lock()
+        self.closed = False
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def send(self, message):
+        if self.protocol not in {"zcode", "codex", "claude"}:
+            message = {"jsonrpc": "2.0", **message}
+        raw = json.dumps(message, ensure_ascii=False).encode() + b"\n"
+        if len(raw) > MAX_FRAME:
+            raise ValueError("Outgoing native frame exceeds the transport limit")
+        with self.write_lock:
+            try:
+                self.process.stdin.write(raw)
+                self.process.stdin.flush()
+            except (OSError, BrokenPipeError) as exc:
+                raise ReceiptUnknown("Native send receipt unknown; do not resend") from exc
+
+    def request(self, method, params=None, timeout=30):
+        request_id = "workdesk-" + uuid.uuid4().hex
+        waiter = queue.Queue(maxsize=1)
+        with self.lock:
+            if self.closed:
+                raise ReceiptUnknown("Native transport is closed")
+            self.pending[request_id] = waiter
+        try:
+            message = {"id": request_id, "method": method}
+            if params is not None:
+                message["params"] = params
+            self.send(message)
+            try:
+                result = waiter.get(timeout=timeout)
+            except queue.Empty as exc:
+                raise ReceiptUnknown(method + ": receipt unknown; do not resend") from exc
+            if isinstance(result, Exception):
+                raise result
+            if "error" in result:
+                error = result["error"]
+                raise NativeRejected(error.get("message", str(error)) if isinstance(error, dict) else str(error))
+            return result.get("result", {})
+        finally:
+            with self.lock:
+                self.pending.pop(request_id, None)
+
+    def _read(self):
+        reason = ReceiptUnknown("Native protocol EOF; completion is unknown")
+        try:
+            while True:
+                raw = self.process.stdout.readline(MAX_FRAME + 1)
+                if not raw:
+                    break
+                if len(raw) > MAX_FRAME or not raw.endswith(b"\n"):
+                    raise ReceiptUnknown("Native frame oversized or incomplete")
+                message = json.loads(raw)
+                if not isinstance(message, dict):
+                    raise ReceiptUnknown("Native protocol did not return an object")
+                with self.lock:
+                    pending = self.pending.get(message.get("id")) if "method" not in message else None
+                if pending is not None:
+                    pending.put(message)
+                else:
+                    self.notify(message)
+        except Exception as exc:
+            reason = ReceiptUnknown("Native protocol failed: " + type(exc).__name__)
+        finally:
+            with self.lock:
+                self.closed = True
+                pending = list(self.pending.values())
+            for waiter in pending:
+                try:
+                    waiter.put_nowait(reason)
+                except queue.Full:
+                    pass
+            self.notify({"_transport_closed": True})
+
+
+class PartnerWorker:
+    def __init__(self, config, emit):
+        self.config, self.output = dict(config), emit
+        self.secret_values = [str(config.get("api_key", ""))]
+        self.gateway = None
+        self.process = None
+        self.rpc = None
+        self.spec = None
+        self.session_id = config.get("session_id") or (("sess_" + uuid.uuid4().hex) if config.get("partner_id") == "glm" else str(uuid.uuid4()))
+        self.thread_id = self.turn_id = None
+        self.requests = {}
+        self.done = threading.Event()
+        self.stop_requested = threading.Event()
+        self.completed = False
+        self.failed = False
+        self.last_text = []
+        self.native_usage = None
+        self.run_thread = None
+        self.session_revision = None
+        self.deepseek_account_selection = None
+        self.deepseek_account_ready = threading.Event()
+
+    def clean(self, value):
+        if isinstance(value, dict):
+            return {k: ("[REDACTED]" if k.lower() in SENSITIVE_NAMES else self.clean(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.clean(v) for v in value]
+        if isinstance(value, str):
+            for secret in self.secret_values:
+                if secret:
+                    value = value.replace(secret, "[REDACTED]")
+            return re.sub(r"\bsk-[A-Za-z0-9_-]{16,}", "[REDACTED]", value)
+        return value
+
+    def emit(self, **data):
+        data.setdefault("partner_id", self.config["partner_id"])
+        data.setdefault("run_id", self.config.get("run_id"))
+        data.setdefault("session_id", self.session_id)
+        self.output(self.clean(data))
+
+    def start(self):
+        if self.config.get("route") == "api" and self.config.get("mode", "run") == "run":
+            key = self.config.pop("api_key", None)
+            if not key:
+                raise NativeRejected("DeepSeek API key is required; no model request was sent")
+            self.gateway = RunGateway(key, self.config["model"], emit=self.emit,
+                binding={k: self.config.get(k) for k in ("run_id", "instance_id", "owner_epoch", "connection_id", "account_id", "secret_version")},
+                allowed_models=[self.config["model"], *(self.config.get("options") or {}).get("model_aliases", [])]).start()
+            self.config.update(gateway_url=self.gateway.url, gateway_token=self.gateway.token)
+            self.secret_values.append(self.gateway.token)
+        self.spec = build_launch(self.config)
+        self.process = subprocess.Popen(self.spec.argv, cwd=self.spec.cwd, env=self.spec.env, stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        self.emit(type="event", kind="native_process_started", pid=self.process.pid, native_protocol=self.spec.protocol,
+                  limitations=self.spec.limitations, route=self.spec.route)
+        threading.Thread(target=self._stderr, daemon=True).start()
+        self.run_thread = threading.Thread(target=self._run, daemon=True)
+        self.run_thread.start()
+
+    def _stderr(self):
+        while self.process and self.process.stderr:
+            block = self.process.stderr.readline(MAX_FRAME + 1)
+            if not block:
+                break
+            text = block.decode("utf8", "replace").rstrip()
+            self.emit(type="event", kind="native_diagnostic", message=text)
+            if self.config.get("mode") == "login":
+                self._login_text(text)
+
+    def _login_text(self, text):
+        urls = re.findall(r"https?://[^\s\x1b<>]+", text)
+        if urls:
+            self.emit(type="login", login_url=urls[0].rstrip(".,)"), instructions=text)
+
+    def _run(self):
+        try:
+            if self.spec.protocol in {"login-text", "auth-status"}:
+                return self._plain()
+            self.rpc = NativeRpc(self.process, self.spec.protocol, self._native_message)
+            if self.spec.protocol == "acp":
+                self._acp()
+            elif self.spec.protocol == "codex":
+                self._codex()
+            elif self.spec.protocol == "claude":
+                self._claude()
+            elif self.spec.protocol == "deepseek":
+                self._deepseek()
+            elif self.spec.protocol == "zcode":
+                self._zcode()
+        except Exception as exc:
+            if not self.stop_requested.is_set():
+                self.failed = True
+                self.emit(type="error", error=str(exc), error_class=type(exc).__name__,
+                          receipt_unknown=isinstance(exc, ReceiptUnknown), no_resend=True)
+            self.done.set()
+
+    def _plain(self):
+        chunks = []
+        for raw in self.process.stdout:
+            line = raw.decode("utf8", "replace").rstrip()
+            chunks.append(line)
+            self._login_text(line)
+            self.emit(type="event", kind="official_login_output", message=line)
+        code = self.process.wait()
+        if self.stop_requested.is_set():
+            return
+        if code:
+            raise NativeRejected("Official login/status command exited with code " + str(code))
+        authenticated = False
+        if self.spec.protocol == "auth-status":
+            try:
+                data = json.loads("\n".join(chunks))
+                authenticated = data.get("loggedIn") is True or data.get("authenticated") is True
+            except ValueError:
+                pass
+        self.emit(type="result", authenticated=authenticated, verification="OFFICIAL_STATUS" if authenticated else "LOGIN_COMMAND_EXITED_AUTH_NOT_CONFIRMED",
+                  text="\n".join(chunks), model_requests=0)
+        self.completed = True
+        self.done.set()
+
+    def _acp(self):
+        initialized = self.rpc.request("initialize", {"protocolVersion": 1, "clientInfo": {"name": "workdesk", "version": "2.0"},
+             "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}, "terminal": False}})
+        methods = initialized.get("authMethods", [])
+        self.emit(type="ready", native=initialized, auth_methods=methods)
+        if self.config.get("mode") == "inspect":
+            self.emit(type="result", authenticated=initialized.get("authenticated") is True,
+                      verification="OFFICIAL_INITIALIZE_ONLY", model_requests=0, auth_methods=methods)
+            self.completed = True
+            self.done.set()
+            return
+        if self.config.get("mode") == "login":
+            selected = (self.config.get("options") or {}).get("auth_method")
+            # Qwen 0.28.4's initialize advertises only openai, while its official
+            # authenticate implementation and user docs retain qwen-oauth.
+            if not selected and self.spec.partner_id == "qwen":
+                selected = "qwen-oauth"
+            if not selected:
+                candidates = [m for m in methods if not any(word in (str(m.get("id", "")) + str(m.get("name", ""))).lower() for word in ("api-key", "api key", "vertex"))]
+                preferred = [m for m in candidates if any(word in (str(m.get("id", "")) + str(m.get("name", ""))).lower() for word in ("oauth", "account", "google", "qwen", "登录"))]
+                if preferred:
+                    selected = preferred[0]["id"]
+                elif len(candidates) == 1:
+                    selected = candidates[0]["id"]
+            if not selected:
+                self.emit(type="login", instructions="选择官方账号登录方式", auth_methods=methods, request_id="auth-method")
+                while not self.done.wait(.1):
+                    selected = self.config.get("selected_auth_method")
+                    if selected:
+                        break
+            if not selected:
+                return
+            reviewed_qwen_oauth = self.spec.partner_id == "qwen" and selected == "qwen-oauth"
+            if selected not in {m["id"] for m in methods} and not reviewed_qwen_oauth:
+                raise NativeRejected("Authentication method not advertised by this official version")
+            result = self.rpc.request("authenticate", {"methodId": selected}, timeout=900)
+            self.emit(type="result", authenticated=True, native=result, verification="OFFICIAL_AUTHENTICATE_RECEIPT", model_requests=0)
+            self.completed = True
+            self.done.set()
+            return
+        if self.config.get("resume"):
+            result = self.rpc.request("session/load", {"sessionId": self.session_id, "cwd": self.spec.cwd, "mcpServers": []})
+        else:
+            result = self.rpc.request("session/new", {"cwd": self.spec.cwd, "mcpServers": []})
+            self.session_id = result["sessionId"]
+        if self.spec.partner_id == "gemini" and self.gateway:
+            aliases = {m.get("modelId") for m in (result.get("models") or {}).get("availableModels", [])}
+            aliases.discard(None)
+            # This fixed runtime advertises the aliases its native helper and
+            # compaction requests can use. Bind all of them explicitly to the
+            # selected driver and retain the observed map as an execution fact.
+            self.gateway.allowed_models.update(aliases)
+            self.emit(type="event", kind="native_driver_alias_map", source="OFFICIAL_SESSION_MODEL_CATALOG",
+                      mapping={model: self.config["model"] for model in sorted(self.gateway.allowed_models)})
+        self.emit(type="event", kind="native_session_bound", native=result)
+        result = self.rpc.request("session/prompt", {"sessionId": self.session_id,
+            "prompt": [{"type": "text", "text": self.config.get("prompt", "")}]}, timeout=86400)
+        if self.stop_requested.is_set() or result.get("stopReason") == "cancelled":
+            self.emit(type="stopped", native=result, remote_state="NATIVE_PROMPT_CANCELLED")
+        else:
+            self._finish(native=result)
+        self.done.set()
+
+    def _codex(self):
+        result = self.rpc.request("initialize", {"clientInfo": {"name": "workdesk", "version": "2.0"}, "capabilities": {"experimentalApi": True}})
+        self.rpc.send({"method": "initialized", "params": {}})
+        self.emit(type="ready", native=result)
+        if self.config.get("mode") == "inspect":
+            result = self.rpc.request("account/read", {"refreshToken": False})
+            account = result.get("account")
+            self.emit(type="result", authenticated=isinstance(account, dict) and account.get("type") == "chatgpt", native=result, model_requests=0)
+            self.completed = True
+            self.done.set()
+            return
+        options = self.config.get("options") or {}
+        params = {"cwd": self.spec.cwd, "model": self.config.get("model")}
+        for key in ("approvalPolicy", "sandbox", "serviceTier", "personality"):
+            if key in options:
+                params[key] = options[key]
+        if self.config.get("resume"):
+            params["threadId"] = self.session_id
+        result = self.rpc.request("thread/resume" if self.config.get("resume") else "thread/start", params)
+        self.thread_id = self.session_id = result["thread"]["id"]
+        self.emit(type="event", kind="native_session_bound", native=result)
+        result = self.rpc.request("turn/start", {"threadId": self.thread_id,
+            "input": [{"type": "text", "text": self.config.get("prompt", "")}], "model": self.config.get("model")})
+        self.turn_id = result["turn"]["id"]
+        self.emit(type="event", kind="native_turn_bound", turn_id=self.turn_id)
+        self.done.wait()
+
+    def _claude(self):
+        self.rpc.send({"type": "control_request", "request_id": "workdesk-initialize", "request": {"subtype": "initialize"}})
+        self.emit(type="ready", native_protocol="claude-sdk-stream-json")
+        self.rpc.send({"type": "user", "session_id": self.session_id, "parent_tool_use_id": None,
+                       "message": {"role": "user", "content": self.config.get("prompt", "")}})
+        self.done.wait()
+
+    def _deepseek(self):
+        provider = "deepseek-official" if self.spec.route == "api" else "deepseek-account"
+        selection = None
+        if self.spec.route == "account":
+            if not self.deepseek_account_ready.wait(45):
+                raise ReceiptUnknown("DeepSeek官方账号目录核对未完成；未发送模型请求")
+            facts = self.deepseek_account_selection or {}
+            self.emit(type="ready", account_selection=facts)
+            if self.config.get("mode") == "inspect":
+                self.emit(type="result", authenticated=facts.get("authenticated") is True,
+                          verification="OFFICIAL_ACCOUNT_CATALOG", state=facts.get("state"),
+                          models=facts.get("models", []), selection=facts.get("selection"),
+                          selection_source=facts.get("source"), model_requests=0)
+                self.completed = True
+                self.done.set()
+                return
+            if not facts.get("authenticated"):
+                raise NativeRejected("DeepSeek官方账号尚未登录，或账号目录当前不可用；请先从官方登录入口连接账号")
+            models = facts.get("models", [])
+            requested = self.config.get("model")
+            if requested:
+                if not any(model.get("id") == requested for model in models):
+                    raise NativeRejected("所选模型不在本次官方账号目录中；未改用其他模型")
+                selection = {"provider": provider, "model": requested}
+                source = "EXPLICIT_CONNECTION_ACCOUNT_MODEL"
+            else:
+                selection = facts.get("selection")
+                source = facts.get("source")
+                if facts.get("state") == "MODEL_SELECTION_REQUIRED":
+                    raise NativeRejected("官方已保存的账号默认模型当前不可用；请在官方模型设置中调整后重试，未覆盖原默认")
+            if not selection or selection.get("provider") != provider or not selection.get("model"):
+                raise NativeRejected("官方账号没有可用模型选择；请在官方模型设置中选择后重试")
+            self.config["model"] = selection["model"]
+            self.emit(type="event", kind="native_model_selected", model=selection["model"], provider=provider,
+                      selection_source=source, models=models, profile_source=facts.get("profile_source"))
+        params = {"cwd": self.spec.cwd, "provider": provider, "model": self.config.get("model"),
+                  "approvalRequests": True, "capabilities": {"userQuestions": True}}
+        if selection and selection.get("reasoningEffort"):
+            params["reasoningEffort"] = selection["reasoningEffort"]
+        result = self.rpc.request("initialize", params)
+        self.emit(type="ready", native=result)
+        if self.config.get("mode") == "inspect":
+            self.emit(type="result", authenticated=False, verification="SDK_INITIALIZE_IS_NOT_ACCOUNT_VERIFICATION", model_requests=0)
+            self.completed = True
+            self.done.set()
+            return
+        if self.config.get("resume"):
+            self.rpc.request("session/resume", {"sessionId": self.session_id})
+        query = self.rpc.request("session/query", {"sessionId": self.session_id,
+            "contentBlocks": [{"type": "text", "text": self.config.get("prompt", "")}]}, timeout=86400)
+        self.emit(type="event", kind="native_prompt_receipt", native=query)
+        self.rpc.request("session/wait", {"sessionId": self.session_id}, timeout=86400)
+        if not self.stop_requested.is_set():
+            self._finish(native=query)
+        self.done.set()
+
+    def _zcode(self):
+        if self.config.get("mode") == "inspect":
+            # This is a protocol call, not a probe prompt or token-file inference.
+            result = self.rpc.request("session/list", {})
+            self.emit(type="ready", native=result)
+            self.emit(type="result", authenticated=False, verification="MODEL_CATALOG_NOT_LOGIN_PROOF", model_requests=0)
+            self.completed = True
+            self.done.set()
+            return
+        workspace = {"workspaceKey": str(uuid.uuid5(uuid.NAMESPACE_URL, self.spec.cwd)), "workspacePath": self.spec.cwd}
+        params = {"sessionId": self.session_id, "workspace": workspace}
+        if not self.config.get("resume"):
+            params["mode"] = (self.config.get("options") or {}).get("mode", "guarded")
+        result = self.rpc.request("session/resume" if self.config.get("resume") else "session/create", params)
+        self.session_revision = result.get("revision")
+        self.emit(type="ready", native=result)
+        self.rpc.request("session/subscribe", {"sessionId": self.session_id, "deliveryKind": "desktop-continuous", "includeSnapshot": False})
+        self.rpc.request("session/send", {"sessionId": self.session_id, "content": self.config.get("prompt", ""), "inputId": str(uuid.uuid4())})
+        self.done.wait()
+
+    def _finish(self, **extra):
+        if self.stop_requested.is_set() or self.completed:
+            return
+        self.completed = True
+        self.emit(type="result", text="".join(self.last_text), model=self.config.get("model"), usage=self.native_usage,
+                  completion_scope="OFFICIAL_NATIVE_TURN", **extra)
+
+    def _native_message(self, message):
+        if message.get("_transport_closed"):
+            if not self.done.is_set():
+                self.failed = True
+                self.emit(type="error", error="Official transport closed without a final receipt", receipt_unknown=True, no_resend=True)
+                self.done.set()
+            return
+        self.emit(type="event", kind="native_event", native=message)
+        method, params = message.get("method", ""), message.get("params") or {}
+        if self.spec.protocol == "deepseek" and method == "workdesk.accountSelection":
+            self.deepseek_account_selection = params
+            self.deepseek_account_ready.set()
+        if method == "authenticate/update" and params.get("_meta", {}).get("authUri"):
+            self.emit(type="login", login_url=params["_meta"]["authUri"], instructions="在官方页面登录并完成授权")
+        if "id" in message and method:
+            self.requests[str(message["id"])] = message
+            kind = "approval" if any(v in method.lower() for v in ("approval", "permission")) else "input"
+            self.emit(type=kind, request_id=str(message["id"]), message=method, options=params.get("options"), native=params)
+        protocol = self.spec.protocol
+        if protocol == "claude":
+            if message.get("session_id"):
+                self.session_id = message["session_id"]
+            if message.get("type") == "control_request":
+                ident = str(message["request_id"])
+                self.requests[ident] = message
+                request = message.get("request") or {}
+                question = request.get("tool_name") == "AskUserQuestion"
+                self.emit(type="input" if question else "approval", request_id=ident,
+                          message=request.get("subtype", "Official tool request"), native=request)
+            if message.get("type") == "result":
+                if message.get("is_error") or message.get("subtype") not in {"success", None}:
+                    self.failed = True
+                    self.emit(type="error", error=message.get("result", str(message.get("errors", message.get("subtype")))), native=message)
+                elif not self.stop_requested.is_set():
+                    self.native_usage = message.get("usage")
+                    self.last_text = [message.get("result", "")]
+                    self._finish(native=message)
+                self.done.set()
+        elif protocol == "codex":
+            if method == "item/agentMessage/delta":
+                self.last_text.append(params.get("delta", ""))
+            if method == "thread/tokenUsage/updated":
+                self.native_usage = params.get("tokenUsage")
+            if method == "turn/completed":
+                turn = params.get("turn", {})
+                if self.thread_id and params.get("threadId") != self.thread_id:
+                    return
+                if turn.get("status") == "completed":
+                    self._finish(native=turn)
+                elif turn.get("status") == "interrupted":
+                    self.emit(type="stopped", native=turn)
+                else:
+                    self.failed = True
+                    self.emit(type="error", error=str(turn.get("error", "Native turn failed")), native=turn)
+                self.done.set()
+        elif protocol == "acp" and method == "session/update":
+            update = params.get("update") or {}
+            if update.get("sessionUpdate") == "agent_message_chunk":
+                content = update.get("content", {})
+                if content.get("type") == "text":
+                    self.last_text.append(content.get("text", ""))
+        elif protocol == "zcode" and method == "session/event":
+            if params.get("sessionId") != self.session_id:
+                return
+            if params.get("type") == "turn.completed":
+                payload = params.get("payload") or {}
+                self.native_usage = payload.get("usage")
+                if payload.get("resultType") == "cancelled":
+                    self.emit(type="stopped", native=payload)
+                elif payload.get("resultType") == "success":
+                    self.last_text = [payload.get("response", "")]
+                    self._finish(native=payload)
+                else:
+                    self.failed = True
+                    self.emit(type="error", error="Official ZCode execution did not succeed", native=payload)
+                self.done.set()
+            elif params.get("type") == "turn.failed":
+                self.failed = True
+                self.emit(type="error", error="Official ZCode turn failed", native=params)
+                self.done.set()
+
+    def control(self, command):
+        action = command.get("action")
+        if action == "stop":
+            self.stop_requested.set()
+            if self.rpc and not self.rpc.closed:
+                if self.spec.protocol == "acp":
+                    self.rpc.send({"method": "session/cancel", "params": {"sessionId": self.session_id}})
+                elif self.spec.protocol == "codex" and self.turn_id:
+                    self.rpc.request("turn/interrupt", {"threadId": self.thread_id, "turnId": self.turn_id}, timeout=5)
+                elif self.spec.protocol == "deepseek":
+                    self.rpc.request("shutdown", timeout=5)
+                elif self.spec.protocol == "zcode":
+                    self.rpc.request("session/stop", {"sessionId": self.session_id}, timeout=5)
+                elif self.spec.protocol == "claude":
+                    self.rpc.send({"type": "control_request", "request_id": "workdesk-stop", "request": {"subtype": "interrupt"}})
+            self.emit(type="stopped", remote_state="STOP_REQUESTED_UNTIL_NATIVE_RECEIPT", local_exit_confirmed=False)
+            self.done.set()
+        elif action == "input" and command.get("request_id") == "auth-method":
+            self.config["selected_auth_method"] = command.get("auth_method") or command.get("text")
+        elif action in {"approval", "input"} and command.get("request_id"):
+            ident = str(command["request_id"])
+            message = self.requests.pop(ident, None)
+            if message is None:
+                raise NativeRejected("Native request is absent or already resolved")
+            accepted = command.get("decision") in {"accept", "allow", "allowed-once"}
+            params = message.get("params") or {}
+            if self.spec.protocol == "claude":
+                request = message.get("request") or {}
+                if action == "input" and request.get("tool_name") == "AskUserQuestion":
+                    tool_input = request.get("input") or {}
+                    questions = tool_input.get("questions", [])
+                    answers = command.get("answers")
+                    if answers is None and len(questions) == 1 and command.get("text") is not None:
+                        answers = {questions[0].get("question", ""): str(command["text"])}
+                    if answers is None:
+                        self.requests[ident] = message
+                        raise NativeRejected("Each official question needs a named answer")
+                    response = {"behavior": "allow", "updatedInput": {**tool_input, "answers": answers}}
+                else:
+                    response = {"behavior": "allow", "updatedInput": request.get("input", {})} if accepted else {"behavior": "deny", "message": "User did not grant this operation"}
+                self.rpc.send({"type": "control_response", "response": {"subtype": "success", "request_id": ident, "response": response}})
+            elif message.get("method") == "session/request_permission":
+                options = params.get("options") or []
+                option = next((v for v in options if v.get("kind") == ("allow_once" if accepted else "reject_once")), None)
+                result = {"outcome": {"outcome": "selected", "optionId": option["optionId"]}} if option else {"outcome": {"outcome": "cancelled"}}
+                self.rpc.send({"id": message["id"], "result": result})
+            elif message.get("method") == "approval/request":
+                self.rpc.send({"id": message["id"], "result": {"outcome": "allowed-once" if accepted else "rejected"}})
+            elif message.get("method") == "user-question/ask":
+                answers = command.get("answers")
+                questions = params.get("questions") or []
+                if answers is None and len(questions) == 1 and command.get("text") is not None:
+                    answers = [{"id": questions[0]["id"], "selected": [], "custom": str(command["text"])}]
+                if answers is None and command.get("text"):
+                    self.requests[ident] = message
+                    raise NativeRejected("Each official question needs a named answer")
+                result = {"answers": answers} if answers else {"cancelled": True}
+                self.rpc.send({"id": message["id"], "result": result})
+            elif self.spec.protocol == "codex" and "requestApproval" in message.get("method", ""):
+                self.rpc.send({"id": message["id"], "result": {"decision": "accept" if accepted else "decline"}})
+            elif self.spec.protocol == "codex" and "requestUserInput" in message.get("method", ""):
+                answers = command.get("answers")
+                questions = params.get("questions") or []
+                if answers is None and len(questions) == 1 and command.get("text") is not None:
+                    answers = {questions[0]["id"]: {"answers": [str(command["text"])]}}
+                if answers is None:
+                    self.requests[ident] = message
+                    raise NativeRejected("Each official question needs a named answer")
+                self.rpc.send({"id": message["id"], "result": {"answers": answers}})
+            elif self.spec.protocol == "zcode" and message.get("method") == "interaction/requestPermission":
+                self.rpc.send({"id": message["id"], "result": {"decision": "allow" if accepted else "deny"}})
+            elif self.spec.protocol == "zcode" and message.get("method") == "interaction/requestUserInput":
+                content = command.get("response") or {"text": str(command.get("text", ""))}
+                self.rpc.send({"id": message["id"], "result": {"action": "accept", "content": content}})
+            elif command.get("response") is not None:
+                self.rpc.send({"id": message["id"], "result": command["response"]})
+            else:
+                raise NativeRejected("This native request needs its protocol-specific response")
+        elif action == "native" and self.rpc:
+            # Go owner must gate this route to a reviewed native capability.
+            method = command.get("method")
+            if not isinstance(method, str) or not method:
+                raise ValueError("Native method required")
+            result = self.rpc.request(method, command.get("params"), timeout=30)
+            self.emit(type="event", kind="native_control_receipt", command_id=command.get("id"), native=result)
+        elif action == "input":
+            raise NativeRejected("Uncorrelated live input requires the official native steer operation")
+        else:
+            raise NativeRejected("Unknown worker control action")
+
+    def close(self):
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.stdin.close()
+                self.process.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=3)
+        if self.gateway:
+            self.gateway.close()
+
+
+def main():
+    lock = threading.Lock()
+    def emit(data):
+        with lock:
+            print(json.dumps(data, ensure_ascii=False), flush=True)
+    worker = None
+    try:
+        # Raw duplicated fd avoids a daemon holding BufferedReader's shutdown lock.
+        input_stream = io.FileIO(os.dup(sys.stdin.fileno()), "rb", closefd=True)
+        raw = input_stream.readline(MAX_FRAME + 1)
+        if len(raw) > MAX_FRAME:
+            raise ValueError("Initial frame exceeds transport limit")
+        first = json.loads(raw)
+        if first.get("action") != "start":
+            raise ValueError("First frame must be start/config")
+        worker = PartnerWorker(first["config"], emit)
+        worker.start()
+        def controls():
+            while not worker.done.is_set():
+                raw = input_stream.readline(MAX_FRAME + 1)
+                if not raw:
+                    try:
+                        worker.control({"action": "stop"})
+                    except Exception:
+                        worker.done.set()
+                    break
+                try:
+                    if len(raw) > MAX_FRAME:
+                        raise ValueError("Control frame exceeds transport limit")
+                    worker.control(json.loads(raw))
+                except Exception as exc:
+                    worker.emit(type="event", kind="control_rejected", error=str(exc))
+        threading.Thread(target=controls, daemon=True).start()
+        worker.done.wait()
+        return 1 if worker.failed else 0
+    except Exception as exc:
+        if worker:
+            worker.emit(type="error", error=str(exc), error_class=type(exc).__name__, no_resend=True)
+        else:
+            emit({"type": "error", "error": type(exc).__name__ + ": invalid launch configuration"})
+        return 1
+    finally:
+        if worker:
+            worker.close()

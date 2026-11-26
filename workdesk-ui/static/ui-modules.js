@@ -23,6 +23,8 @@
   });
   definitions.settings.sources.push('../frontend/modules/settings-token-usage.tsx');
   definitions.settings.styles.push('../frontend/modules/settings-token-usage.css');
+  definitions.settings.sources.push('../frontend/modules/partners.tsx');
+  definitions.settings.styles.push('../frontend/modules/partners.css');
   // Native Work-only floating selectors; portal roots retain workbench scope.
   definitions.workbench.sources.push('../frontend/modules/work-model-picker.tsx');
   definitions.workbench.styles.push('../frontend/modules/work-model-picker.css');

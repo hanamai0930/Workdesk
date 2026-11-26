@@ -19,6 +19,9 @@ class CoreRuntimeTests(unittest.TestCase):
         source.parent.mkdir(parents=True)
         source.write_text('VERSION = 1\n', encoding='utf-8')
         self.source = source
+        contract = self.locations.base / 'contracts/core-v2.json'
+        contract.parent.mkdir(parents=True)
+        contract.write_text(json.dumps({'storage_schema': 2}), encoding='utf-8')
         binary = root / 'candidate.exe'
         binary.write_bytes(b'independent core candidate')
         self.manifest_path, self.manifest = core_runtime.install_candidate(self.locations, binary)

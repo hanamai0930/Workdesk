@@ -177,6 +177,34 @@ class Legacy:
         if method == 'legacy.initialize':
             return self.initialize(params)
         self.require()
+        if method == 'partner.process.inspect':
+            from ..paths import process_identity
+            pid = params.get('pid')
+            if type(pid) is not int or pid <= 0:
+                raise ValueError('进程核对需要准确PID。')
+            return process_identity(pid)
+        if method in {'partner.secret.store', 'partner.secret.read'}:
+            import uuid
+            from ..credential_vault import encode, decode
+            from ..paths import atomic_bytes
+            identity = str(uuid.UUID(params['account_id']))
+            version = str(uuid.UUID(params['version']))
+            secret_root = self.service.locations.user / 'providers' / 'partner-secrets'
+            secret_root.mkdir(parents=True, exist_ok=True)
+            path = secret_root / (identity + '-' + version + '.vault')
+            from ..workspace import plain
+            plain(path, self.service.locations.user, missing=method == 'partner.secret.store')
+            if method == 'partner.secret.store':
+                key = params.get('key')
+                if not isinstance(key, str) or not key.strip() or len(key) > 8192 or any(c in key for c in '\r\n\0'):
+                    raise ValueError('请输入有效 API Key。')
+                if path.exists():
+                    if decode(path.read_bytes()).decode('utf-8') == key.strip():
+                        return {'stored': True, 'version': version}
+                    raise ValueError('凭据版本已存在，保留原版本。')
+                atomic_bytes(path, encode(key.strip().encode('utf-8')))
+                return {'stored': True, 'version': version}
+            return {'key': decode(path.read_bytes()).decode('utf-8')}
         if method == 'legacy.request':
             return self.request(params)
         if method == 'legacy.ui_request':

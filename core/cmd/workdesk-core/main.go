@@ -31,6 +31,7 @@ func run() error {
 	source := flag.String("source", "", "Source revision")
 	dirty := flag.Bool("source-dirty", false, "Source tree had uncommitted changes at launch")
 	migrate := flag.Bool("migrate-only", false, "Explicit offline v1 to v2 migration")
+	partnersMigration := flag.Bool("migrate-partners-only", false, "Explicit backed-up offline storage v2 to v3 migration")
 	fixture := flag.Bool("fixture", false, "Isolated test profile, no local Git binding")
 	flag.Parse()
 	if *config == "" || *base == "" {
@@ -47,7 +48,7 @@ func run() error {
 	} else if !instance.Within(p.UserRoot, filepath.Join(p.DevelopmentRoot, "artifacts")) || !instance.Within(p.ConfigPath, filepath.Join(p.DevelopmentRoot, "artifacts")) {
 		return errors.New("fixture配置与用户根必须位于独立检查材料目录")
 	}
-	if _, e := os.Stat(filepath.Join(p.UserRoot, "runtime", "development-stop.json")); e == nil && !*migrate {
+	if _, e := os.Stat(filepath.Join(p.UserRoot, "runtime", "development-stop.json")); e == nil && !*migrate && !*partnersMigration {
 		return errors.New("实例已请求停止，请使用显式开发启动入口")
 	}
 	lock, err := instance.AcquireOwner(p.DataRoot)
@@ -60,6 +61,12 @@ func run() error {
 		return err
 	}
 	defer db.Close()
+	if *partnersMigration {
+		if err = db.MigratePartners(); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"state": "PARTNERS_MIGRATED", "storage_schema": 3, "data_root": p.DataRoot})
+	}
 	if *migrate {
 		schema, e := db.Schema()
 		if e != nil {

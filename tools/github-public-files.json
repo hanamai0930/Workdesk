@@ -88,16 +88,23 @@
     "workdesk-ui/pnpm-workspace.yaml",
     "workdesk-ui/server.py",
     "workdesk-ui/tsconfig.json",
-    "workdesk-ui/vite.config.ts"
+    "workdesk-ui/vite.config.ts",
+    "tools/stage2_control.py",
+    "tests/test_partner_transports.py",
+    "tests/test_partner_vault.py"
   ],
   "trees": [
     {
       "path": "core",
-      "suffixes": [".go"]
+      "suffixes": [
+        ".go"
+      ]
     },
     {
       "path": "contracts",
-      "suffixes": [".json"]
+      "suffixes": [
+        ".json"
+      ]
     },
     {
       "path": "src/researchos",

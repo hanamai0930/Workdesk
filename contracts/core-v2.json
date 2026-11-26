@@ -2,7 +2,7 @@
   "schema": 1,
   "control_protocol": 2,
   "instance_schema": 1,
-  "storage_schema": 2,
+  "storage_schema": 3,
   "legacy_bridge_protocol": 1,
   "command": {"fields": ["id", "kind", "payload"], "receipt_lookup": "/api/v1/receipt?id={id}", "unknown_no_resend": true},
   "read_models": ["/api/v2/projects", "/api/v2/records", "/api/v2/records/{kind}/{id}", "/api/v2/events", "/api/v2/runtime", "/api/v2/components"],
