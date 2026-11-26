@@ -405,8 +405,8 @@ body.workdesk{
 body.workdesk .wk-rail-footer{display:flex;flex-direction:column;align-items:center;gap:5px}
 body.workdesk #wd-quota-popup{position:fixed;inset:auto auto 60px 56px;margin:0;width:min(340px,calc(100vw - 66px));max-height:calc(100dvh - 75px);overflow:auto;border:1px solid var(--wk-line);border-radius:14px;background:var(--wk-bg);color:var(--wk-text);box-shadow:0 9px 28px var(--wk-shadow);padding:6px 13px}
 body.workdesk #wd-quota-popup header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 0 3px}
-body.workdesk .wd-quota-popup-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;padding:8px 0;border-top:1px solid var(--wk-line);font-size:13px}
-body.workdesk .wd-quota-popup-row>div{display:grid;justify-items:end;gap:2px;text-align:right;overflow-wrap:anywhere}
+body.workdesk .wd-quota-popup-row{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;padding:9px 0;border-top:1px solid var(--wk-line);font-size:13px;overflow-wrap:anywhere}
+body.workdesk .wd-quota-popup-heading{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 body.workdesk #wd-quota-popup :is(small,p){color:var(--wk-muted);font-size:12px}
 body.workdesk #wd-quota-popup>a{display:block;padding:7px 0 3px;border-top:1px solid var(--wk-line);font-size:13px;text-align:right;text-decoration:underline}
 @media(max-width:640px){body.workdesk #wd-quota-popup{left:49px;width:min(340px,calc(100vw - 57px))}}

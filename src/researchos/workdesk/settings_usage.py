@@ -7,6 +7,30 @@ from .partner_usage import account_overview, catalog as partner_catalog, work_re
 PROVIDERS = {'codex': 'Codex', 'deepseek': 'DeepSeek', 'qwen': 'Qwen'}
 
 
+def model_summaries(records, partners, providers):
+    """Compact display over already deduplicated receipts, across accounts/runs."""
+    names = {row['id']: row['name'] for row in (*partners, *providers)}
+    groups = {}
+    for row in records:
+        provider = row.get('api_provider') or row['provider']
+        route = 'api' if row.get('api_provider') else 'account' if row.get('run_id') else 'legacy'
+        model = row.get('model') or '未知型号'
+        # An absent model identity cannot establish that two partners used the
+        # same model. Keep those observations separate until it is reported.
+        unknown = row.get('partner_id') if model == '未知型号' else None
+        identity = (provider, route, model, unknown)
+        name = names.get(provider, provider)
+        source = name + (' API' if route == 'api' else ' 官方账号' if route == 'account' else ' 历史连接')
+        group = groups.setdefault(identity, {
+            'id': ':'.join(str(value or '') for value in identity), 'provider': provider,
+            'model': model, 'source_label': source, 'tokens': None, 'partial': False,
+        })
+        if row.get('tokens') is not None:
+            group['tokens'] = (group['tokens'] or 0) + row['tokens']
+        group['partial'] |= row.get('tokens') is None or row.get('usage_complete') is False
+    return list(groups.values())
+
+
 def _quotas(service, resources, usage):
     from .quota_observations import qwen_cli
 
@@ -107,4 +131,6 @@ def overview(service, days=7):
     rows = [dict(row) for row in records if row['visible']] + partner_tasks
     rows.sort(key=lambda row: (-row['activity_at'], row['id']))
     partners, api_providers = partner_catalog()
-    return {'days': days, 'partners': partners, 'api_providers': api_providers, 'totals': totals, 'tasks': rows[:6], 'task_count': len(rows), 'quotas': quotas}
+    return {'days': days, 'partners': partners, 'api_providers': api_providers,
+            'model_summaries': model_summaries(receipts, partners, api_providers),
+            'totals': totals, 'tasks': rows[:6], 'task_count': len(rows), 'quotas': quotas}

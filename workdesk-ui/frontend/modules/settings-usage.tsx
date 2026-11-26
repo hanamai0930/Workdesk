@@ -29,6 +29,7 @@ type QuotaWindow = { duration_minutes: number | null; remaining_percent: number 
 export type Usage = {
   quotas: Quota[];
   partners?:Partner[];api_providers?:APIProvider[];
+  model_summaries?:{id:string;model:string;provider:string;source_label:string;tokens:number|null;partial:boolean}[];
 };
 
 const count = new Intl.NumberFormat('zh-CN');

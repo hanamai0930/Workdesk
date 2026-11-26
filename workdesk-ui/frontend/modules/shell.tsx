@@ -7,7 +7,33 @@ import { formatMoney } from '../lib/format';
 import { coreClient, type InstanceIdentity } from '../core/client';
 
 const quotaNumber=new Intl.NumberFormat('zh-CN');
-const quotaTime=new Intl.DateTimeFormat('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Shanghai'});
+
+type PopupBalanceGroup={id:string;name:string;source:string;lines:Set<string>;balance?:{text:string;exact:string;at:number}};
+function popupBalances(data:Usage|null){
+  const groups=new Map<string,PopupBalanceGroup>();
+  for(const quota of data?.quotas||[]){
+    const provider=quota.api_provider||quota.provider;
+    const name=data?.api_providers?.find(item=>item.id===provider)?.name||data?.partners?.find(item=>item.id===provider)?.name||quota.label;
+    const source=quota.legacy||!quota.route?'历史连接':quota.route==='api'?`${name} API`:'官方账号';
+    const id=provider+':'+source;
+    const group:PopupBalanceGroup=groups.get(id)||{id,name,source,lines:new Set<string>()};
+    const main=(quota.buckets||[]).find(bucket=>bucket.limit_id==='codex')||quota.buckets?.[0];
+    for(const window of [main?.primary,main?.secondary])if(window?.remaining_percent!=null){
+      const duration=window.duration_minutes===10080?'每周':window.duration_minutes===300?'5 小时':window.duration_minutes?`${quotaNumber.format(window.duration_minutes/60)} 小时`:'订阅';
+      group.lines.add(`${duration}剩余 ${quotaNumber.format(window.remaining_percent)}%`);
+    }
+    if(main?.credits?.unlimited)group.lines.add('Credits 不限量');
+    else if(main?.credits?.balance!=null)group.lines.add(`${quotaNumber.format(main.credits.balance)} Credits`);
+    const cash=quota.console_snapshots?.find(snapshot=>snapshot.source==='cash');
+    const available=(quota.balances||[]).map(balance=>({amount:balance.total_balance,currency:balance.currency,at:quota.official_at||0}));
+    if(cash)available.push({amount:cash.rows.available,currency:cash.rows.currency,at:cash.observed_at});
+    for(const balance of available)if(balance.amount!=null&&String(balance.amount).trim()&&Number.isFinite(Number(balance.amount))&&(!group.balance||balance.at>group.balance.at))group.balance={text:'可用余额 '+formatMoney(balance.amount,balance.currency),exact:balance.currency+' '+balance.amount,at:balance.at};
+    const free=quota.console_snapshots?.find(snapshot=>snapshot.source==='free');
+    for(const row of free?.rows||[])if(row.remaining!=null)group.lines.add(`${row.model} 剩余 ${quotaNumber.format(row.remaining)} Tokens`);
+    if(group.lines.size||group.balance)groups.set(id,group);
+  }
+  return [...groups.values()];
+}
 
 const CoreWorkspace = lazy(() => import('../core/workspace'));
 
@@ -66,6 +92,7 @@ function QuotaPopup(){
   const [loading,setLoading]=useState(false);
   const [message,setMessage]=useState('');
   const [readState,setReadState]=useState<'reading'|'ready'|'failed'>('reading');
+  const balances=popupBalances(data),models=data?.model_summaries||[];
   useEffect(()=>{
     if(!open)return;
     const controller=new AbortController();
@@ -110,39 +137,16 @@ function QuotaPopup(){
       </header>
       {readState==='reading'&&<p role="status">正在读取额度…</p>}
       {readState==='failed'&&<p role="status">{data?'读取失败，以下为上次读取的额度。':'暂时无法读取额度。'} 可点击刷新重试。</p>}
-      {data?.quotas.map(quota=>{
-        const buckets=quota.buckets??[];
-        const main=buckets.find(bucket=>bucket.limit_id==='codex')??buckets[0];
-        const windows=[main?.primary,main?.secondary].filter(window=>window?.remaining_percent!=null);
-        const free=quota.console_snapshots?.find(snapshot=>snapshot.source==='free');
-        const cash=quota.console_snapshots?.find(snapshot=>snapshot.source==='cash');
-        const input=quota.usage?.input_tokens,output=quota.usage?.output_tokens;
-        const tokenUsage=input!=null||output!=null?quotaNumber.format((input??0)+(output??0))+' Tokens':null;
-        const lines: {text:string;exact?:string;secondary?:boolean}[]=[
-          ...windows.map(window=>({text:`${window?.duration_minutes===10080?'每周':window?.duration_minutes===300?'5 小时':'订阅'}剩余 ${quotaNumber.format(window!.remaining_percent!)}%`,exact:undefined})),
-          ...(main?.credits?.balance!=null?[{text:quotaNumber.format(main.credits.balance)+' Credits',exact:undefined}]:[]),
-          ...(quota.balances??[]).map(balance=>({text:'可用金额 '+formatMoney(balance.total_balance,balance.currency),exact:balance.currency+' '+balance.total_balance})),
-          ...(cash?[
-            {text:'可用额度 '+formatMoney(cash.rows.available,cash.rows.currency),exact:cash.rows.currency+' '+cash.rows.available},
-            {text:'现金余额 '+formatMoney(cash.rows.cash,cash.rows.currency),exact:cash.rows.currency+' '+cash.rows.cash,secondary:true},
-            {text:'阿里云账单 · '+quotaTime.format(cash.observed_at*1000)+' 查询',secondary:true},
-          ]:[]),
-          ...(free?.rows??[]).flatMap(row=>row.remaining==null?[]:[{text:`${row.model} 剩余 ${quotaNumber.format(row.remaining)} Tokens`,exact:undefined}]),
-          ...(free?[{text:'百炼免费额度 · '+quotaTime.format(free.observed_at*1000)+' 查询',secondary:true}]:[]),
-          ...(quota.official_at!=null?[{text:'官方查询 · '+quotaTime.format(quota.official_at*1000),secondary:true}]:[]),
-        ];
-        const empty=quota.refresh_status==='FAILED'?'最近查询失败，尚无官方读数':
-          quota.provider==='qwen'?(quota.console_sources?.length?'尚未查询，请在明细中查询官方额度':'请在明细中查看查询工具与连接配置'):
-          quota.refresh?'尚未读取官方额度，可刷新查询':'尚未配置可查询的连接，请查看明细';
-        return <div key={quota.provider} className="wd-quota-popup-row">
-          <strong>{quota.label}</strong><div>
-            {lines.length?lines.map(line=>line.secondary?<small key={line.text} title={line.exact}>{line.text}</small>:<span key={line.text} title={line.exact}>{line.text}</span>):
-              <span>{empty}</span>}
-            {lines.length>0&&quota.refresh_status==='FAILED'&&<small>最近刷新失败，以上为上次查询结果</small>}
-            {tokenUsage&&<small>近 7 天已记录 {tokenUsage}</small>}
-          </div>
-        </div>;
-      })}
+      {models.map(model=><div key={model.id} className="wd-quota-popup-row" data-model-summary={model.id}>
+        <div className="wd-quota-popup-heading"><strong>{model.model}</strong>{model.partial&&<small>部分记录</small>}</div>
+        <small>来源：{model.source_label}</small><span>近 7 天已记录 {model.tokens==null?'—':quotaNumber.format(model.tokens)} Tokens</span>
+      </div>)}
+      {balances.map(group=><div key={group.id} className="wd-quota-popup-row" data-quota-source={group.id}>
+        <strong>{group.name}</strong><small>来源：{group.source}</small>
+        {group.balance&&<span title={group.balance.exact}>{group.balance.text}</span>}
+        {[...group.lines].map(line=><span key={line}>{line}</span>)}
+      </div>)}
+      {readState==='ready'&&!models.length&&!balances.length&&<p>暂无用量。</p>}
       {message&&<p role="status">{message}</p>}
       <a href="#settings/usage" onClick={()=>panel.current?.hidePopover()}>用量与预算明细</a>
     </div>
