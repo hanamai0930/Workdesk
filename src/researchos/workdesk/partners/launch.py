@@ -53,12 +53,64 @@ def _environment(home: Path, entry: list[str]):
     return env
 
 
-def _module_uri(name: str):
-    helper_path = str(Path(__file__).with_name(name).resolve())
+def _file_uri(path: Path):
+    helper_path = str(path.resolve())
     # Frozen Windows snapshots use the extended-length path prefix.
     if helper_path.startswith("\\\\?\\"):
         helper_path = helper_path[4:]
     return Path(helper_path).as_uri()
+
+
+def _module_uri(name: str):
+    return _file_uri(Path(__file__).with_name(name))
+
+
+def _deepseek_web_observer(home: Path):
+    # Web's official CLI has no --patch switch. Its profile loader automatically
+    # reads this user layer. Keep original user YAML bytes and edit only our own
+    # entry; compose inspects syntax without constructing !!js/custom values.
+    import yaml
+    helper = home / ".dsh/.workdesk/login-observer.mjs"
+    _write(helper, Path(__file__).with_name("deepseek_login.mjs").read_text(encoding="utf-8"))
+    uri = _file_uri(helper)
+    path = home / ".dsh/profiles/web/cordis.patch.yml"
+    original = path.read_bytes().decode("utf-8") if path.exists() else ""
+    def write_patch(text):
+        # Text-mode I/O would normalize or duplicate Windows CRLF sequences.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_name("." + path.name + "." + uuid.uuid4().hex)
+        temp.write_bytes(text.encode("utf-8"))
+        if os.name != "nt":
+            temp.chmod(0o600)
+        temp.replace(path)
+    document = yaml.compose(original, Loader=yaml.SafeLoader)
+    if document is not None and not isinstance(document, yaml.SequenceNode):
+        raise ValueError("The official DeepSeek Web profile patch must be a patch list")
+    for patch in document.value if document else []:
+        if not isinstance(patch, yaml.MappingNode):
+            continue
+        for key, inserts in patch.value:
+            if key.value != "insert" or not isinstance(inserts, yaml.SequenceNode):
+                continue
+            for entry in inserts.value:
+                if not isinstance(entry, yaml.MappingNode):
+                    continue
+                fields = {key.value: value for key, value in entry.value}
+                if fields.get("id") and fields["id"].value == "workdesk-login-state":
+                    name = fields.get("name")
+                    if not isinstance(name, yaml.ScalarNode):
+                        raise ValueError("The Workdesk DeepSeek login observer entry is invalid")
+                    if name.value != uri:
+                        write_patch(original[:name.start_mark.index] + json.dumps(uri) + original[name.end_mark.index:])
+                    return
+    patch = json.dumps({"insert": [{"id": "workdesk-login-state", "name": uri}]})
+    if document is not None and document.flow_style:
+        position = document.end_mark.index - 1
+        updated = original[:position] + (", " if document.value else "") + patch + original[position:]
+    else:
+        position = document.end_mark.index if document is not None else len(original)
+        updated = original[:position] + "\n# Workdesk official login observer\n- " + patch + "\n" + original[position:]
+    write_patch(updated)
 
 
 def build_launch(config: dict) -> LaunchSpec:
@@ -169,9 +221,7 @@ def build_launch(config: dict) -> LaunchSpec:
     elif partner == "deepseek":
         if mode == "login":
             argv += ["--profile", "web", "--host", "127.0.0.1", "--port", "0", "--no-open"]
-            overlay = home / ".dsh/.workdesk/login-state.patch.yml"
-            _write(overlay, json.dumps([{"insert": [{"id": "workdesk-login-state", "name": _module_uri("deepseek_login.mjs")}]}]))
-            argv += ["--patch", str(overlay)]
+            _deepseek_web_observer(home)
             env["WORKDESK_AUTH_EVENT_TOKEN"] = uuid.uuid4().hex
             protocol = "login-text"
             limitations.append("Official Web profile provides account login; process stays open until explicitly stopped")

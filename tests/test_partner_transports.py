@@ -221,7 +221,7 @@ sys.exit(7)
 
     def test_login_launch_uses_native_account_sites(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for partner,options,expected in [('codex',{},'app-server'),('deepseek',{},'login-state.patch.yml'),
+            for partner,options,expected in [('codex',{},'app-server'),('deepseek',{},'--profile web'),
                     ('qwen',{},'--acp'),('gemini',{},'--experimental-acp'),('claude',{'auth_method':'claudeai'},'--claudeai'),
                     ('grok',{'auth_method':'oauth'},'--oauth'),('kimi',{'region':'mainland-cn'},'mainland-cn'),
                     ('glm',{'provider':'bigmodel'},'bigmodel')]:
@@ -230,6 +230,24 @@ sys.exit(7)
                 self.assertIn(expected,' '.join(spec.argv))
                 self.assertNotIn('DEEPSEEK_API_KEY',spec.env)
                 if partner=='glm':self.assertIn('--json',spec.argv)
+
+    def test_deepseek_web_profile_overlay_preserves_user_patch(self):
+        import yaml
+        for content in ('# Official user selection\r\n- id: agent-default-model\r\n  config:\r\n    provider: deepseek-account\r\n    model: saved-account-model\r\n    extra: !!js process.env.PRIVATE_SETTING\r\n',
+                        '[{"id":"agent-default-model","config":{"model":"saved-account-model"}}]\n'):
+            with tempfile.TemporaryDirectory() as tmp:
+                home=Path(tmp)/'home';patch=home/'.dsh/profiles/web/cordis.patch.yml'
+                patch.parent.mkdir(parents=True);patch.write_bytes(content.encode('utf8'))
+                config={'partner_id':'deepseek','mode':'login','route':'account','entry':[sys.executable],
+                        'home':str(home),'workspace':tmp}
+                spec=build_launch(config);first=patch.read_bytes().decode('utf8')
+                self.assertNotIn('--patch',spec.argv)
+                if content.startswith('#'):self.assertTrue(first.startswith(content))
+                else:self.assertIn(content.rstrip()[:-1],first)
+                self.assertEqual(len(yaml.compose(first).value),2)
+                build_launch(config)
+                self.assertEqual(first,patch.read_bytes().decode('utf8'))
+                self.assertTrue((home/'.dsh/.workdesk/login-observer.mjs').is_file())
     def test_gemini_tool_identity_and_rejection(self):
         value = gemini_request({'contents': [
             {'role': 'model', 'parts': [{'functionCall': {'id': 'first', 'name': 'read', 'args': {'path': 'a'}}},
