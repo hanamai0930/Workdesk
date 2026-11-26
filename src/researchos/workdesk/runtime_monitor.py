@@ -12,7 +12,7 @@ _PARTNER_TERMINAL={'COMPLETED','FAILED','FAILED_NO_SEND','CANCELLED','STOPPED_RU
 def _partner_row(run,accounts):
     account=accounts.get(run.get('account_id'),{})
     connection=run.get('connection_snapshot') or {}
-    pending=run.get('pending_requests') or []
+    pending=[] if run.get('state') in _PARTNER_TERMINAL else run.get('pending_requests') or []
     return {'id':run['id'],'kind':'partner_run','href':'#work/partners/run/'+run['id'],
             'title':str(run.get('prompt') or '伙伴工作')[:160],'partner_id':run.get('partner_id'),'provider':run.get('partner_id'),
             'account_id':run.get('account_id'),'account_label':account.get('label'),'route':connection.get('route'),
