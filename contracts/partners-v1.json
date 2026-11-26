@@ -45,7 +45,9 @@
     "/api/v2/accounts",
     "/api/v2/connections",
     "/api/v2/component-operations",
-    "/api/v2/partner-runs"
+    "/api/v2/partner-runs",
+    "/api/v2/partner-runs/{id}",
+    "/api/v2/partner-runs/{id}/events?after={seq}"
   ],
   "worker": {
     "transport": "inherited-json-lines",
@@ -63,5 +65,12 @@
   "unknown_no_resend": true,
   "native_execution": "OFFICIAL_AGENT; NO_REPLACEMENT_LOOP",
   "official_auth": "HUMAN_MANAGED; NO_ACCOUNT_SWITCH_OR_RESET",
-  "component_removal": "MANAGED_EXACT_RELEASE_ONLY; REFERENCES_CHECKED; USER_DATA_RETAINED"
+  "component_removal": "MANAGED_EXACT_RELEASE_ONLY; REFERENCES_CHECKED; USER_DATA_RETAINED",
+  "unified_work_record": "partner_run; SAME_RUN_ID; MODE_RUN_ONLY; PROJECT_AND_NATIVE_USAGE_BOUND",
+  "run_admission": "OPTIONAL_CONNECTION_REVISION_MUST_MATCH_WHEN_SUPPLIED; FREEZE_CURRENT_BINDING",
+  "reconcile_resolutions": {
+    "accept_received_result": "EXPLICIT; CONFIRMED_LOCAL_EXIT; SAVED_MATCHING_OFFICIAL_NATIVE_TURN; NO_STOP_INTENT; NO_RESEND",
+    "close_local_tracking": "EXPLICIT; CONFIRMED_LOCAL_EXIT; REMOTE_OUTCOME_REMAINS_UNKNOWN"
+  },
+  "request_intent_count": "OBSERVED_GATEWAY_INTENTS; NOT_BILLING_COUNT"
 }

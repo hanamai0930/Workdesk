@@ -136,6 +136,10 @@
     window.WorkdeskSettingsPreferences?.remember(location.hash.slice(1)||'chat');
     try{
       const mode=location.hash.startsWith('#chat')||!location.hash||location.hash==='#home'?'chat':'work';
+      if(mode==='work'&&parts[0]==='partners'){
+        v.mode='work';v.detail=null;v.dialogue=null;v.activeChat=null;v.mobileSidebar=false;v.workLoading=false;
+        shell();window.WorkdeskReact.partnerWork($('#main'),{runId:parts[1]==='run'?parts[2]:undefined});renderSidebar();return;
+      }
       // Capture the previous composer before changing modes. Refresh drafts and
       // read lightweight Work catalogs in parallel; never dispatch from a read.
       const ready=mode==='work'?Promise.all([features.beforeRender(),load({refresh:false,generation})]):features.beforeRender();

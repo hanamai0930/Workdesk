@@ -168,6 +168,9 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 		after, _ := strconv.ParseInt(q.Get("after"), 10, 64)
 		return a.partnerRunEvents(id, after)
 	}
+	if strings.HasPrefix(path, "/api/v2/partner-runs/") {
+		return a.partnerRun(strings.TrimPrefix(path, "/api/v2/partner-runs/"))
+	}
 	limit := bounded(q.Get("limit"), 50, 200)
 	switch {
 	case path == "/api/v2/projects":
@@ -248,6 +251,8 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 
 const recordUnion = `SELECT id,'task' AS kind,title,project_id,state,1 AS revision,updated FROM tasks UNION ALL SELECT id,'work_item' AS kind,title,project_id,state,revision,updated FROM work_items UNION ALL SELECT id,'chat' AS kind,COALESCE(json_extract(data,'$.title'),'Chat') AS title,json_extract(data,'$.project') AS project_id,'SAVED' AS state,COALESCE(json_extract(data,'$.revision'),1) AS revision,updated FROM collaboration WHERE kind='ui_chat' AND COALESCE(json_extract(data,'$.deleted'),0)=0`
 
+const partnerRecordUnion = ` UNION ALL SELECT id,'partner_run' AS kind,substr(COALESCE(json_extract(data,'$.prompt'),'伙伴工作'),1,120) AS title,json_extract(data,'$.project_id') AS project_id,json_extract(data,'$.state') AS state,revision,updated FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.mode')='run'`
+
 type recordCursor struct {
 	Time float64 `json:"time"`
 	Kind string  `json:"kind"`
@@ -270,7 +275,15 @@ func (a *App) records(cursor string, limit int) (any, error) {
 		args = append(args, c.Time, c.Time, c.Kind, c.Kind, c.ID)
 	}
 	args = append(args, limit+1)
-	rows, e := a.query("SELECT * FROM ("+recordUnion+")"+where+" ORDER BY updated DESC,kind DESC,id DESC LIMIT ?", args...)
+	union := recordUnion
+	schema, e := a.DB.Schema()
+	if e != nil {
+		return nil, e
+	}
+	if schema == "3" {
+		union += partnerRecordUnion
+	}
+	rows, e := a.query("SELECT * FROM ("+union+")"+where+" ORDER BY updated DESC,kind DESC,id DESC LIMIT ?", args...)
 	if e != nil {
 		return nil, e
 	}
@@ -299,8 +312,16 @@ func (a *App) record(identity string) (any, error) {
 	if len(parts) == 2 {
 		kind, id = parts[0], parts[1]
 	}
-	queries := map[string]string{"task": "SELECT * FROM tasks WHERE id=?", "work_item": "SELECT * FROM work_items WHERE id=?", "chat": "SELECT * FROM collaboration WHERE kind='ui_chat' AND id=?"}
-	for _, candidate := range []string{"task", "work_item", "chat"} {
+	queries := map[string]string{"task": "SELECT * FROM tasks WHERE id=?", "work_item": "SELECT * FROM work_items WHERE id=?", "chat": "SELECT * FROM collaboration WHERE kind='ui_chat' AND id=?", "partner_run": "SELECT * FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.mode')='run' AND id=?"}
+	candidates := []string{"task", "work_item", "chat"}
+	schema, e := a.DB.Schema()
+	if e != nil {
+		return nil, e
+	}
+	if schema == "3" {
+		candidates = append(candidates, "partner_run")
+	}
+	for _, candidate := range candidates {
 		if kind != "" && kind != candidate {
 			continue
 		}

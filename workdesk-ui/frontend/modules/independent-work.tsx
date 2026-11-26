@@ -24,6 +24,7 @@ export function IndependentProvider({v,names,isLocked}:any){
     <NativeSelect key={v.provider} id="wb-provider" aria-label="选择工作端" className="wk-model-select" defaultValue={v.provider} disabled={isLocked||v.workLoading||v.busy}>
       {Object.entries(names).map(([id,name]:any)=><option key={id} value={id}>{name}</option>)}
     </NativeSelect>
+    {!isLocked && <a className="wk-independent-side-link" href="#work/partners">使用已保存伙伴连接</a>}
     {isLocked&&<Lock className="wk-lock" aria-label="工作端已固定"/>}
   </div>;
 }

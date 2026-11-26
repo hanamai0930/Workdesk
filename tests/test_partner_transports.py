@@ -62,6 +62,91 @@ class Transports(unittest.TestCase):
         self.assertEqual(value['tools'][0]['function']['parameters']['type'], 'object')
         with self.assertRaises(ProtocolUnsupported):
             gemini_request({'tools': [{'googleSearch': {}}]}, 'deepseek-flash')
+        # Explicit sampling choices have no equivalent in DeepSeek's API.
+        with self.assertRaisesRegex(ProtocolUnsupported, 'topK'):
+            gemini_request({'generationConfig': {'topK': 64}}, 'deepseek-flash')
+
+    def test_gemini_native_preset_preserves_explicit_settings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / 'gemini'
+            config = {'partner_id': 'gemini', 'mode': 'run', 'route': 'api', 'entry': [sys.executable],
+                      'home': str(home), 'workspace': tmp, 'model': 'deepseek-flash',
+                      'gateway_url': 'http://127.0.0.1:12345', 'gateway_token': 'EPHEMERAL'}
+            spec = build_launch(config)
+            path = home / '.gemini/settings.json'
+            settings = json.loads(path.read_text('utf-8'))
+            preset = settings['modelConfigs']['customAliases']['chat-base']['modelConfig']['generateContentConfig']
+            self.assertNotIn('topK', preset)
+            self.assertEqual(preset['topP'], 0.95)
+            self.assertTrue(spec.limitations)
+            preset['topK'] = 32
+            settings['modelConfigs']['customOverrides'] = [{'match': {'model': 'x'}, 'modelConfig': {'generateContentConfig': {'topK': 12}}}]
+            path.write_text(json.dumps(settings), encoding='utf-8')
+            build_launch(config)
+            self.assertEqual(json.loads(path.read_text('utf-8'))['modelConfigs'], settings['modelConfigs'])
+
+    def test_native_host_reads_do_not_create_human_inputs(self):
+        from researchos.workdesk.partners.worker import PartnerWorker
+        class Rpc:
+            def __init__(self): self.sent = []
+            def send(self, value): self.sent.append(value)
+        for partner, protocol, method in [('glm', 'zcode', 'session/requestRuntimePreferences'),
+                                           ('glm', 'zcode', 'session/readReplyLanguage'),
+                                           ('qwen', 'acp', 'craft/drainMidTurnQueue')]:
+            events = []
+            worker = PartnerWorker({'partner_id': partner, 'session_id': 'native-session'}, events.append)
+            worker.spec = type('Spec', (), {'protocol': protocol})()
+            worker.rpc = Rpc()
+            worker._native_message({'id': 0, 'method': method, 'params': {'sessionId': 'native-session'}})
+            response = worker.rpc.sent[-1]['result']
+            self.assertFalse(worker.requests)
+            self.assertFalse([e for e in events if e['type'] in ('input', 'approval')])
+            if partner == 'qwen': self.assertEqual(response, {'messages': [], 'hasQueuedPrompt': False})
+            elif method.endswith('readReplyLanguage'): self.assertEqual(response, {'language': None})
+            else:
+                self.assertTrue(response['nativeSearchEnhancementsEnabled'])
+                self.assertEqual(response['modelContextBudgetStrategy'], 'preflight-v1')
+            worker._native_message({'id': 1, 'method': method, 'params': {'sessionId': 'different-session'}})
+            self.assertEqual(worker.rpc.sent[-1]['error']['code'], -32602)
+
+    def test_native_approval_prefers_allow_once(self):
+        from researchos.workdesk.partners.worker import PartnerWorker
+        events, sent = [], []
+        worker = PartnerWorker({'partner_id': 'grok'}, events.append)
+        worker.spec = type('Spec', (), {'protocol': 'acp'})()
+        worker.rpc = type('Rpc', (), {'send': lambda _, message: sent.append(message)})()
+        worker._native_message({'id': 0, 'method': 'session/request_permission', 'params': {'options': [
+            {'kind': 'allow_always', 'optionId': 'all'}, {'kind': 'allow_once', 'optionId': 'once'}]}})
+        worker.control({'action': 'approval', 'request_id': '0', 'decision': 'allow'})
+        self.assertEqual(sent[-1]['result']['outcome']['optionId'], 'once')
+
+    def test_acp_login_method_choice_roundtrip(self):
+        from researchos.workdesk.partners.worker import PartnerWorker, NativeRejected
+        methods = [{'id': 'first', 'name': 'Personal'}, {'id': 'second', 'name': 'Organization'}]
+        for value in ('second', 'Organization', '2', '"second"', '{"value":"second"}',
+                      '{"auth_method":"second"}', {'id': 'second'}):
+            events, calls = [], []
+            worker = PartnerWorker({'partner_id': 'gemini', 'mode': 'login'}, events.append)
+            worker.spec = type('Spec', (), {'partner_id': 'gemini'})()
+            class Rpc:
+                def request(self, method, params=None, **kwargs):
+                    calls.append((method, params))
+                    return {'authMethods': methods} if method == 'initialize' else {}
+            worker.rpc = Rpc()
+            thread = threading.Thread(target=worker._acp)
+            thread.start()
+            for _ in range(100):
+                if any(e['type'] == 'login' for e in events): break
+                threading.Event().wait(.01)
+            login = next(e for e in events if e['type'] == 'login')
+            self.assertEqual(login['options'][1], {'value': 'second', 'label': 'Organization'})
+            with self.assertRaises(NativeRejected):
+                worker.control({'action': 'input', 'request_id': 'auth-method', 'text': 'absent'})
+            worker.control({'action': 'input', 'request_id': 'auth-method', 'text': value})
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(calls[-1], ('authenticate', {'methodId': 'second'}))
+            self.assertTrue(next(e for e in events if e['type'] == 'result')['authenticated'])
 
     def test_gateway_native_and_gemini_stream(self):
         requests, events = [], []

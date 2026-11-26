@@ -136,3 +136,58 @@ func TestContextCancellationStopsVenvLauncherAndItsChildOnly(t *testing.T) {
 	}
 	t.Logf("launcher=%d actual-parent=%d child-launcher=%d actual-child=%d; whole-tree exit confirmed", cmd.Process.Pid, parent.PID, parent.LauncherPID, child.PID)
 }
+
+func TestWaitRechecksOwnedChildrenAfterNormalParentExit(t *testing.T) {
+	python := fixturePython(t)
+	marker := filepath.Join(t.TempDir(), "remaining-child.json")
+	childCode := "import json,os,sys,time\nfrom pathlib import Path\nPath(sys.argv[1]).write_text(json.dumps({'pid':os.getpid()}))\nwhile True: time.sleep(.05)"
+	parentCode := "import subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\ndeadline=time.monotonic()+4\nwhile not Path(sys.argv[2]).exists():\n if time.monotonic()>deadline: sys.exit(9)\n time.sleep(.01)\nsys.exit(0)"
+	cmd := exec.Command(python, "-c", parentCode, childCode, marker)
+	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
+	owned, err := Start(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owned.Close()
+	var child struct {
+		PID int `json:"pid"`
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		raw, readErr := os.ReadFile(marker)
+		if readErr == nil && json.Unmarshal(raw, &child) == nil && child.PID > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("remaining child never started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(child.PID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(handle)
+	if err = owned.Wait(); err == nil || owned.ExitConfirmed() {
+		t.Fatalf("parent exit incorrectly proved whole-tree exit: %+v %v", owned.Identity(), err)
+	}
+	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 0 {
+		t.Fatalf("fixture parent failed instead of leaving a child: %v", cmd.ProcessState)
+	}
+	if active, ok := owned.Identity()["active_processes"].(uint32); !ok || active == 0 {
+		t.Fatalf("missing remaining-child proof: %+v", owned.Identity())
+	}
+	if err = owned.Terminate(); err != nil {
+		t.Fatal(err)
+	}
+	if err = owned.Wait(); err != nil {
+		t.Fatalf("earlier Job timeout poisoned successful recheck: %v", err)
+	}
+	if !owned.ExitConfirmed() || owned.Identity()["active_processes"] != uint32(0) {
+		t.Fatalf("cleanup has no complete-tree proof: %+v", owned.Identity())
+	}
+	if event, err := windows.WaitForSingleObject(handle, 3000); err != nil || event != windows.WAIT_OBJECT_0 {
+		t.Fatalf("remaining child survived cleanup: %d %v", event, err)
+	}
+	t.Logf("normal parent exit preserved; child %d stopped by exact Job and zero-active proof rechecked", child.PID)
+}

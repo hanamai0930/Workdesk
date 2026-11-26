@@ -6,6 +6,7 @@ import { Input } from '../components/ui/input';
 import { NativeSelect } from '../components/ui/native-select';
 import { Textarea } from '../components/ui/textarea';
 import { coreClient, CoreRequestError } from '../core/client';
+import { PartnerRunList, type PartnerRun } from '../core/partner-runtime';
 import './partners.css';
 
 type Support = boolean | string | { state?: string; supported?: boolean; reason?: string; source?: string };
@@ -13,8 +14,6 @@ export type Partner = { id: string; name: string; account_support?: Support; api
 export type PartnerRelease = { id: string; component_id: string; partner_id?: string; version: string; path: string; state: string; entry?: string[]; managed?: boolean };
 export type PartnerAccount = { id: string; partner_id: string; label: string; kind: string; state: string; revision: number; login_url?: string; user_code?: string; instructions?: string };
 export type PartnerConnection = { id: string; partner_id: string; release_id: string; route: 'account' | 'api'; account_id: string; model: string; options?: Record<string, unknown>; state: string; revision: number };
-type PendingRequest = { id: string; kind: string; message?: string; options?: unknown[] };
-type PartnerRun = { id: string; partner_id?: string; connection_id?: string; state: string; model?: string; account_label?: string; output?: string; error?: string; pending_requests?: PendingRequest[]; local_exit_confirmed?: boolean; remote_state?: string; explicit_local_tracking_closed?: boolean };
 type PartnerOperation = { id: string; kind: string; partner_id?: string; account_id?: string; state: string; error?: string; login_url?: string; user_code?: string; instructions?: string };
 export type PartnersSnapshot = { partners: Partner[]; components: PartnerRelease[]; accounts: PartnerAccount[]; connections: PartnerConnection[]; operations: PartnerOperation[]; runs: PartnerRun[] };
 type Receipt = { account_id?: string; connection_id?: string; run_id?: string; operation_id?: string; state?: string; login_url?: string; user_code?: string; instructions?: string };
@@ -67,6 +66,10 @@ function httpsLink(value?: string) {
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.href : undefined;
   } catch { return undefined; }
 }
+function loginLink(value?: string) {
+  if (!value) return undefined;
+  try { const url = new URL(value); return !url.username && !url.password && (url.protocol === 'https:' || (url.protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(url.hostname))) ? url.href : undefined; } catch { return undefined; }
+}
 function Panel({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return <Card className="wd-settings-card wd-partners-panel gap-0 py-0 shadow-none">
     <div className="wd-partners-panel-heading"><h3>{title}</h3>{aside}</div>{children}
@@ -76,7 +79,7 @@ function State({ value }: { value?: string }) {
   return <span className="wd-partners-state" data-state={value?.toUpperCase()}>{labelState(value)}</span>;
 }
 function LoginPrompt({ value }: { value: { login_url?: string; user_code?: string; instructions?: string } }) {
-  const href = httpsLink(value.login_url);
+  const href = loginLink(value.login_url);
   if (!href && !value.user_code && !value.instructions) return null;
   return <div className="wd-partners-login">
     {value.instructions && <p>{value.instructions}</p>}
@@ -100,9 +103,7 @@ export function SettingsPartners({ initialPartner }: { initialPartner?: string }
   const [apiKey, setApiKey] = useState('');
   const [applyAllApi, setApplyAllApi] = useState(true);
   const [remove, setRemove] = useState<PartnerRelease | null>(null);
-  const [closingRun, setClosingRun] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [input, setInput] = useState<Record<string, string>>({});
   const [loginReceipt, setLoginReceipt] = useState<({ account_id: string } & Receipt) | null>(null);
   const [uncertain, setUncertain] = useState(() => coreClient.uncertainCommands().filter(item => isRelatedCommand(item.kind)));
   const mounted = useRef(false);
@@ -174,7 +175,7 @@ export function SettingsPartners({ initialPartner }: { initialPartner?: string }
 
   useEffect(() => {
     savedSelection.current = null;
-    setForm(freshForm()); setRemove(null); setClosingRun(''); setKeyAccountId(''); setApiKey(''); setAccountLabel(''); setNotice(null); setPrompt('');
+    setForm(freshForm()); setRemove(null); setKeyAccountId(''); setApiKey(''); setAccountLabel(''); setNotice(null); setPrompt('');
   }, [partnerId]);
 
   useEffect(() => {
@@ -303,18 +304,12 @@ export function SettingsPartners({ initialPartner }: { initialPartner?: string }
         <Panel title="接通验证与运行">
           <div className="wd-partners-panel-body">
             <p className="wd-partners-note">先完成安装和账号配置，再用一次简短任务检查真实连接。API 验证会使用所选 DeepSeek 凭据并产生费用。</p>
-            <form className="wd-partners-run-form" onSubmit={event => { event.preventDefault(); if (!editingConnection || !savedConnectionSelected || !prompt.trim()) return; void perform('partner.run', { connection_id: editingConnection.id, prompt: prompt.trim() }, '验证已开始，请查看运行状态。'); }}>
+            <form className="wd-partners-run-form" onSubmit={event => { event.preventDefault(); if (!editingConnection || !savedConnectionSelected || !prompt.trim()) return; void perform('partner.run', { connection_id: editingConnection.id, connection_revision: editingConnection.revision, prompt: prompt.trim() }, '验证已开始，请查看运行状态。'); }}>
               <label>验证内容<Textarea value={prompt} disabled={blocked} placeholder="例如：在当前项目中写一份简短的连接确认文件。" onChange={event => setPrompt(event.currentTarget.value)}/></label>
               <div className="wd-partners-actions"><Button type="submit" disabled={blocked || !savedConnectionSelected || !prompt.trim()}>{editingConnection?.route === 'api' ? '开始 API 接通验证（付费）' : '开始账号接通验证'}</Button></div>
               {!savedConnectionSelected && <p className="wd-partners-note">请先在上方选择一个已保存连接；修改配置后需要先保存。</p>}
             </form>
-            <div className="wd-partners-runs">{runs.map(run => <div className="wd-partners-run" key={run.id}><div className="wd-partners-run-heading"><strong>{partner.name}{run.model ? ` ＋ ${run.model}` : ''}</strong><State value={run.state}/>{!stopped.has(run.state.toUpperCase()) && !isUnknownState(run.state) && <Button variant="outline" className="wd-settings-button" disabled={blocked || run.state === 'STOP_REQUESTED'} onClick={() => void perform('partner.stop', { run_id: run.id }, '已提交停止，请等待运行核对结果。')}>停止</Button>}{isUnknownState(run.state) && <Button variant="outline" className="wd-settings-button" disabled={busy || !loaded} onClick={() => void perform('partner.reconcile', { run_id: run.id }, '已核对原运行的本地退出证据，没有重新发送任务。')}>核对原运行</Button>}</div>
-              {run.account_label && <p className="wd-partners-note">账号：{run.account_label}</p>}{run.output && <div className="wd-partners-output">{run.output}</div>}{run.error && <p className="wd-partners-error">{run.error}</p>}
-              {run.explicit_local_tracking_closed === true && <p className="wd-partners-note">本地追踪已结束，远端结果仍未知。不会自动重新发送。</p>}
-              {isUnknownState(run.state) && run.local_exit_confirmed === false && <p className="wd-partners-note">尚未确认本地进程树退出，继续保留原运行。</p>}
-              {isUnknownState(run.state) && run.local_exit_confirmed === true && <div className="wd-partners-request"><p>本地进程退出已确认，远端请求结果仍未知。</p>{closingRun === run.id ? <div role="group" aria-label="确认结束本地追踪"><p>保留远端结果未知，结束本地追踪。此操作不会重发任务，也不代表远端已取消或费用已退回。</p><div className="wd-partners-actions"><Button variant="outline" className="wd-settings-button" disabled={busy} onClick={() => setClosingRun('')}>继续保留追踪</Button><Button disabled={busy || !loaded} onClick={() => void perform('partner.reconcile', { run_id: run.id, resolution: 'close_local_tracking' }, '已结束本地追踪，远端结果仍保留未知。', () => setClosingRun(''))}>确认结束本地追踪</Button></div></div> : <Button variant="outline" className="wd-settings-button" disabled={busy || !loaded} onClick={() => setClosingRun(run.id)}>保留远端结果未知，结束本地追踪</Button>}</div>}
-              {run.pending_requests?.map(request => <div className="wd-partners-request" key={request.id}><p>{request.message || (request.kind === 'approval' ? '官方端请求授权' : '官方端等待补充输入')}</p>{request.kind === 'approval' ? <div className="wd-partners-actions"><Button variant="outline" className="wd-settings-button" disabled={blocked} onClick={() => void perform('partner.approve', { run_id: run.id, request_id: request.id, decision: 'deny' }, '已返回拒绝意见。')}>拒绝</Button><Button disabled={blocked} onClick={() => void perform('partner.approve', { run_id: run.id, request_id: request.id, decision: 'allow' }, '已返回本次授权。')}>允许本次操作</Button></div> : <form onSubmit={event => { event.preventDefault(); const text = input[request.id]?.trim(); if (!text) return; void perform('partner.input', { run_id: run.id, request_id: request.id, text }, '补充内容已发送。', () => setInput(previous => ({ ...previous, [request.id]: '' }))); }}><label>补充内容<Textarea value={input[request.id] || ''} disabled={blocked} onChange={event => setInput(previous => ({ ...previous, [request.id]: event.currentTarget.value }))}/></label><Button type="submit" disabled={blocked || !input[request.id]?.trim()}>发送补充</Button></form>}</div>)}
-            </div>)}</div>
+            <PartnerRunList runs={runs} busy={busy} blocked={blocked} perform={perform} label={partner.name}/>
           </div>
         </Panel>
         {partner.sources?.some(source => !!httpsLink(source)) && <details className="wd-partners-sources"><summary>官方接入说明</summary>{partner.sources.filter(source => !!httpsLink(source)).map(source => <a key={source} href={httpsLink(source)} target="_blank" rel="noopener noreferrer">{new URL(source).hostname}<ExternalLink size={13}/></a>)}</details>}

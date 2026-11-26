@@ -183,27 +183,33 @@ func (o *Command) Terminate() error {
 func (o *Command) Wait() error {
 	o.waitOnce.Do(func() {
 		o.waitErr = o.cmd.Wait()
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			o.mu.Lock()
-			active, err := o.activeLocked()
-			o.mu.Unlock()
-			if err != nil {
-				o.waitErr = errors.Join(o.waitErr, fmt.Errorf("owned job exit could not be verified: %w", err))
-				return
-			}
-			if active == 0 && o.cmd.ProcessState != nil && o.cmd.ProcessState.Exited() {
-				o.confirmed.Store(true)
-				return
-			}
-			if time.Now().After(deadline) {
-				o.waitErr = errors.Join(o.waitErr, errors.New("owned job still has local processes; stop outcome is unknown"))
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
 	})
-	return o.waitErr
+	// Cache only the launcher's OS wait. A remaining-child timeout is an
+	// observation, not a permanent launcher failure: after scoped cleanup the
+	// same Job handle must be queryable again before its final proof is saved.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if o.confirmed.Load() {
+			return o.waitErr
+		}
+		o.mu.Lock()
+		active, err := o.activeLocked()
+		if err == nil && active == 0 && o.cmd.ProcessState != nil && o.cmd.ProcessState.Exited() {
+			o.confirmed.Store(true)
+		}
+		confirmed := o.confirmed.Load()
+		o.mu.Unlock()
+		if confirmed {
+			return o.waitErr
+		}
+		if err != nil {
+			return errors.Join(o.waitErr, fmt.Errorf("owned job exit could not be verified: %w", err))
+		}
+		if time.Now().After(deadline) {
+			return errors.Join(o.waitErr, errors.New("owned job still has local processes; stop outcome is unknown"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (o *Command) ExitConfirmed() bool { return o.confirmed.Load() }

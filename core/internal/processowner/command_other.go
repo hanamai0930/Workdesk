@@ -60,23 +60,24 @@ func (o *Command) Terminate() error {
 func (o *Command) Wait() error {
 	o.waitOnce.Do(func() {
 		o.waitErr = o.cmd.Wait()
-		deadline := time.Now().Add(5 * time.Second)
-		for {
-			err := syscall.Kill(-o.pid, 0)
-			// ProcessState is present only after Wait has reaped the child. A
-			// signal-terminated POSIX child is also ended, despite Exited()==false.
-			if err == syscall.ESRCH && o.cmd.ProcessState != nil {
-				o.confirmed.Store(true)
-				return
-			}
-			if time.Now().After(deadline) {
-				o.waitErr = errors.Join(o.waitErr, errors.New("owned process group exit is unconfirmed"))
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
 	})
-	return o.waitErr
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if o.confirmed.Load() {
+			return o.waitErr
+		}
+		err := syscall.Kill(-o.pid, 0)
+		// The parent is reaped once; its process group is checked again after
+		// scoped cleanup, without caching an earlier remaining-child timeout.
+		if err == syscall.ESRCH && o.cmd.ProcessState != nil {
+			o.confirmed.Store(true)
+			return o.waitErr
+		}
+		if time.Now().After(deadline) {
+			return errors.Join(o.waitErr, errors.New("owned process group exit is unconfirmed"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 func (o *Command) ExitConfirmed() bool { return o.confirmed.Load() }
 func (o *Command) Identity() map[string]any {

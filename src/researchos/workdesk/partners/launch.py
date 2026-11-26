@@ -89,7 +89,7 @@ def build_launch(config: dict) -> LaunchSpec:
             provider = "workdesk_deepseek"
             config_text = '\n'.join([
                 'model = ' + _text(model), 'model_provider = ' + _text(provider),
-                'forced_login_method = "api"', 'preferred_auth_method = "apikey"',
+                'forced_login_method = "api"',
                 '[model_providers.workdesk_deepseek]', 'name = "DeepSeek"',
                 'base_url = ' + _text(url), 'wire_api = "responses"',
                 'env_key = "WORKDESK_RUN_TOKEN"', 'requires_openai_auth = false',
@@ -116,7 +116,20 @@ def build_launch(config: dict) -> LaunchSpec:
             env["WORKDESK_RUN_TOKEN"] = token
         elif partner == "gemini":
             env.update(GOOGLE_GEMINI_BASE_URL=url, GEMINI_API_KEY=token)
-            _write(home / ".gemini/settings.json", {"security": {"auth": {"selectedType": "gemini-api-key"}}, "model": {"name": model}})
+            settings_path = home / ".gemini/settings.json"
+            settings = json.loads(settings_path.read_text(encoding="utf-8")) if settings_path.exists() else {}
+            settings.setdefault("security", {}).setdefault("auth", {})["selectedType"] = "gemini-api-key"
+            settings.setdefault("model", {})["name"] = model
+            # Official customAliases replace a built-in alias as a whole. The
+            # 0.71.1 chat-base preset includes topK=64, which DeepSeek cannot
+            # represent. Configure that default out before native serialization;
+            # preserve explicit user aliases/overrides so unsupported topK is
+            # still rejected by the gateway rather than silently discarded.
+            settings.setdefault("modelConfigs", {}).setdefault("customAliases", {}).setdefault("chat-base", {
+                "extends": "base", "modelConfig": {"generateContentConfig": {
+                    "thinkingConfig": {"includeThoughts": True}, "temperature": 1, "topP": 0.95}}})
+            _write(settings_path, settings)
+            limitations.append("GEMINI_NATIVE_CHAT_BASE_TOP_K_DEFAULT_REMOVED_FOR_DEEPSEEK; EXPLICIT_TOP_K_UNSUPPORTED")
             limitations += ["Google-hosted search/embedding are not substituted", "Token preflight is a labelled UTF-8 byte estimate"]
         elif partner == "kimi":
             _write(home / ".kimi-code/config.toml", '\n'.join(['default_model = "workdesk-deepseek"',

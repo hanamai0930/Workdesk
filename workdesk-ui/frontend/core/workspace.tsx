@@ -210,7 +210,7 @@ export default function CoreWorkspace({instance}: {instance: InstanceIdentity}) 
         <Button size="sm" variant="ghost" onClick={() => { artifactReads.current.cancel(); setPreview(null); setLogPage(null); logDecoder.current = null; }}>收起</Button></div>
         <pre>{preview.body.slice(0, previewLimit)}</pre>{preview.body.length > previewLimit ? <Button size="sm" variant="outline" onClick={() => setPreviewLimit(limit => limit + 12000)}>继续显示正文</Button> : logPage?.hasMore && <Button size="sm" variant="outline" onClick={() => showLog(logPage.job, logPage.log, logPage.next)}>继续读取日志</Button>}</section>}
       <details className="core-records"><summary>现有记录 · 本页 {records.length} 条</summary>
-        <ul>{records.map(row => <li key={row.kind + ':' + row.id}><button type="button" onClick={() => loadDetail(row)}>{row.title || row.id}</button><span>{stateLabel(row.state)}</span></li>)}</ul>
+        <ul>{records.map(row => <li key={row.kind + ':' + row.id}>{row.kind === 'partner_run' ? <a href={'#work/partners/run/' + encodeURIComponent(row.id)}>{row.title || row.id}</a> : <button type="button" onClick={() => loadDetail(row)}>{row.title || row.id}</button>}<span>{stateLabel(row.state)}</span></li>)}</ul>
         {!records.length && <p>暂无记录。</p>}
         <div className="core-paging"><Button size="sm" variant="outline" disabled={recordCursors.length < 2} onClick={() => loadRecords(recordCursors.at(-2)!, 'previous')}>上一页</Button>
           <span>第 {recordCursors.length} 页</span><Button size="sm" variant="outline" disabled={!recordPage.has_more || recordPage.cursor == null} onClick={() => loadRecords(recordPage.cursor!, 'next')}>下一页</Button></div>

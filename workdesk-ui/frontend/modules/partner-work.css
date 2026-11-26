@@ -1,0 +1,36 @@
+@scope ([data-ui-module="workbench"]) {
+  .wd-partner-work { display:grid; gap:20px; padding:24px; max-width:1180px; margin:0 auto; min-width:0; }
+  .wd-partner-work h1 { margin:0 0 8px; font-size:24px; font-weight:650; }
+  .wd-partner-work h2 { font-size:18px; font-weight:600; margin:0 0 12px; }
+  .wd-partner-work-header { display:flex; gap:15px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  .wd-partners-note { color:var(--wk-muted); font-size:13px; line-height:1.7; margin:0; overflow-wrap:anywhere; }
+  .wd-partners-error { color:light-dark(#a72b2b,#ffb4ad); font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+  .wd-partners-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .wd-partner-work-composer,.wd-partners-run,.wd-partner-work-history { border:1px solid var(--wk-line); background:var(--wk-bg); border-radius:12px; padding:18px; display:grid; gap:14px; min-width:0; }
+  .wd-partner-work-fields { display:grid; grid-template-columns:2fr 1fr; gap:14px; }
+  .wd-partner-work label { display:grid; gap:7px; min-width:0; font-size:13px; }
+  .wd-partner-work [data-slot="native-select-wrapper"] { width:100%; min-width:0; }
+  .wd-partner-work input,.wd-partner-work select,.wd-partner-work textarea { width:100%; min-width:0; }
+  .wd-partner-work-selection { font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+  .wd-partner-work-selection p { margin:0; }
+  .wd-partners-runs { display:grid; gap:12px; min-width:0; }
+  .wd-partners-run-heading { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .wd-partners-run-heading button { margin-left:auto; }
+  .wd-partners-state { font-size:12px; padding:2px 8px; border-radius:99px; background:var(--wk-soft); color:var(--wk-muted); }
+  .wd-partners-output { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.7; max-height:420px; overflow:auto; }
+  .wd-partners-request { padding:12px; border:1px solid var(--wk-line); background:var(--wk-soft); border-radius:8px; font-size:13px; line-height:1.7; }
+  .wd-partners-request p { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .wd-partners-request form { display:grid; gap:8px; }
+  .wd-partner-work-history ul { list-style:none; margin:0; padding:0; display:grid; gap:10px; }
+  .wd-partner-work-history li { display:flex; gap:12px; justify-content:space-between; align-items:baseline; font-size:13px; }
+  .wd-partner-work-history li a { overflow-wrap:anywhere; color:var(--wk-action); }
+  .wd-partner-work-history li span { flex:none; color:var(--wk-muted); }
+  .wd-partner-work-history form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; }
+  .wd-partner-runtime-usage { font-size:13px; line-height:1.7; }
+  .wd-partner-runtime-usage dl>div { display:flex; flex-wrap:wrap; gap:8px; }
+  .wd-partner-runtime-usage dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .wd-partner-native-events { font-size:13px; line-height:1.7; min-width:0; }
+  .wd-partner-native-events pre,.wd-partners-request pre { max-height:360px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; margin:8px 0; }
+  .wd-partner-native-events summary { cursor:pointer; overflow-wrap:anywhere; }
+  @media(max-width:650px) { .wd-partner-work { padding:12px; } .wd-partner-work-fields { grid-template-columns:minmax(0,1fr); } .wd-partner-work-composer,.wd-partners-run,.wd-partner-work-history { padding:12px; } .wd-partner-work-history li { flex-wrap:wrap; gap:3px; } }
+}

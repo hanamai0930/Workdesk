@@ -25,6 +25,8 @@
   definitions.settings.styles.push('../frontend/modules/settings-token-usage.css');
   definitions.settings.sources.push('../frontend/modules/partners.tsx');
   definitions.settings.styles.push('../frontend/modules/partners.css');
+  definitions.workbench.sources.push('../frontend/modules/partner-work.tsx');
+  definitions.workbench.styles.push('../frontend/modules/partner-work.css');
   // Native Work-only floating selectors; portal roots retain workbench scope.
   definitions.workbench.sources.push('../frontend/modules/work-model-picker.tsx');
   definitions.workbench.styles.push('../frontend/modules/work-model-picker.css');
@@ -72,7 +74,7 @@
     shared:{scripts:['app.js','appearance.js','ui-modules.js','ui-dialogs.js','support-common.js','settings-preferences.js'],styles:['style.css','workbench.css','appearance.css','management-navigation.css','../frontend/modules/conversation-scroll.css'],
       sources:['../index.html','../package.json','../pnpm-lock.yaml','../pnpm-workspace.yaml','../components.json','../tsconfig.json','../vite.config.ts',
         '../frontend/main.tsx','../frontend/bridge.d.ts','../frontend/styles.css','../frontend/lib/utils.ts','../frontend/lib/render.tsx',
-        '../frontend/core/client.ts','../frontend/core/legacy-loader.ts','../frontend/core/workspace.tsx','../frontend/core/workspace.css',
+        '../frontend/core/client.ts','../frontend/core/legacy-loader.ts','../frontend/core/workspace.tsx','../frontend/core/workspace.css','../frontend/core/partner-runtime.tsx',
         '../frontend/modules/shell.tsx','../frontend/components/template.tsx','../frontend/lib/format.ts',
         '../frontend/modules/conversation-scroll.tsx',
         '../frontend/components/safe-markdown.tsx','../frontend/components/safe-markdown.css',

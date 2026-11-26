@@ -122,6 +122,7 @@ class PartnerWorker:
         self.session_id = config.get("session_id") or (("sess_" + uuid.uuid4().hex) if config.get("partner_id") == "glm" else str(uuid.uuid4()))
         self.thread_id = self.turn_id = None
         self.requests = {}
+        self.pending_auth_methods = []
         self.done = threading.Event()
         self.stop_requested = threading.Event()
         self.completed = False
@@ -257,11 +258,17 @@ class PartnerWorker:
                 elif len(candidates) == 1:
                     selected = candidates[0]["id"]
             if not selected:
-                self.emit(type="login", instructions="选择官方账号登录方式", auth_methods=methods, request_id="auth-method")
+                self.pending_auth_methods = candidates
+                if not self.pending_auth_methods:
+                    raise NativeRejected("This official version advertises no account authentication method")
+                self.emit(type="login", instructions="选择官方账号登录方式，可填写名称或序号", auth_methods=candidates,
+                          options=[{"value": m["id"], "label": m.get("name") or m["id"]} for m in candidates],
+                          request_id="auth-method")
                 while not self.done.wait(.1):
                     selected = self.config.get("selected_auth_method")
                     if selected:
                         break
+                self.pending_auth_methods = []
             if not selected:
                 return
             reviewed_qwen_oauth = self.spec.partner_id == "qwen" and selected == "qwen-oauth"
@@ -427,6 +434,8 @@ class PartnerWorker:
         if method == "authenticate/update" and params.get("_meta", {}).get("authUri"):
             self.emit(type="login", login_url=params["_meta"]["authUri"], instructions="在官方页面登录并完成授权")
         if "id" in message and method:
+            if self._host_callback(message, method, params):
+                return
             self.requests[str(message["id"])] = message
             kind = "approval" if any(v in method.lower() for v in ("approval", "permission")) else "input"
             self.emit(type=kind, request_id=str(message["id"]), message=method, options=params.get("options"), native=params)
@@ -493,6 +502,34 @@ class PartnerWorker:
                 self.emit(type="error", error="Official ZCode turn failed", native=params)
                 self.done.set()
 
+    def _host_callback(self, message, method, params):
+        """Answer native host reads; these are neither prompts nor approvals."""
+        result = None
+        if self.spec.protocol == "zcode" and method == "session/requestRuntimePreferences":
+            # Exact fixed-release ZCode schema and its explicit old-host
+            # fallback defaults. Native search stays available and no operation
+            # permission is granted by this preferences response.
+            result = {"nativeSearchEnhancementsEnabled": True, "toolSearchMode": "off",
+                      "totalTokensReminderEnabled": False, "agentAlwaysBackgroundEnabled": True,
+                      "memoryEnabled": False, "askUserQuestionAutoResolutionEnabled": True,
+                      "modelContextBudgetStrategy": "preflight-v1"}
+        elif self.spec.protocol == "zcode" and method == "session/readReplyLanguage":
+            # Official protocol specifies null for a host without this setting.
+            result = {"language": None}
+        elif self.config.get("partner_id") == "qwen" and method == "craft/drainMidTurnQueue":
+            # Workdesk has no queued mid-turn guidance. This does not schedule
+            # another native turn or synthesize model content.
+            result = {"messages": [], "hasQueuedPrompt": False}
+        if result is None:
+            return False
+        if params.get("sessionId") != self.session_id:
+            self.rpc.send({"id": message["id"], "error": {"code": -32602, "message": "Host callback session identity mismatch"}})
+        else:
+            self.rpc.send({"id": message["id"], "result": result})
+            self.emit(type="event", kind="native_host_callback", method=method, response=result,
+                      source="OFFICIAL_FIXED_RELEASE_HOST_DEFAULTS")
+        return True
+
     def control(self, command):
         action = command.get("action")
         if action == "stop":
@@ -511,7 +548,7 @@ class PartnerWorker:
             self.emit(type="stopped", remote_state="STOP_REQUESTED_UNTIL_NATIVE_RECEIPT", local_exit_confirmed=False)
             self.done.set()
         elif action == "input" and command.get("request_id") == "auth-method":
-            self.config["selected_auth_method"] = command.get("auth_method") or command.get("text")
+            self.config["selected_auth_method"] = self._auth_method_selection(command.get("auth_method") or command.get("text"))
         elif action in {"approval", "input"} and command.get("request_id"):
             ident = str(command["request_id"])
             message = self.requests.pop(ident, None)
@@ -582,6 +619,30 @@ class PartnerWorker:
             raise NativeRejected("Uncorrelated live input requires the official native steer operation")
         else:
             raise NativeRejected("Unknown worker control action")
+
+    def _auth_method_selection(self, value):
+        methods = self.pending_auth_methods
+        if not methods:
+            raise NativeRejected("No official authentication choice is pending")
+        if isinstance(value, str):
+            value = value.strip()
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, (dict, str, int)) and not isinstance(parsed, bool):
+                    value = parsed
+            except ValueError:
+                pass
+        if isinstance(value, dict):
+            value = value.get("auth_method") or value.get("id") or value.get("value")
+        token = str(value).strip() if value is not None else ""
+        matches = [m for m in methods if token == m["id"]]
+        if not matches and token.isdecimal() and 1 <= int(token) <= len(methods):
+            matches = [methods[int(token) - 1]]
+        if not matches:
+            matches = [m for m in methods if token.casefold() == str(m.get("name", "")).casefold()]
+        if len(matches) != 1:
+            raise NativeRejected("请选择所列官方登录方式的名称或序号")
+        return matches[0]["id"]
 
     def close(self):
         if self.process and self.process.poll() is None:

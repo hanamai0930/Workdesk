@@ -84,6 +84,98 @@ func (a *App) savePartner(kind string, m map[string]any) error {
 func terminalPartner(state string) bool {
 	return state == "COMPLETED" || state == "FAILED" || state == "CANCELLED" || state == "STOPPED_RUNTIME" || state == "FAILED_NO_SEND"
 }
+
+// A received native result can be accepted after local ownership is proved,
+// but neither another session's result nor a user stop is a success receipt.
+func receivedPartnerTurnResult(run map[string]any) (map[string]any, error) {
+	if str(run["mode"]) != "run" || run["stop_requested"] == true || str(run["state"]) == "CANCELLED" || str(run["state"]) == "STOP_REQUESTED" {
+		return nil, errors.New("本次运行有停止意图或不属于官方工作回合，不能接收为成功")
+	}
+	result, ok := run["result"].(map[string]any)
+	if !ok || str(result["type"]) != "result" || str(result["completion_scope"]) != "OFFICIAL_NATIVE_TURN" || result["receipt_unknown"] == true {
+		return nil, errors.New("没有可接受的官方回合结果；保留未知，不重新发送")
+	}
+	for _, key := range []string{"run_id", "partner_id", "session_id"} {
+		expected := str(run[key])
+		if key == "run_id" {
+			expected = str(run["id"])
+		}
+		if expected == "" || str(result[key]) != expected {
+			return nil, errors.New("保存的官方结果与原运行、伙伴或会话身份不符")
+		}
+	}
+	return result, nil
+}
+
+// Both normal shutdown and an explicit acceptance use one transaction-bound
+// verification update. An old credential result never verifies a newer Key.
+func (a *App) completePartnerRun(s *storage.Session, run map[string]any, acceptance string) error {
+	if run["local_exit_confirmed"] != true {
+		return errors.New("未取得本地进程树退出证明")
+	}
+	if str(run["mode"]) == "run" {
+		if _, err := receivedPartnerTurnResult(run); err != nil {
+			return err
+		}
+		run["remote_state"] = "OFFICIAL_NATIVE_TURN_COMPLETED"
+	}
+	run["state"] = "COMPLETED"
+	run["result_acceptance"] = acceptance
+	if pending, ok := run["pending_requests"].([]any); ok && len(pending) > 0 {
+		run["requests_closed_by_native_completion"] = pending
+		run["pending_requests"] = []any{}
+	}
+	delete(run, "error")
+	if str(run["mode"]) != "run" {
+		return nil
+	}
+	connection, _ := run["connection_snapshot"].(map[string]any)
+	account, err := partnerObject(s, "account", str(run["account_id"]))
+	if err != nil {
+		return err
+	}
+	if str(account["partner_id"]) != str(run["partner_id"]) || str(account["state"]) == "DISCONNECTED" {
+		return nil
+	}
+	if str(connection["route"]) == "api" {
+		version := str(run["secret_version"])
+		if str(account["kind"]) != "deepseek_api" || version == "" || str(account["secret_version"]) != version {
+			return nil
+		}
+		account["state"] = "VERIFIED"
+		account["verified_run"] = run["id"]
+		account["verified_at"] = now()
+		account["verified_version"] = version
+		account["verified_secret_version"] = version
+		if err = putPartner(s, "account", account); err != nil {
+			return err
+		}
+	}
+	current, err := partnerObject(s, "connection", str(run["connection_id"]))
+	if err != nil {
+		return err
+	}
+	revisionMatches := number(current["revision"]) == number(run["connection_revision"])
+	// A prior implementation already verified this exact run and incremented
+	// the connection revision, before recording its credential version. Reuse
+	// that same result only while its saved combination is still unchanged.
+	if !revisionMatches && str(current["state"]) == "VERIFIED" && current["verified_run"] == run["id"] && current["model"] == connection["model"] && current["route"] == connection["route"] {
+		left, leftErr := json.Marshal(current["options"])
+		right, rightErr := json.Marshal(connection["options"])
+		revisionMatches = leftErr == nil && rightErr == nil && string(left) == string(right)
+	}
+	if !revisionMatches || str(current["account_id"]) != str(run["account_id"]) || str(current["partner_id"]) != str(run["partner_id"]) || str(current["release_id"]) != str(run["release_id"]) {
+		return nil
+	}
+	current["state"] = "VERIFIED"
+	current["verified_run"] = run["id"]
+	current["verified_at"] = now()
+	if str(connection["route"]) == "api" {
+		current["verified_secret_version"] = run["secret_version"]
+	}
+	return putPartner(s, "connection", current)
+}
+
 func (a *App) partnerBusy() bool {
 	a.mu.Lock()
 	active := len(a.partnerProcesses) > 0
@@ -139,6 +231,20 @@ func (a *App) partnersView(path string) (any, error) {
 	kinds := map[string]string{"/api/v2/accounts": "account", "/api/v2/connections": "connection", "/api/v2/component-operations": "operation", "/api/v2/partner-runs": "run"}
 	if k, ok := kinds[path]; ok {
 		rows, e := a.partnerObjects(k)
+		if e != nil {
+			return nil, e
+		}
+		if k == "run" || k == "connection" {
+			accounts, err := a.partnerObjects("account")
+			if err != nil {
+				return nil, err
+			}
+			if k == "run" {
+				e = a.decoratePartnerRuns(rows, accounts)
+			} else {
+				decoratePartnerConnections(rows, accounts)
+			}
+		}
 		key := map[string]string{"account": "accounts", "connection": "connections", "operation": "operations", "run": "runs"}[k]
 		return map[string]any{key: rows}, e
 	}
@@ -181,33 +287,26 @@ func (a *App) partnersView(path string) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	for _, run := range runs {
-		if c, ok := run["connection_snapshot"].(map[string]any); ok {
-			run["model"] = c["model"]
-		}
-		if observed := str(run["resolved_model"]); observed != "" {
-			run["model"] = observed
-		}
-		if result, ok := run["result"].(map[string]any); ok {
-			run["output"] = result["output"]
-			if run["output"] == nil {
-				run["output"] = result["text"]
-			}
-		}
-		for _, account := range accounts {
-			if account["id"] == run["account_id"] {
-				run["account_label"] = account["label"]
-				if str(run["mode"]) != "run" {
-					for _, key := range []string{"login_url", "user_code", "instructions"} {
-						if run[key] != nil {
-							account[key] = run[key]
-						}
-					}
-				}
-			}
+	if e = a.decoratePartnerRuns(runs, accounts); e != nil {
+		return nil, e
+	}
+	decoratePartnerConnections(connections, accounts)
+	verification := "WAITING_HUMAN_KEY"
+	verified := map[string]bool{}
+	for _, account := range accounts {
+		if str(account["kind"]) == "deepseek_api" && account["key_ready"] == true {
+			verification = "PENDING_CHECKS"
 		}
 	}
-	return map[string]any{"partners": components.Catalog(), "components": visibleReleases, "accounts": accounts, "connections": connections, "operations": operations, "runs": runs, "storage_schema": 3, "api_verification": "WAITING_HUMAN_KEY"}, nil
+	for _, connection := range connections {
+		if str(connection["route"]) == "api" && str(connection["state"]) == "VERIFIED" {
+			verified[str(connection["partner_id"])] = true
+		}
+	}
+	if len(verified) == len(components.Catalog()) {
+		verification = "VERIFIED"
+	}
+	return map[string]any{"partners": components.Catalog(), "components": visibleReleases, "accounts": accounts, "connections": connections, "operations": operations, "runs": runs, "storage_schema": 3, "api_verification": verification}, nil
 }
 
 func releaseEnabled(s *storage.Session, id string) error {
@@ -495,6 +594,9 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 				if str(connection["state"]) == "DISABLED" {
 					return errors.New("连接已停用")
 				}
+				if revision, supplied := p["connection_revision"]; supplied && number(revision) != number(connection["revision"]) {
+					return errors.New("连接配置已变化，请刷新后重新选择本次组合")
+				}
 				account, e = partnerObject(s, "account", str(connection["account_id"]))
 				if e != nil {
 					return e
@@ -579,6 +681,7 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if proc == nil {
 				if kind == "partner.stop" && str(run["state"]) == "QUEUED" {
 					run["state"] = "CANCELLED"
+					run["stop_requested"] = true
 					if e = putPartner(s, "run", run); e != nil {
 						return e
 					}
@@ -681,7 +784,17 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			proof["local_exit_confirmed"] = localExit
 			m["local_exit_confirmed"] = localExit
 			m["reconciliation"] = proof
-			if str(p["resolution"]) == "close_local_tracking" {
+			if str(p["resolution"]) == "accept_received_result" {
+				if !localExit {
+					return errors.New("本地进程树退出尚未核对，保留原运行")
+				}
+				if _, e = receivedPartnerTurnResult(m); e != nil {
+					return e
+				}
+				if e = a.completePartnerRun(s, m, "EXPLICIT_ACCEPT_RECEIVED_RESULT"); e != nil {
+					return e
+				}
+			} else if str(p["resolution"]) == "close_local_tracking" {
 				if !localExit {
 					return errors.New("本地进程树退出尚未核对，保留原运行")
 				}
@@ -696,7 +809,11 @@ func (a *App) partnerCommand(command map[string]any) (any, error) {
 			if e = putPartner(s, "run", m); e != nil {
 				return e
 			}
-			receipt = map[string]any{"run_id": m["id"], "state": m["state"], "local_exit_confirmed": localExit, "remote_state": "UNKNOWN", "no_resend": true}
+			remote := str(m["remote_state"])
+			if remote == "" {
+				remote = "UNKNOWN"
+			}
+			receipt = map[string]any{"run_id": m["id"], "state": m["state"], "local_exit_confirmed": localExit, "remote_state": remote, "no_resend": true}
 		case "component.reconcile":
 			op, e := partnerObject(s, "operation", str(p["operation_id"]))
 			if e != nil {
@@ -1018,6 +1135,18 @@ func (a *App) runPartner(run map[string]any) {
 	}
 	_ = in.Close()
 	waitErr := owner.Wait()
+	forcedCleanup := false
+	if !owner.ExitConfirmed() {
+		// The worker has exited but native descendants can outlive it. Close
+		// this already-owned local tree before recording the final outcome;
+		// do not turn a deferred kill-on-close into a stale UNKNOWN record.
+		forcedCleanup = true
+		terminateErr := owner.Terminate()
+		waitErr = owner.Wait()
+		if !owner.ExitConfirmed() && terminateErr != nil {
+			waitErr = errors.Join(waitErr, terminateErr)
+		}
+	}
 	if scanner.Err() != nil {
 		waitErr = scanner.Err()
 	}
@@ -1027,23 +1156,21 @@ func (a *App) runPartner(run map[string]any) {
 			return e
 		}
 		m["owned_process"] = owner.Identity()
+		if forcedCleanup {
+			m["owned_process"].(map[string]any)["forced_owned_job_cleanup"] = true
+		}
 		if !owner.ExitConfirmed() {
 			m["state"] = "STOP_UNKNOWN"
 			m["error"] = "本地子进程树退出尚未核对；保留原运行"
 			return putPartner(s, "run", m)
 		}
-		if str(m["state"]) == "RESULT_RECEIVED" && waitErr == nil {
-			m["state"] = "COMPLETED"
-			if str(m["mode"]) == "run" {
-				c, e := partnerObject(s, "connection", str(m["connection_id"]))
-				if e == nil && number(c["revision"]) == number(m["connection_revision"]) {
-					c["state"] = "VERIFIED"
-					c["verified_run"] = rid
-					c["verified_at"] = now()
-					if e = putPartner(s, "connection", c); e != nil {
-						return e
-					}
-				}
+		m["local_exit_confirmed"] = true
+		if m["stop_requested"] == true {
+			m["state"] = "STOPPED_RUNTIME"
+			m["remote_cancel"] = "UNKNOWN"
+		} else if str(m["state"]) == "RESULT_RECEIVED" && waitErr == nil {
+			if e = a.completePartnerRun(s, m, "OFFICIAL_RESULT_AND_CONFIRMED_LOCAL_EXIT"); e != nil {
+				return e
 			}
 		}
 		if str(m["state"]) == "ERROR_RECEIVED" {
@@ -1134,7 +1261,7 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 		case "input":
 			m["state"] = "WAITING_INPUT"
 		}
-		if typ == "approval" || typ == "input" {
+		if typ == "approval" || typ == "input" || (typ == "login" && str(event["request_id"]) != "") {
 			requestID := str(event["request_id"])
 			if requestID != "" {
 				pending, _ := m["pending_requests"].([]any)
@@ -1145,7 +1272,15 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 					}
 				}
 				if !exists {
-					m["pending_requests"] = append(pending, map[string]any{"id": requestID, "kind": typ, "message": event["message"], "options": event["options"]})
+					requestKind := typ
+					if requestKind == "login" {
+						requestKind = "input"
+					}
+					message := event["message"]
+					if message == nil {
+						message = event["instructions"]
+					}
+					m["pending_requests"] = append(pending, map[string]any{"id": requestID, "kind": requestKind, "message": message, "options": event["options"], "details": event["native"]})
 				}
 			}
 		}

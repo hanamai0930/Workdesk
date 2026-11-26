@@ -10,6 +10,7 @@ import { ConversationSummaryButton } from './modules/conversation-summary';
 import { Template } from './components/template';
 import { markdownTemplate, registerMarkdownElement } from './components/safe-markdown';
 import { SettingsPage } from './modules/settings';
+import { PartnerWork } from './modules/partner-work';
 import { ManagementPage } from './modules/management';
 import { ConnectionSetup } from './modules/connection-setup';
 import { renderInto, renderTemplate, ownHost, release } from './lib/render';
@@ -56,6 +57,7 @@ window.WorkdeskReact = {
   },
   chat(host:HTMLElement, props:any) {renderInto(host,props.v.chatRoute==='api'?<ApiChat key={props.v.activeChat||'home'} {...props}/>:<OfficialChat key={props.v.activeChat||'home'} {...props}/>);},
   settings(host:HTMLElement, props:any) { renderInto(host,<SettingsPage {...props}/>); },
+  partnerWork(host:HTMLElement, props:{runId?:string}) { renderInto(host,<PartnerWork key={props.runId||'new'} {...props}/>); },
   management(host:HTMLElement, props:any) { renderInto(host,<ManagementPage {...props}/>); },
   resourceSpace(host:HTMLElement, props:{ routeKey:string }) {
     renderInto(host,<Suspense fallback={<p className="loading" role="status">正在打开资料空间…</p>}>
