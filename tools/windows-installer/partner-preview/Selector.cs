@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -39,11 +40,15 @@ namespace Workdesk.InstallationPreview
     }
     public sealed class Catalog
     {
+        public string format { get; set; }
+        public int format_version { get; set; }
         public Partner[] partners { get; set; }
     }
 
     internal class Selector
     {
+        const string PackageExtension = ".wdpartner";
+        static readonly byte[] PackageHeader = Encoding.ASCII.GetBytes("WDPARTNER\u0001");
         readonly Window window;
         readonly Partner[] partners;
         readonly HashSet<string> selected = new HashSet<string>();
@@ -68,7 +73,10 @@ namespace Workdesk.InstallationPreview
             using (var stream = Resource("catalog.json"))
             using (var reader = new StreamReader(stream))
             {
-                partners = new JavaScriptSerializer().Deserialize<Catalog>(reader.ReadToEnd()).partners;
+                var data = new JavaScriptSerializer().Deserialize<Catalog>(reader.ReadToEnd());
+                if (data == null || data.format != "wdpartner" || data.format_version != 1)
+                    throw new InvalidDataException("伙伴包目录的格式或版本不受支持。");
+                partners = data.partners;
             }
             string[] order = { "codex", "deepseek", "qwen", "claude", "grok", "gemini", "kimi", "glm" };
             if (partners == null || partners.Length != order.Length) throw new InvalidDataException("伙伴清单不完整。");
@@ -76,7 +84,8 @@ namespace Workdesk.InstallationPreview
             partners = order.Select(id => catalog[id]).ToArray();
             foreach (var p in partners)
             {
-                if (p.bytes <= 0 || p.component_bytes <= 0 || p.dependencies == null ||
+                if (!IsPartnerFile(p.file) || p.file != Path.GetFileName(p.file) ||
+                    p.bytes <= PackageHeader.Length || p.component_bytes <= 0 || p.dependencies == null ||
                     p.installed_bytes != p.component_bytes + p.dependencies.Sum(d => d.bytes) ||
                     String.IsNullOrEmpty(p.sha256) || p.sha256.Length != 64)
                     throw new InvalidDataException("伙伴包目录不完整：" + p.name);
@@ -223,19 +232,34 @@ namespace Workdesk.InstallationPreview
         async Task Browse()
         {
             var picker = new OpenFileDialog {
-                Title = "选择本地伙伴补充包", Multiselect = true, Filter = "伙伴补充包 (*.zip)|*.zip"
+                Title = "选择本地伙伴补充包", Multiselect = true, DefaultExt = PackageExtension,
+                Filter = "Workdesk 伙伴补充包 (*" + PackageExtension + ")|*" + PackageExtension
             };
             string nearby = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages");
             if (Directory.Exists(nearby)) picker.InitialDirectory = nearby;
             if (picker.ShowDialog(window) == true) await ImportFiles(picker.FileNames);
         }
 
+        static bool IsPartnerFile(string file)
+        {
+            return String.Equals(Path.GetExtension(file), PackageExtension, StringComparison.OrdinalIgnoreCase);
+        }
+
+        static bool HasPackageHeader(Stream stream)
+        {
+            foreach (byte expected in PackageHeader)
+                if (stream.ReadByte() != expected) return false;
+            return true;
+        }
+
         Partner Match(string file)
         {
+            if (!IsPartnerFile(file)) return null;
             using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 131072, FileOptions.SequentialScan))
             {
                 var candidates = partners.Where(p => p.bytes == stream.Length).ToArray();
-                if (candidates.Length == 0) return null;
+                if (candidates.Length == 0 || !HasPackageHeader(stream)) return null;
+                stream.Position = 0;
                 using (var hasher = SHA256.Create())
                 {
                     var hash = BitConverter.ToString(hasher.ComputeHash(stream)).Replace("-", "");
@@ -308,6 +332,10 @@ namespace Workdesk.InstallationPreview
             Assert(selected.Count == 2 && DownloadBytes() == Picks().Sum(p => p.bytes));
             var pkg = partners.Single(p => p.id == "deepseek");
             string file = Path.Combine(dir, "packages", pkg.file);
+            // A renamed ZIP or a different format revision is not a partner package.
+            Assert(!HasPackageHeader(new MemoryStream(new byte[] { 0x50, 0x4b, 0x03, 0x04 })));
+            Assert(!HasPackageHeader(new MemoryStream(Encoding.ASCII.GetBytes("WDPARTNER\u0002"))));
+            Assert(!IsPartnerFile("legacy.zip") && IsPartnerFile("renamed.WDPARTNER"));
             await ImportFiles(new[] { file });
             Assert(local.Contains(pkg.id) && DownloadBytes() == partners.Single(p => p.id == "codex").bytes);
             await ImportFiles(new[] { Path.Combine(dir, "packages", "catalog.json") });
@@ -320,6 +348,8 @@ namespace Workdesk.InstallationPreview
             Assert(selected.Count == 8 && InstalledBytes() <= partners.Sum(p => p.installed_bytes));
             Control<CheckBox>("SelectAll").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Assert(selected.Count == 0 && DownloadBytes() == 0);
+            await ImportFiles(partners.Select(p => Path.Combine(dir, "packages", p.file)).ToArray());
+            Assert(local.Count == 8 && selected.Count == 8 && DownloadBytes() == 0);
         }
 
         static void Assert(bool ok) { if (!ok) throw new InvalidDataException("选装预览检查失败。"); }

@@ -43,4 +43,6 @@ python tools/windows-installer/build_partner_preview_packs.py --components <组�
 ./tools/windows-installer/partner-preview/build.ps1 -Catalog <预览目录>/packages/catalog.json
 ```
 
-打开生成的 Workdesk-Setup-Preview.exe 可以选择八个伙伴，导入本地 ZIP 并核对下载量和新增占用。包体大小取压缩文件的实际字节数，安装后占用按全新安装计算，共享运行依赖按版本及摘要去重。本轮交互止于确认清单。正式在线下载、安装和日用资料升级属于发布安装器。预览用本地补充包保留在构建目录。
+打开生成的 Workdesk-Setup-Preview.exe 可以选择八个伙伴，导入本地 .wdpartner 伙伴补充包 并核对下载量和新增占用。包体大小取压缩文件的实际字节数，安装后占用按全新安装计算，共享运行依赖按版本及摘要去重。本轮交互止于确认清单。正式在线下载、安装和日用资料升级属于发布安装器。预览用本地补充包保留在构建目录。
+
+`.wdpartner` v1 以九字节 ASCII 标识 `WDPARTNER` 和版本字节 `0x01` 开头，其后为 gzip 压缩的 PAX tar 数据。包内根目录提供 `partner.json` 和 `component-files.json`，程序文件位于 `component/`，随附依赖位于 `dependencies/`。预览从内嵌目录读取认可的版本、字节数和整包 SHA-256，校验通过后将该伙伴计为本地来源。

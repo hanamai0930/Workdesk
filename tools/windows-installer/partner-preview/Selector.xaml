@@ -73,7 +73,7 @@
                 <TextBlock x:Name="Installed" Margin="0,2,0,0" Text="0 MB" ToolTip="相同版本的共享运行依赖只计算一次"/>
               </StackPanel>
             </Border>
-            <Button x:Name="Import" Margin="0,12,0,0" Content="导入本地补充包…" ToolTip="选择一个或多个已下载的伙伴 ZIP，校验后自动勾选"/>
+            <Button x:Name="Import" Margin="0,12,0,0" Content="导入本地补充包…" ToolTip="选择一个或多个 .wdpartner 伙伴补充包，校验后自动勾选"/>
             <TextBlock x:Name="ImportHint" Text="本地包校验通过后免下载。" Style="{StaticResource Small}" Margin="3,7,0,0" TextWrapping="Wrap"/>
           </StackPanel>
         </Grid>
