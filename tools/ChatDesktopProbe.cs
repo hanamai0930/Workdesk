@@ -9,12 +9,46 @@ using Microsoft.Web.WebView2.WinForms;
 
 internal sealed partial class WorkdeskHost {
     bool probeStarted;
+    readonly List<Uri> externalProbeOpens=new List<Uri>();
     partial void StartProbe() {if(probeStarted)return;probeStarted=true;RunProbe();}
+    partial void ProbeExternalOpen(Uri uri,ref bool handled) {externalProbeOpens.Add(uri);handled=true;}
     async Task WaitProbe(Func<bool> condition) {
         for(int i=0;i<160;i++){if(condition())return;await Task.Delay(100);}
         throw new Exception("Native view timeout");
     }
     async Task ShellProbe(string script) {await shell.CoreWebView2.ExecuteScriptAsync(script);await Task.Delay(250);}
+    async Task ClickExternalFixture(string url,bool loginLink) {
+        await ShellProbe("(()=>{document.querySelector('#probe-external-link')?.remove();const a=document.createElement('a');a.id='probe-external-link';a.href="+json.Serialize(url)+
+            ";a.target='_blank';a.rel='noopener noreferrer';a.className="+json.Serialize(loginLink?"wd-partners-login-link":"")+
+            ";a.textContent='Local login fixture';a.style='position:fixed;left:20px;top:40px;z-index:2147483647;padding:20px;background:white';document.body.append(a);})()");
+        await shell.CoreWebView2.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent","{\"type\":\"mousePressed\",\"x\":70,\"y\":65,\"button\":\"left\",\"clickCount\":1}");
+        await shell.CoreWebView2.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent","{\"type\":\"mouseReleased\",\"x\":70,\"y\":65,\"button\":\"left\",\"clickCount\":1}");
+    }
+    async Task ProbeWorkLogin(List<string> checks) {
+        int port=shellUrl.Port==32123?32124:32123;
+        string login="http://127.0.0.1:"+port+"/?token=local_fixture_token_not_a_secret";
+        string invalid="http://127.0.0.1:"+port+"/not-a-login?token=local_fixture_token_not_a_secret";
+        await ShellProbe("location.hash='#connect'");
+        await ClickExternalFixture(login,false);
+        await Task.Delay(300);
+        if(externalProbeOpens.Count!=0)throw new Exception("Unmarked local link reached the system browser launcher");
+        await ClickExternalFixture(invalid,true);
+        await Task.Delay(300);
+        if(externalProbeOpens.Count!=0)throw new Exception("Rejected local route reached the system browser launcher");
+        await ClickExternalFixture(login,true);
+        await WaitProbe(()=>externalProbeOpens.Count==1);
+        if(externalProbeOpens[0].AbsoluteUri!=login)throw new Exception("Official login URL changed before browser handoff");
+        await ShellProbe("location.hash='#settings/accounts/deepseek'");
+        await ClickExternalFixture(login,true);
+        await WaitProbe(()=>externalProbeOpens.Count==2);
+        if(externalProbeOpens[1].AbsoluteUri!=login)throw new Exception("Settings login URL changed before browser handoff");
+        await ShellProbe("location.hash='#settings'");
+        await ClickExternalFixture(login,true);
+        await Task.Delay(300);
+        if(externalProbeOpens.Count!=2)throw new Exception("Local login can open outside the account UI");
+        await ShellProbe("document.querySelector('#probe-external-link')?.remove()");
+        checks.Add("user-clicked exact official Work login opens from connector and settings; unrelated local paths and links stay blocked");
+    }
     async void RunProbe() {
         var checks=new List<string>();string error=null;
         try {
@@ -95,6 +129,7 @@ internal sealed partial class WorkdeskHost {
             await ShellProbe("location.hash='#settings'");await WaitProbe(()=>!wantsChat);
             foreach(var c in chats.Values)if(c.View.Visible)throw new Exception("Remote view covers settings");
             checks.Add("settings navigation hides every native chat view");
+            await ProbeWorkLogin(checks);
             checks.Add("remote pages have neither host objects nor web-message access");
         }catch(Exception exc){error=exc.Message;}
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(reportPath),"probe-result.json"),json.Serialize(new {checks=checks,error=error,local_fixtures=true,model_requests=0}));

@@ -7,6 +7,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -109,7 +110,11 @@ internal sealed partial class WorkdeskHost : Form {
                 Uri target;
                 if (!Uri.TryCreate(e.Uri,UriKind.Absolute,out target) || target.GetLeftPart(UriPartial.Authority)!=shellUrl.GetLeftPart(UriPartial.Authority) || !target.AbsolutePath.StartsWith(shellUrl.AbsolutePath)) e.Cancel=true;
             };
-            shell.CoreWebView2.NewWindowRequested+=(sender,e)=> {e.Handled=true;OpenExternal(e.Uri);};
+            shell.CoreWebView2.NewWindowRequested+=(sender,e)=> {
+                e.Handled=true;
+                Uri target;
+                if(Uri.TryCreate(e.Uri,UriKind.Absolute,out target) && target.Scheme=="https")OpenExternal(target);
+            };
             shell.CoreWebView2.NavigationCompleted+=(sender,e)=>{if(probeBase!=null && e.IsSuccess)StartProbe();};
             shell.CoreWebView2.WebMessageReceived+=async (sender,e)=> {
                 try {
@@ -125,6 +130,15 @@ internal sealed partial class WorkdeskHost : Form {
                         return;
                     }
                     if (!m.ContainsKey("channel")) return;
+                    if ((string)m["channel"]=="workdesk.work.login") {
+                        Uri target;
+                        if(source.AbsolutePath==shellUrl.AbsolutePath && IsWorkLoginPage(source) && m.Count==2 && m.ContainsKey("url") &&
+                           Uri.TryCreate(m["url"] as string,UriKind.Absolute,out target) && IsLocalWorkLogin(target)) {
+                            try {OpenExternal(target);}
+                            catch(Exception) {MessageBox.Show(this,"未能打开官方登录页面。请检查默认浏览器后重试。","Workdesk",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
+                        }
+                        return;
+                    }
                     if ((string)m["channel"]=="workdesk.chat.account") {await HandleChatAccount(m);return;}
                     if ((string)m["channel"]!="workdesk.chat") return;
                     string action=Convert.ToString(m["action"]);
@@ -150,6 +164,14 @@ internal sealed partial class WorkdeskHost : Form {
                 } catch(Exception exc) {Publish("error",exc.GetType().Name);}
             };
             await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("if(location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+"){window.WorkdeskDesktop={engine:'WebView2',chatViews:true,chatAccounts:true,windowPreferences:true};}");
+            // Forward only deliberate clicks on the shell's official Work login
+            // link. Generic popups and all remote views keep their old rules.
+            await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
+                "if(window===top && location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+" && location.pathname==="+json.Serialize(shellUrl.AbsolutePath)+")"+
+                "document.addEventListener('click',e=>{const a=e.target.closest?.('a.wd-partners-login-link');"+
+                "if(!e.isTrusted||e.button!==0||!a||a.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(a.hostname)||"+
+                "!(/^(?:#connect|#settings\\/accounts(?:\\/[^/?#]+)?)$/.test(location.hash)))return;"+
+                "e.preventDefault();chrome.webview.postMessage({channel:'workdesk.work.login',url:a.href});},true);");
             shell.Source=shellUrl;WriteReport();
         } catch(Exception exc) {
             WriteFailure(exc);
@@ -250,13 +272,22 @@ internal sealed partial class WorkdeskHost : Form {
     }
     // Test-only partial implementation is compiled into a separate fixture executable.
     partial void StartProbe();
+    partial void ProbeExternalOpen(Uri uri,ref bool handled);
     void Publish(string status,string error) {
         if(shell.CoreWebView2!=null)shell.CoreWebView2.PostWebMessageAsJson(json.Serialize(new {channel="workdesk.chat",provider=selected,status=status,error=error}));
         WriteReport();
     }
-    static void OpenExternal(string value) {
-        Uri uri;if(!Uri.TryCreate(value,UriKind.Absolute,out uri) || uri.Scheme!="https")return;
-        Process.Start(new ProcessStartInfo(uri.AbsoluteUri) {UseShellExecute=true});
+    bool IsLocalWorkLogin(Uri uri) {
+        return uri.Scheme=="http" && uri.IsLoopback && uri.Port!=shellUrl.Port &&
+            Regex.IsMatch(uri.OriginalString,@"\Ahttp://(?:127\.0\.0\.1|localhost|\[::1\]):[1-9][0-9]{0,4}/\?token=[A-Za-z0-9_-]{20,128}\z",RegexOptions.CultureInvariant);
+    }
+    static bool IsWorkLoginPage(Uri source) {
+        return Regex.IsMatch(source.Fragment,@"\A(?:#connect|#settings/accounts(?:/[^/?#]+)?)\z",RegexOptions.CultureInvariant);
+    }
+    void OpenExternal(Uri uri) {
+        bool handled=false;
+        if(probeBase!=null)ProbeExternalOpen(uri,ref handled);
+        if(!handled)Process.Start(new ProcessStartInfo(uri.AbsoluteUri) {UseShellExecute=true});
     }
     void WriteFailure(Exception exc) {if(reportPath!=null){Directory.CreateDirectory(Path.GetDirectoryName(reportPath));File.WriteAllText(reportPath,json.Serialize(new {engine="WebView2",status="error",error=exc.GetType().Name,message=exc.Message}));}}
     void WriteReport() {
