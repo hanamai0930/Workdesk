@@ -238,6 +238,19 @@ sys.exit(7)
         text,pending=redact_login_chunk('-CODE\n',pending,['SECRET-CODE'])
         self.assertEqual(text,'[REDACTED]\n');self.assertFalse(pending)
 
+    def test_grok_device_proxy_only_uses_existing_safe_windows_setting(self):
+        from unittest.mock import patch
+        from researchos.workdesk.partners.auth import inherit_grok_device_proxy
+        prefix = 'researchos.workdesk.partners.auth.'
+        with patch(prefix+'os.name', 'nt'), patch(prefix+'network.proxy_bypass', return_value=False), patch(prefix+'network.proxy_bypass_registry', return_value=False, create=True), patch(prefix+'network.getproxies_registry', return_value={'https':'http://127.0.0.1:8123'}, create=True):
+            current={'NO_PROXY':'localhost'}; inherit_grok_device_proxy(current)
+            self.assertEqual(current, {'NO_PROXY':'localhost','HTTPS_PROXY':'http://127.0.0.1:8123'})
+            selected={'https_proxy':'http://127.0.0.1:8192'}; inherit_grok_device_proxy(selected)
+            self.assertNotIn('HTTPS_PROXY',selected)
+        for supplied, bypass in (('http://user:pass@localhost:8123',False),('http://[malformed',False),('http://localhost:8123',True)):
+            with patch(prefix+'os.name', 'nt'), patch(prefix+'network.proxy_bypass', return_value=False), patch(prefix+'network.proxy_bypass_registry', return_value=bypass, create=True), patch(prefix+'network.getproxies_registry', return_value={'https':supplied}, create=True):
+                current={}; inherit_grok_device_proxy(current); self.assertEqual(current,{})
+
     def test_login_link_excludes_failed_api_endpoint_and_keeps_opaque_oauth(self):
         from researchos.workdesk.partners.auth import LoginOutput
         parser=LoginOutput('grok')

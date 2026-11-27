@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from .partner_usage import catalog, objects
-from .partner_task import native_continuation
+from .partners.native_features import capabilities
 from .store import digest
 
 
@@ -38,7 +38,8 @@ def projection(db):
             available, reason = False, '官方账号待登录或核对'
         model = row.get('model') if route == 'api' else row.get('model') or 'official-default'
         source = (apis.get(api, {}).get('name', api or '') + ' API') if route == 'api' else '官方账号'
-        reviewed = native_continuation({'provider':partner, 'version':release.get('version')})
+        features = capabilities({'provider':partner,'route':route,'api_provider':api,
+                                 'release_id':row.get('release_id'),'version':release.get('version')})
         row.update(kind='partner_connection', execution='partner_native', provider=partner,
                    revision=str(row.get('revision', '')), api_provider=api, api_name=apis.get(api, {}).get('name'),
                    account_label=account.get('label'), account_revision=account.get('revision'),
@@ -53,7 +54,7 @@ def projection(db):
                                          'reference': 'partner:' + row['id'], 'file_revision': None},
                    source_label=source, auth_options=account.get('auth_options') or {},
                    permission_modes=permission_modes.get(partner, []),
-                   capabilities={'per_task_mcp':reviewed,'skills':'document_paths','native_resume':reviewed,'native_controls':'PARTNER_RUN_ONLY'})
+                   capabilities=features)
         connections.append(row)
     return {'partners': partners, 'api_providers': providers, 'connections': connections, 'source': 'VERSIONED_PARTNER_RECORDS', 'no_dispatch': True}
 

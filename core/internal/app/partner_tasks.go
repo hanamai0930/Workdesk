@@ -43,19 +43,7 @@ func samePartnerResume(a, b map[string]any) bool {
 	return true
 }
 
-func reviewedPartnerContinuation(partner, version string) bool {
-	switch partner {
-	case "codex":
-		return version == "0.172.0"
-	case "deepseek":
-		return version == "0.2.2-rc.5"
-	case "qwen":
-		return version == "0.28.4"
-	}
-	return false
-}
-
-func (a *App) partnerTaskResume(p, parent, binding, connection, account map[string]any) (map[string]any, error) {
+func (a *App) partnerTaskResume(p, parent, binding, connection, account map[string]any, access string) (map[string]any, error) {
 	var baseline, resume map[string]any
 	if raw := str(parent["baseline"]); raw != "" {
 		if json.Unmarshal([]byte(raw), &baseline) != nil {
@@ -73,7 +61,11 @@ func (a *App) partnerTaskResume(p, parent, binding, connection, account map[stri
 	if len(rows) == 0 && len(resume) == 0 {
 		return nil, nil
 	}
-	if len(rows) != 1 || !reviewedPartnerContinuation(str(binding["provider"]), str(binding["version"])) {
+	release, e := a.partnerNativeRelease(binding)
+	if e != nil {
+		return nil, e
+	}
+	if len(rows) != 1 || release.Resume.Method == "" || !release.Resume.supports(binding, access) {
 		return nil, errors.New("该准确原生会话的恢复尚未核实，未改为新会话")
 	}
 	prior := rows[0]
@@ -83,6 +75,10 @@ func (a *App) partnerTaskResume(p, parent, binding, connection, account map[stri
 	old, e := a.boundPartnerTaskRun(map[string]any{"task_id": p["task_id"], "attempt_id": prior["id"], "run_id": resume["resume_run_id"]})
 	if e != nil || old == nil || old["state"] != "COMPLETED" || old["local_exit_confirmed"] != true || old["session_id"] != resume["resume_session"] || old["partner_id"] != binding["provider"] || old["account_id"] != account["id"] || old["secret_version"] != account["secret_version"] || old["connection_id"] != connection["id"] || number(old["connection_revision"]) != number(connection["revision"]) || old["release_id"] != connection["release_id"] || !samePartnerWorkspace(old["workspace"], parent["workspace"]) {
 		return nil, errors.New("原已完成工作、账号、凭据、版本或目录不符，未续跑")
+	}
+	oldConnection, _ := old["connection_snapshot"].(map[string]any)
+	if oldConnection == nil || oldConnection["route"] != connection["route"] || oldConnection["model"] != connection["model"] || (connection["route"] == "api" && connectionAPIProvider(oldConnection) != connectionAPIProvider(connection)) {
+		return nil, errors.New("原会话的路线、API 厂商或模型已变化，未续跑")
 	}
 	if _, e = receivedPartnerTurnResult(old); e != nil {
 		return nil, e
@@ -215,13 +211,13 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		if str(binding["model"]) != "official-default" && binding["model"] != connection["model"] {
 			return nil, errors.New("原模型绑定与保存的连接不符")
 		}
-		resume, err := a.partnerTaskResume(p, parent, binding, connection, account)
-		if err != nil {
-			return nil, err
-		}
 		value := str(spec["access"])
 		if value == "" || value == "inherit" {
 			value = "workspace"
+		}
+		resume, err := a.partnerTaskResume(p, parent, binding, connection, account, value)
+		if err != nil {
+			return nil, err
 		}
 		prompt := str(p["prompt"])
 		if strings.TrimSpace(prompt) == "" || len(prompt) > 2*1024*1024 {
@@ -234,8 +230,8 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		}
 		if scene, _ := spec["scene_snapshot"].(map[string]any); scene != nil {
 			if servers, _ := scene["mcp"].([]any); len(servers) != 0 {
-				if !reviewedPartnerContinuation(str(binding["provider"]), str(binding["version"])) {
-					return nil, errors.New("当前官方工作端版本尚未接入每任务 MCP，未派发")
+				if err := a.checkPartnerTaskMCP(servers, binding, value, parent["workspace"]); err != nil {
+					return nil, err
 				}
 				link["scene_mcp"] = servers
 			}

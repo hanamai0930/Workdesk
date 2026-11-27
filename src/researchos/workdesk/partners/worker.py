@@ -136,8 +136,14 @@ class PartnerWorker:
         self.native_usage = None
         self.run_thread = None
         self.session_revision = None
+        self.zcode_input_id = None
+        self.acp_loading = False
+        self.acp_history_updates = 0
         self.deepseek_account_selection = None
         self.deepseek_account_ready = threading.Event()
+        self.claude_initialize = None
+        self.claude_ready = threading.Event()
+        self.claude_mcp_requested = {}
         self.login_output = None
         self.login_lock = threading.RLock()
         self.login_request = None
@@ -419,9 +425,20 @@ class PartnerWorker:
         if self.config.get("resume"):
             if not (initialized.get("agentCapabilities") or {}).get("loadSession"):
                 raise NativeRejected("官方工作端未声明原生会话加载能力；未新建会话或发送消息")
-            result = self.rpc.request("session/load", {"sessionId": self.session_id, "cwd": self.spec.cwd, "mcpServers": mcp_servers})
+            if self.config.get("session_id") != self.session_id:
+                raise NativeRejected("缺少准确原生会话身份；未发送消息")
+            # Fixed ACP work ends replay history synchronously while loading.
+            # Old reply/tool chunks belong to the original turn, not this result.
+            self.acp_loading = True
+            try:
+                result = self.rpc.request("session/load", {"sessionId": self.session_id, "cwd": self.spec.cwd, "mcpServers": mcp_servers})
+            finally:
+                self.acp_loading = False
             if result.get("sessionId", self.session_id) != self.session_id:
                 raise NativeRejected("官方 ACP 返回不同会话；未发送消息")
+            if self.acp_history_updates:
+                self.emit(type="event", kind="native_session_history_restored", replayed_updates=self.acp_history_updates,
+                          source="OFFICIAL_ACP_SESSION_LOAD")
         else:
             result = self.rpc.request("session/new", {"cwd": self.spec.cwd, "mcpServers": mcp_servers})
             self.session_id = result["sessionId"]
@@ -513,7 +530,18 @@ class PartnerWorker:
         self.done.wait()
 
     def _claude(self):
+        self.claude_mcp_requested = scene_mcp(self.config, self.spec.cwd)
         self.rpc.send({"type": "control_request", "request_id": "workdesk-initialize", "request": {"subtype": "initialize"}})
+        deadline = time.monotonic() + 45
+        while not self.claude_ready.wait(.08):
+            if self.done.is_set() or self.stop_requested.is_set():
+                return
+            if time.monotonic() > deadline:
+                raise NativeRejected("Claude Code 未确认启动，未发送本次消息。")
+        if self.done.is_set() or self.stop_requested.is_set():
+            return
+        if self.claude_initialize != "success":
+            raise NativeRejected("Claude Code 拒绝启动，未发送本次消息。")
         self.emit(type="ready", native_protocol="claude-sdk-stream-json")
         self.rpc.send({"type": "user", "session_id": self.session_id, "parent_tool_use_id": None,
                        "message": {"role": "user", "content": self.config.get("prompt", "")}})
@@ -593,19 +621,47 @@ class PartnerWorker:
         workspace = {"workspaceKey": str(uuid.uuid5(uuid.NAMESPACE_URL, self.spec.cwd)), "workspacePath": self.spec.cwd}
         params = {"sessionId": self.session_id, "workspace": workspace}
         permission = self.permission or checked_permission(self.config)
-        if not self.config.get("resume"):
-            params["mode"] = permission["native"]["mode"]
-        result = self.rpc.request("session/resume" if self.config.get("resume") else "session/create", params)
-        self.session_revision = result.get("revision")
-        if self.config.get("resume"):
+        native_mode = permission["native"]["mode"]
+        resumed = self.config.get("resume")
+        if resumed and self.config.get("session_id") != self.session_id:
+            raise NativeRejected("缺少准确 ZCode 原生会话身份；未发送消息")
+        if not resumed:
+            params["mode"] = native_mode
+        servers = scene_mcp(self.config, self.spec.cwd)
+        if servers:
+            # ZCode's fixed protocol is not ACP. Stdio has no `type`, and has
+            # an explicit cwd. Both transports are scoped to this native session.
+            params["mcpServers"] = [({"name": name, "isolation": "session", "type": "http", "url": cfg["url"], "headers": []}
+                                    if cfg["transport"] == "http" else {"name": name, "isolation": "session", "cwd": cfg["cwd"],
+                                    "command": cfg["command"], "args": cfg["args"], "env": []}) for name, cfg in servers.items()]
+        result = self.rpc.request("session/resume" if resumed else "session/create", params)
+        session = self._zcode_snapshot(result)
+        if resumed:
             result = self.rpc.request("session/setMode", {"sessionId": self.session_id, "expectedRevision": self.session_revision,
-                                                          "mode": permission["native"]["mode"]})
-            self.session_revision = result.get("revision", self.session_revision)
+                                                          "mode": native_mode})
+            session = self._zcode_snapshot(result)
+        if session.get("mode") != native_mode:
+            raise NativeRejected("ZCode 官方回执的审批模式与本次选择不同；未发送消息")
         self.emit(type="event", kind="native_permission_applied", resolved_permission=permission, source="OFFICIAL_SESSION_MODE_RECEIPT")
-        self.emit(type="ready", native=result)
+        self._mcp_configured(servers, 'OFFICIAL_ZCODE_SESSION_CONFIGURATION')
+        # Resuming can include old messages in the snapshot. Workdesk already
+        # preserves their original turn; do not copy them into this one.
+        self.emit(type="ready", native={"sessionId": self.session_id, "mode": native_mode, "stateRevision": self.session_revision})
         self.rpc.request("session/subscribe", {"sessionId": self.session_id, "deliveryKind": "desktop-continuous", "includeSnapshot": False})
-        self.rpc.request("session/send", {"sessionId": self.session_id, "content": self.config.get("prompt", ""), "inputId": str(uuid.uuid4())})
+        self.zcode_input_id = str(uuid.uuid4())
+        sent = self.rpc.request("session/send", {"sessionId": self.session_id, "content": self.config.get("prompt", ""),
+                                                "inputId": self.zcode_input_id, "expectedRevision": self.session_revision})
+        if sent.get("accepted") is not True or sent.get("sessionId") != self.session_id:
+            raise ReceiptUnknown("ZCode 当前会话的消息接收回执待核对；不会重发")
         self.done.wait()
+
+    def _zcode_snapshot(self, snapshot):
+        session, runtime = snapshot.get("session") or {}, snapshot.get("runtime") or {}
+        revision = runtime.get("stateRevision")
+        if session.get("sessionId") != self.session_id or type(revision) is not int or revision < 0:
+            raise NativeRejected("ZCode 官方快照的会话或修订不符；未发送消息")
+        self.session_revision = revision
+        return session
 
     def _mcp_configured(self, servers, source):
         if servers:
@@ -625,8 +681,37 @@ class PartnerWorker:
                 self.emit(type="error", error="Official transport closed without a final receipt", receipt_unknown=True, no_resend=True)
                 self.done.set()
             return
-        self.emit(type="event", kind="native_event", native=message)
+        if self.spec.protocol == "claude":
+            typ = message.get("type")
+            authoritative = not message.get("parent_tool_use_id") and (typ == "result" or (typ == "system" and message.get("subtype") == "init"))
+            if authoritative and self.config.get("resume") and message.get("session_id") != self.config.get("session_id"):
+                self.failed = True
+                self.emit(type="error", error="Claude Code 未返回指定原会话，未接纳其他会话回执。", receipt_unknown=True, no_resend=True)
+                self.done.set()
+                return
         method, params = message.get("method", ""), message.get("params") or {}
+        if self.spec.protocol == "acp" and method == "session/update":
+            update_kind = (params.get("update") or {}).get("sessionUpdate")
+            if update_kind in {"user_message_chunk", "agent_message_chunk", "agent_thought_chunk",
+                               "tool_call", "tool_call_update", "plan", "usage_update"}:
+                if params.get("sessionId") != self.session_id:
+                    return
+                if self.acp_loading:
+                    self.acp_history_updates += 1
+                    return
+        if self.spec.protocol == "zcode" and method == "session/event" and params.get("type") in {"turn.started", "turn.completed", "turn.failed"}:
+            if not self.zcode_input_id or params.get("sessionId") != self.session_id:
+                return
+            input_id = (params.get("payload") or {}).get("inputId")
+            if params["type"] == "turn.started":
+                if input_id != self.zcode_input_id:
+                    return
+                self.turn_id = params.get("turnId")
+            elif input_id != self.zcode_input_id and not (input_id is None and self.turn_id and params.get("turnId") == self.turn_id):
+                # The fixed protocol allows terminal events to omit inputId,
+                # but only its already-bound native turn can settle this send.
+                return
+        self.emit(type="event", kind="native_event", native=message)
         if self.spec.protocol == "codex" and method == "account/login/completed":
             self.codex_login_receipt = params
             self.codex_login_ready.set()
@@ -643,16 +728,35 @@ class PartnerWorker:
             self.emit(type=kind, request_id=str(message["id"]), message=method, options=params.get("options"), native=params)
         protocol = self.spec.protocol
         if protocol == "claude":
-            if message.get("session_id"):
+            typ = message.get("type")
+            if self.done.is_set():
+                return
+            if authoritative and message.get("session_id"):
                 self.session_id = message["session_id"]
-            if message.get("type") == "control_request":
+            if typ == "control_response":
+                response = message.get("response") or {}
+                if response.get("request_id") == "workdesk-initialize":
+                    self.claude_initialize = response.get("subtype")
+                    self.claude_ready.set()
+            if authoritative and typ == "system":
+                self.emit(type="event", kind="native_session_bound", source="OFFICIAL_CLAUDE_INIT",
+                          resumed=self.config.get("resume") is True)
+                supplied = message.get("mcp_servers") or []
+                statuses = {item["name"]: item.get("status") for item in supplied
+                            if isinstance(item, dict) and item.get("name") in self.claude_mcp_requested}
+                if statuses:
+                    self.emit(type="event", kind="native_scene_mcp_configured", source="OFFICIAL_CLAUDE_MCP_CONFIG",
+                              servers=sorted(statuses), connection_state="OFFICIAL_CONNECTED" if
+                              len(statuses) == len(self.claude_mcp_requested) and all(s == "connected" for s in statuses.values())
+                              else "NOT_ATTESTED")
+            if typ == "control_request":
                 ident = str(message["request_id"])
                 self.requests[ident] = message
                 request = message.get("request") or {}
                 question = request.get("tool_name") == "AskUserQuestion"
                 self.emit(type="input" if question else "approval", request_id=ident,
                           message=request.get("subtype", "Official tool request"), native=request)
-            if message.get("type") == "result":
+            if typ == "result" and authoritative:
                 if message.get("is_error") or message.get("subtype") not in {"success", None}:
                     self.failed = True
                     self.emit(type="error", error=message.get("result", str(message.get("errors", message.get("subtype")))), native=message)

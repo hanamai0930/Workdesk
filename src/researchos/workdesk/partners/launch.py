@@ -69,21 +69,52 @@ def _module_uri(name: str):
     return _file_uri(Path(__file__).with_name(name))
 
 
+def _gemini_mcp_workspace_trusted(home, workspace):
+    """Check pinned Gemini's explicit native trust rules without granting trust."""
+    try:
+        with (Path(home) / '.gemini/trustedFolders.json').open('rb') as stream:
+            raw = stream.read(256 * 1024 + 1)
+        if len(raw) > 256 * 1024:
+            return False
+        rules = json.loads(raw)
+        if not isinstance(rules, dict):
+            return False
+        directory = Path(workspace).resolve()
+        matches = []
+        for name, level in rules.items():
+            rule = Path(name)
+            if not rule.is_absolute() or level not in {'TRUST_FOLDER', 'TRUST_PARENT', 'DO_NOT_TRUST'}:
+                return False
+            target = rule.parent if level == 'TRUST_PARENT' else rule
+            if directory.is_relative_to(target.resolve()):
+                matches.append((len(os.path.normpath(name)), level))
+        if not matches:
+            return False
+        longest = max(length for length, _ in matches)
+        return all(level != 'DO_NOT_TRUST' for length, level in matches if length == longest)
+    except (OSError, ValueError, RuntimeError, TypeError):
+        return False
+
+
 def scene_mcp(config, cwd):
     from ..capabilities import mcp_config
     rows = config.get('scene_mcp') or []
     if not isinstance(rows, list) or len(rows) > 100:
         raise ValueError('冻结 MCP 清单不可用，未派发。')
     values = {}
-    if rows and config['partner_id'] not in {'codex', 'deepseek', 'qwen'}:
+    partner = config['partner_id']
+    if rows and partner not in {'codex', 'deepseek', 'qwen', 'claude', 'grok', 'gemini', 'kimi', 'glm'}:
         raise ValueError('当前官方工作端未接入每任务 MCP。')
+    if rows and partner == 'gemini' and not _gemini_mcp_workspace_trusted(config.get('home'), cwd):
+        raise ValueError('Gemini 官方工作端须先信任此项目目录才能加载 MCP；未修改信任设置，未发送消息。')
     for row in rows:
         name = row['name']
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name) or name in values:
             raise ValueError('冻结 MCP 名称无效或重复，未派发。')
         entry = mcp_config(row['config'])
-        if config['partner_id'] == 'qwen' and entry['transport'] == 'stdio' and Path(entry['cwd']).resolve() != Path(cwd).resolve():
-            raise ValueError('Qwen 本机 MCP 的工作目录与该项目不同，未派发。')
+        if partner in {'qwen', 'claude', 'grok', 'gemini', 'kimi'} and entry['transport'] == 'stdio' and Path(entry['cwd']).resolve() != Path(cwd).resolve():
+            names = {'qwen': 'Qwen', 'claude': 'Claude Code', 'grok': 'Grok Build', 'gemini': 'Gemini', 'kimi': 'Kimi'}
+            raise ValueError(names[partner] + ' 本机 MCP 的工作目录与该项目不同，未派发。')
         values[name] = entry
     return values
 
@@ -302,18 +333,43 @@ def build_launch(config: dict) -> LaunchSpec:
             argv += ["--permission-mode", permission["native"]["permission_mode"], "--permission-prompts", "host"]
             if permission["value"] == "full":
                 argv += ["--allow-dangerously-skip-permissions"]
-            if config.get("resume") and config.get("session_id"):
-                argv += ["--resume=" + config["session_id"]]
-            elif config.get("session_id"):
-                argv += ["--session-id=" + config["session_id"]]
+            session_id = config.get("session_id")
+            if config.get("resume"):
+                try:
+                    exact = str(uuid.UUID(session_id)) == session_id
+                except (ValueError, TypeError, AttributeError):
+                    exact = False
+                if not exact:
+                    raise ValueError("Claude Code 续跑缺少准确的原生会话 UUID，未新建会话。")
+                argv += ["--resume=" + session_id]
+            elif session_id:
+                argv += ["--session-id=" + session_id]
+            servers = scene_mcp(config, workspace)
+            if servers:
+                scoped = {name: ({"type": "http", "url": value["url"]} if value["transport"] == "http"
+                                 else {"type": "stdio", "command": value["command"], "args": value["args"]})
+                          for name, value in servers.items()}
+                # Do not replace the user's native MCP settings or disable
+                # their other providers. Only this launch reads this overlay.
+                overlay = home / ".claude/.workdesk" / ("scene-mcp-" + uuid.uuid4().hex + ".json")
+                _write(overlay, {"mcpServers": scoped})
+                argv += ["--mcp-config", str(overlay)]
             protocol = "claude"
     elif partner == "grok":
         if mode == "login":
-            argv += ["login", "--oauth" if auth_options.get("auth_method") == "oauth" else "--device-auth"]
+            device = auth_options.get("auth_method") != "oauth"
+            if device:
+                from .auth import inherit_grok_device_proxy
+                inherit_grok_device_proxy(env)
+            argv += ["login", "--device-auth" if device else "--oauth"]
             protocol = "login-text"
         else:
+            if config.get("resume") and (not isinstance(config.get("session_id"), str) or not config["session_id"].strip()):
+                raise ValueError("Grok Build 续跑缺少准确的原生会话编号，未新建会话。")
             argv += ["agent", "--no-leader", *permission["native"]["argv"], "stdio"] if permission else ["agent", "--no-leader", "stdio"]
     elif partner == "gemini":
+        if mode == "run":
+            scene_mcp(config, workspace)
         argv += ["--experimental-acp"]
         if model and mode == "run":
             argv += ["--model", model]

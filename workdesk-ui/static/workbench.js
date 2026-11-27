@@ -29,13 +29,14 @@
   const task=()=>v.detail?.task;
   const composerCapabilities=()=>v.formDraft.composerCapabilities||[];
   const partnerDocumentSkills=()=>!!partnerConnections()&&!task()&&!v.dialogue;
-  function partnerMcpUnavailable(){
-    if(!partnerDocumentSkills())return false;
-    if(v.type!=='cooperative')return !selectedPartnerConnection()?.capabilities?.per_task_mcp;
+  function partnerMcpRules(){
+    if(!partnerDocumentSkills())return null;
+    if(v.type!=='cooperative')return [selectedPartnerConnection()?.capabilities];
     const {mode,assignments,expertCount}=cooperationConfig();
     const refs=Object.entries(assignments[mode]).filter(([key])=>!key.startsWith('expert_')||Number(key.slice(7))<=expertCount).map(([,ref])=>ref);
-    return !refs.length||refs.some(ref=>!partnerConnections().connections.find(row=>row.id===ref.connection_id&&String(row.revision)===String(ref.connection_revision))?.capabilities?.per_task_mcp);
+    return refs.map(ref=>partnerConnections().connections.find(row=>row.id===ref.connection_id&&String(row.revision)===String(ref.connection_revision))?.capabilities);
   }
+  const partnerMcpUnavailable=()=>{const rules=partnerMcpRules();return !!rules&&(!rules.length||rules.some(rule=>!rule?.per_task_mcp));};
   function checkPartnerCapabilities(){if(partnerMcpUnavailable()&&composerCapabilities().some(ref=>ref.kind==='mcp'))throw Error('所选连接暂不支持本次加载 MCP，请更换连接或移除 MCP 选择。');}
   const canPlan=()=>!v.dialogue&&(!task()||task().spec.runtime_mode==='official'&&
     !['RESERVED','RUNNING','SEND_INTENT','STOP_REQUESTED','WAITING_APPROVAL','WAITING_INPUT'].includes(task().state));
@@ -398,7 +399,9 @@
     if(generation!==v.generation)return;
     const skills=data.capabilities.filter(bundle=>bundle.enabled&&bundle.kind==='skill').flatMap(bundle=>
       bundle.skills.map(skill=>({kind:'skill',id:bundle.id,revision:bundle.revision,name:skill.name,description:skill.description})));
-    const servers=data.extensions.filter(server=>server.enabled).map(server=>
+    const mcpRules=partnerMcpRules();
+    const servers=data.extensions.filter(server=>server.enabled&&(!mcpRules||mcpRules.every(rule=>
+      !rule?.mcp_transports?.length||rule.mcp_transports.includes(server.config?.transport)))).map(server=>
       ({kind:'mcp',id:server.id,revision:server.revision,name:server.name,description:server.source}));
     capabilityOptions=[...skills,...(noMcp?[]:servers)].filter(row=>kind==='all'||row.kind===kind);
     const rows=capabilityOptions.map((row,index)=>{
@@ -406,7 +409,9 @@
       return '<label class="wk-check wd-composer-option"><input type="checkbox" name="capability" value="'+index+'" '+(chosen?'checked':'')+
         '><span><strong>'+h(row.name)+'</strong><small>'+h(row.description||'')+'</small></span></label>';
     }).join('');
-    modal(heading,(documents&&kind!=='mcp'?'<p class="wk-note">技能文档由所选工作端的文件工具读取。</p>':'')+'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">暂无已启用的'+(kind==='mcp'?' MCP。':documents?'技能文档。':' Skills。')+'</p>')+'</form>',
+    const localMcpNote=kind!=='skill'&&!noMcp&&mcpRules?.some(rule=>rule?.mcp_stdio_cwd==='project')?'<p class="wk-note">本机 MCP 的工作目录须与本次项目一致。</p>':'';
+    const trustMcpNote=kind!=='skill'&&!noMcp&&mcpRules?.some(rule=>rule?.mcp_project_trust)?'<p class="wk-note">需先在官方工作端信任该项目目录。</p>':'';
+    modal(heading,(documents&&kind!=='mcp'?'<p class="wk-note">技能文档由所选工作端的文件工具读取。</p>':'')+localMcpNote+trustMcpNote+'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">'+(kind==='mcp'?'暂无与所选工作端兼容的已启用 MCP。':documents?'暂无已启用的技能文档。':'暂无已启用的 Skills。')+'</p>')+'</form>',
       '<a class="wk-button" href="#settings/extensions" data-wb-close-link>管理 Skills 与 MCP</a>'+b('取消','close')+
       '<button class="wk-button primary" type="submit" form="wb-composer-capabilities">保存选择</button>');
     $('#wb-dialog').dataset.uiModule='workbench';

@@ -106,6 +106,12 @@
     "full_access": "EXPLICIT_PER_WORK_CONFIRMATION; NEVER_INFERRED_FROM_AUTO",
     "configuration_revision": "VERIFICATION_OBSERVATIONS_DO_NOT_CHANGE_CONNECTION_CONFIGURATION_REVISION"
   },
+  "native_feature_catalog": {
+    "path": "src/researchos/workdesk/partners/native_features.json",
+    "binding": "EXACT_MANAGED_RELEASE_ID_VERSION_AND_ROUTE; OPTIONAL_API_PROVIDER_OR_PERMISSION_SCOPE",
+    "continuation": "OFFICIAL_RESUME_METHOD_AND_INDEPENDENT_AUTOMATIC_CONTINUATION_GATE",
+    "mcp": "DISTINCT_SCOPED_TRANSPORT_FACT; CONFIGURATION_DOES_NOT_IMPLY_SERVER_CONNECTED"
+  },
   "partner_task_bridge": {
     "transport": "PRIVATE_OWNER_EPOCH_BOUND_RPC_AFTER_PARENT_TRANSACTION_COMMIT",
     "methods": ["partner.task.start", "partner.task.poll", "partner.task.stop"],

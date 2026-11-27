@@ -64,10 +64,10 @@ class Planning:
                     'fixed_schedules':self.s.work_flows.schedule_catalog(db),
                     'projects':self.s.work_records.projects(db),'tasks':tasks,
                     'providers':[{**p,'legacy_auto_goal_supported':p['id'] in legacy,'legacy_available':p['id'] in legacy,
-                                  'auto_goal_supported':any(c['provider']==p['id'] and c['available'] and partner_task.native_continuation(c) for c in partners['connections'])} for p in partners['partners']],
-                    'partner_connections':[{**c,'auto_continue_supported':c['available'] and partner_task.native_continuation(c),
-                                            'auto_goal_supported':c['available'] and partner_task.native_continuation(c),
-                                            'continuation_reason':'' if partner_task.native_continuation(c) else PARTNER_CONTINUATION_REASON}
+                                  'auto_goal_supported':any(c['provider']==p['id'] and c['available'] and partner_task.native_continuation(c,automatic=True) for c in partners['connections'])} for p in partners['partners']],
+                    'partner_connections':[{**c,'auto_continue_supported':c['available'] and partner_task.native_continuation(c,automatic=True),
+                                            'auto_goal_supported':c['available'] and partner_task.native_continuation(c,automatic=True),
+                                            'continuation_reason':'' if partner_task.native_continuation(c,automatic=True) else PARTNER_CONTINUATION_REASON}
                                            for c in partners['connections']],
                     'service_required':True,'wake_when_closed':False,'missed_policy':'SKIP_NO_CATCHUP','no_dispatch':True}
 
@@ -83,7 +83,7 @@ class Planning:
         if t['spec'].get('runtime_mode')!='official':raise ValueError('本页自动接续只用于官方独立工作；有限任务沿用原计划机制。')
         if t['spec'].get('work_mode')=='cooperative':raise ValueError('合作工作使用独立的合作重复计划。')
         partner=partner_task.selected(t)
-        if partner and not partner_task.native_continuation(t['spec'].get('partner_connection') or {}):raise ValueError(PARTNER_CONTINUATION_REASON)
+        if partner and not partner_task.native_continuation(t['spec'].get('partner_connection') or {},automatic=True,access=t['spec'].get('access','workspace')):raise ValueError(PARTNER_CONTINUATION_REASON)
         if not partner and not self.s.independent.describe(t['spec']['provider'])['native_resume']:raise ValueError('此工作端不支持当前原生接续。')
         a=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(identity,)).fetchone()
         a=self.s.store.attempt_row(a) if a else None
@@ -98,12 +98,14 @@ class Planning:
         if not binding:return self.s.locations.credential_revision
         from .partner_connections import check_frozen
         current=check_frozen(db,binding)
-        if not partner_task.native_continuation(current):raise ValueError(PARTNER_CONTINUATION_REASON)
+        access=row.get('access','workspace')
         if row.get('task_id'):
             task=self.s.store.task(row['task_id'],db)
+            access=task['spec'].get('access','workspace')
             attached=task['spec'].get('partner_connection') or {}
             if any(attached.get(k)!=binding.get(k) for k in ('id','revision','account_id','auth_generation','secret_version','release_id','route','api_provider','model')):
                 raise ValueError('原任务的伙伴绑定已变化，计划未自动改用。')
+        if not partner_task.native_continuation(current,automatic=True,access=access):raise ValueError(PARTNER_CONTINUATION_REASON)
         return self.s.resources.context(current).credential_revision
 
     def schedule_save(self,db,p):
@@ -136,7 +138,7 @@ class Planning:
         if p.get('connection_id'):
             from .partner_connections import selected
             binding=selected(db,p['connection_id'],p['connection_revision'])
-            if binding['provider']!=provider or not partner_task.native_continuation(binding):raise ValueError(PARTNER_CONTINUATION_REASON)
+            if binding['provider']!=provider or not partner_task.native_continuation(binding,automatic=True):raise ValueError(PARTNER_CONTINUATION_REASON)
             defaults={'model':binding['model'],'effort':'default','tier':'standard'}
         else:
             if provider not in SERVICES:raise ValueError(PARTNER_CONTINUATION_REASON)

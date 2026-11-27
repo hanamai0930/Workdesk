@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "releases": {
+    "codex-0.172.0-windows-amd64-e80bd26204520581": {
+      "partner_id": "codex",
+      "version": "0.172.0",
+      "resume": {"method": "thread/resume", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "configured"}
+    },
+    "deepseek-0.2.2-rc.5-windows-amd64-c4b343ff0602332a": {
+      "partner_id": "deepseek",
+      "version": "0.2.2-rc.5",
+      "resume": {"method": "session/resume", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "configured"}
+    },
+    "qwen-0.28.4-windows-amd64-2a195c80308ee3de": {
+      "partner_id": "qwen",
+      "version": "0.28.4",
+      "resume": {"method": "session/load", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "project"}
+    },
+    "grok-1.0.92-windows-amd64-366e4ad2078f11e9": {
+      "partner_id": "grok",
+      "version": "1.0.92",
+      "resume": {"method": "session/load", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "project"}
+    },
+    "claude-2.1.332-windows-amd64-081538ebd1276b11": {
+      "partner_id": "claude",
+      "version": "2.1.332",
+      "resume": {"method": "--resume", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "project"}
+    },
+    "gemini-0.71.1-windows-amd64-b5f52522c14fdd9d": {
+      "partner_id": "gemini",
+      "version": "0.71.1",
+      "resume": {"method": "session/load", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "project", "project_trust": true}
+    },
+    "kimi-2.8.0-windows-amd64-94a3c94be41b0d78": {
+      "partner_id": "kimi",
+      "version": "2.8.0",
+      "resume": {"method": "session/load", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "project"}
+    },
+    "glm-4.0.0-windows-amd64-865fc3d34ee322ff": {
+      "partner_id": "glm",
+      "version": "4.0.0",
+      "resume": {"method": "session/resume", "routes": ["api"], "automatic": true},
+      "mcp": {"routes": ["api"], "transports": ["http", "stdio"], "stdio_cwd": "configured"}
+    },
+    "glm-4.0.0-windows-amd64-be5b481588eb2cc6": {
+      "partner_id": "glm",
+      "version": "4.0.0",
+      "resume": {"method": "session/resume", "routes": ["account", "api"], "automatic": true},
+      "mcp": {"routes": ["account", "api"], "transports": ["http", "stdio"], "stdio_cwd": "configured"}
+    }
+  }
+}

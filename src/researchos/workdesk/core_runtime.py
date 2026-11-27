@@ -75,12 +75,10 @@ def freeze(base, data, executable):
                              (base / 'core', {'.go', '.mod', '.sum'}),
                              (base / 'contracts', {'.json'})]:
         names.extend(p for p in folder.rglob('*') if p.is_file() and p.suffix in suffixes and '__pycache__' not in p.parts)
-    api_catalog = base / 'src/researchos/workdesk/partners/api_providers.json'
-    if api_catalog.is_file():
-        names.append(api_catalog)
-    permission_catalog = base / 'src/researchos/workdesk/partners/permissions.json'
-    if permission_catalog.is_file():
-        names.append(permission_catalog)
+    for declaration in ('api_providers.json', 'permissions.json', 'native_features.json'):
+        catalog = base / 'src/researchos/workdesk/partners' / declaration
+        if catalog.is_file():
+            names.append(catalog)
     names.extend(p for p in (base / 'workdesk-ui').glob('*.py') if p.is_file())
     names.extend(p for p in (base / 'workdesk-ui/archive_sources').glob('*.py') if p.is_file())
     for folder in ('workdesk-ui/static', 'workdesk-ui/dist'):

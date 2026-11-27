@@ -196,6 +196,9 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
             chain_usage=self.store.usage(chain=member[0],db=db) if member else None
         independent_service=task['spec'].get('independent_service')
         if task['spec'].get('runtime_mode')=='official' and task['spec'].get('execution')!='partner_native':independent_service=self.independent.describe(task['spec']['provider'],task['spec'].get('qwen_runtime'))
+        if task['spec'].get('execution')=='partner_native' and task['spec'].get('partner_connection'):
+            from .partner_task import descriptor
+            independent_service=descriptor(task['spec']['partner_connection'])
         if independent_service and task['spec'].get('cooperative'):independent_service={**independent_service,'scope':'COOPERATIVE_UNIT'}
         if not independent_service and task['spec'].get('work_mode','independent')=='independent' and task['spec'].get('execution','scoped')!='scoped':
             independent_service=self.independent.describe(task['spec']['provider'])

@@ -3,9 +3,35 @@ from __future__ import annotations
 
 import json
 import re
+import os
 from urllib.parse import parse_qs, urlsplit
+from urllib import request as network
 
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
+
+
+def inherit_grok_device_proxy(env):
+    """Use the configured Windows proxy for the official device request."""
+    explicit = {key.upper() for key, value in env.items() if value}
+    if os.name != "nt" or "ALL_PROXY" in explicit:
+        return
+    if network.proxy_bypass("auth.x.ai") or getattr(network, "proxy_bypass_registry", lambda _: False)("auth.x.ai"):
+        return
+    # Native workers always receive a loopback NO_PROXY. Python's combined
+    # getproxies() would then skip the Windows registry entirely.
+    configured = getattr(network, "getproxies_registry", lambda: {})()
+    for scheme in ("http", "https"):
+        key = scheme.upper() + "_PROXY"
+        if key in explicit:
+            continue
+        value = configured.get(scheme, "")
+        try:
+            url = urlsplit(value)
+            if (url.scheme in {"http", "https"} and url.hostname and not url.username and not url.password
+                    and url.path in {"", "/"} and not url.query and not url.fragment):
+                env[key] = value
+        except ValueError:
+            continue
 
 
 def redact_login_chunk(text, pending, secrets, *, final=False):

@@ -8,19 +8,17 @@ from pathlib import Path
 import time
 
 from .store import ACTIVE, UNKNOWN
+from .partners.native_features import feature
 
 
-REVIEWED_NATIVE_CONTINUATION = {'codex': '0.172.0', 'deepseek': '0.2.2-rc.5', 'qwen': '0.28.4'}
-
-
-def native_continuation(binding):
-    expected = REVIEWED_NATIVE_CONTINUATION.get(binding.get('provider'))
-    return expected is not None and binding.get('version') == expected
+def native_continuation(binding, *, automatic=False, access=None):
+    value = feature(binding, 'resume', 'workspace' if access == 'inherit' else access)
+    return bool(value.get('method') and (not automatic or value.get('automatic') is True))
 
 
 def resume_reference(task, prior):
     """Require the prior turn's original result, not a provisional session ID."""
-    if not native_continuation(task['spec'].get('partner_connection') or {}):
+    if not native_continuation(task['spec'].get('partner_connection') or {}, access=task['spec'].get('access', 'workspace')):
         raise ValueError('此工作端版本的准确原生会话续跑尚未核实；原会话保留。')
     result = prior.get('result') or {}
     receipt = result.get('native_result') or {}
@@ -88,13 +86,17 @@ def checked_scene_mcp(task, workdir):
     from .scene_runtime import selected
     scene = selected(task) or {}
     servers = scene.get('mcp', [])
-    if servers and not native_continuation(task['spec'].get('partner_connection') or {}):
-        raise ValueError('此场景使用 MCP；当前连接版本尚未接入每任务 MCP，请选择不含 MCP 的场景。')
+    access = task['spec'].get('access') or 'workspace'
+    supported = feature(task['spec'].get('partner_connection') or {}, 'mcp', 'workspace' if access == 'inherit' else access)
+    if servers and not supported.get('transports'):
+        raise ValueError('此场景使用 MCP；当前工作端版本、连接或权限尚未接入每任务 MCP。')
     for server in servers:
         config = mcp_config(server['config'])
-        if (task['spec']['provider'] == 'qwen' and config['transport'] == 'stdio'
+        if config['transport'] not in supported.get('transports', ()):
+            raise ValueError('当前工作端未核实这种每任务 MCP 传输方式。')
+        if (supported.get('stdio_cwd') == 'project' and config['transport'] == 'stdio'
                 and Path(config['cwd']).resolve() != Path(workdir).resolve()):
-            raise ValueError('Qwen 的 ACP 本机 MCP 须使用本次项目目录；不同目录未发送。')
+            raise ValueError('当前工作端的本机 MCP 须使用本次项目目录；不同目录未发送。')
     return servers
 
 
@@ -109,6 +111,11 @@ def _validate_run(run, task, attempt, binding, run_id=None):
         expected['id'] = run_id
     if binding.get('secret_version') is not None:
         expected['secret_version'] = binding['secret_version']
+    previous = (attempt.get('baseline') or {}).get('partner_resume', {})
+    if previous:
+        expected.update(previous)
+        if run.get('session_id') and run['session_id'] != previous.get('resume_session'):
+            raise ValueError('伙伴工作端回执中的会话与准确续跑身份不同，保留待核对，不重发。')
     for key, value in expected.items():
         if value is None or str(run.get(key)) != str(value):
             raise ValueError('伙伴运行与原任务、尝试或准确连接不一致：' + key)

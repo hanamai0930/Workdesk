@@ -4,13 +4,28 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"workdesk/core/internal/storage"
 )
 
+func installPartnerNativeFeaturesFixture(t *testing.T, a *App) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "src", "researchos", "workdesk", "partners", "native_features.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(a.pythonSources(), "researchos", "workdesk", "partners", "native_features.json")
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func taskPartnerFixture(t *testing.T) (*App, map[string]any, string) {
 	t.Helper()
 	a := partnerFixture(t)
+	installPartnerNativeFeaturesFixture(t, a)
 	p := map[string]any{"task_id": "parent-task", "attempt_id": "parent-attempt", "spec_hash": "parent-spec", "connection_id": "original-connection", "connection_revision": "7", "workspace": a.Profile.ProgramRoot, "prompt": "one exact original native turn"}
 	spec, _ := json.Marshal(map[string]any{"execution": "partner_native", "provider": "codex", "partner_connection": map[string]any{"id": p["connection_id"], "revision": "7", "provider": "codex"}})
 	if err := a.write(func(s *storage.Session) error {
@@ -35,7 +50,8 @@ func taskPartnerFixture(t *testing.T) (*App, map[string]any, string) {
 
 func TestPartnerTaskResumeRequiresExactCompletedOriginal(t *testing.T) {
 	a, p, _ := taskPartnerFixture(t)
-	prior := map[string]any{"id": ID(), "mode": "run", "partner_id": "codex", "state": "COMPLETED", "parent_task_id": p["task_id"], "parent_attempt_id": "old-attempt", "parent_spec_hash": "old-spec", "connection_id": p["connection_id"], "connection_revision": 7, "account_id": "old-account", "secret_version": "old-key", "release_id": "old-release", "session_id": "original-session", "workspace": p["workspace"], "local_exit_confirmed": true}
+	exactRelease := "codex-0.172.0-windows-amd64-e80bd26204520581"
+	prior := map[string]any{"id": ID(), "mode": "run", "partner_id": "codex", "state": "COMPLETED", "parent_task_id": p["task_id"], "parent_attempt_id": "old-attempt", "parent_spec_hash": "old-spec", "connection_id": p["connection_id"], "connection_revision": 7, "account_id": "old-account", "secret_version": "old-key", "release_id": exactRelease, "session_id": "original-session", "workspace": p["workspace"], "local_exit_confirmed": true, "connection_snapshot": map[string]any{"route": "api", "api_provider": "deepseek", "model": "fixture-model"}}
 	prior["result"] = map[string]any{"type": "result", "completion_scope": "OFFICIAL_NATIVE_TURN", "run_id": prior["id"], "partner_id": prior["partner_id"], "session_id": prior["session_id"]}
 	putPartnerFixture(t, a, "run", prior)
 	if err := a.write(func(s *storage.Session) error {
@@ -50,27 +66,27 @@ func TestPartnerTaskResumeRequiresExactCompletedOriginal(t *testing.T) {
 		p[k] = v
 	}
 	parent := map[string]any{"baseline": string(baseline), "workspace": p["workspace"]}
-	binding := map[string]any{"provider": "codex", "version": "0.172.0"}
-	connection := map[string]any{"id": p["connection_id"], "revision": 7, "release_id": prior["release_id"]}
+	binding := map[string]any{"provider": "codex", "version": "0.172.0", "release_id": exactRelease, "route": "api", "api_provider": "deepseek"}
+	connection := map[string]any{"id": p["connection_id"], "revision": 7, "release_id": prior["release_id"], "route": "api", "api_provider": "deepseek", "model": "fixture-model"}
 	account := map[string]any{"id": prior["account_id"], "secret_version": prior["secret_version"]}
-	if actual, err := a.partnerTaskResume(p, parent, binding, connection, account); err != nil || !samePartnerResume(actual, resume) {
+	if actual, err := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); err != nil || !samePartnerResume(actual, resume) {
 		t.Fatalf("exact completed session: %v", err)
 	}
 	for _, change := range []struct {
 		row map[string]any
 		key string
 		bad any
-	}{{p, "resume_session", "another-session"}, {p, "resume_attempt_id", nil}, {parent, "workspace", "another-workspace"}, {binding, "version", "unreviewed-release"}, {account, "id", "another-account"}, {account, "secret_version", "rotated-key"}, {connection, "release_id", "changed-release"}, {connection, "revision", 8}} {
+	}{{p, "resume_session", "another-session"}, {p, "resume_attempt_id", nil}, {parent, "workspace", "another-workspace"}, {binding, "version", "unreviewed-version"}, {binding, "release_id", "unreviewed-package"}, {account, "id", "another-account"}, {account, "secret_version", "rotated-key"}, {connection, "release_id", "changed-release"}, {connection, "revision", 8}, {connection, "route", "account"}, {connection, "api_provider", "changed-api"}, {connection, "model", "changed-model"}} {
 		old := change.row[change.key]
 		change.row[change.key] = change.bad
-		if _, err := a.partnerTaskResume(p, parent, binding, connection, account); err == nil {
+		if _, err := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); err == nil {
 			t.Errorf("accepted mismatched %s", change.key)
 		}
 		change.row[change.key] = old
 	}
 	prior["state"], prior["local_exit_confirmed"] = "STOP_UNKNOWN", false
 	putPartnerFixture(t, a, "run", prior)
-	if _, err := a.partnerTaskResume(p, parent, binding, connection, account); err == nil {
+	if _, err := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); err == nil {
 		t.Fatal("resumed ambiguous turn")
 	}
 }
@@ -126,5 +142,28 @@ func TestPartnerTaskStoppedBeforeStartNeverCreatesReplacement(t *testing.T) {
 	rows, _ := a.partnerObjects("run")
 	if len(rows) != 0 || len(a.partnerProcesses) != 0 {
 		t.Fatal("replacement was created")
+	}
+}
+
+func TestPartnerTaskMCPRequiresExactTransportAndProjectScope(t *testing.T) {
+	a, p, _ := taskPartnerFixture(t)
+	binding := map[string]any{"provider": "grok", "version": "1.0.92", "release_id": "grok-1.0.92-windows-amd64-366e4ad2078f11e9", "route": "api", "api_provider": "deepseek"}
+	config := map[string]any{"transport": "stdio", "cwd": p["workspace"]}
+	servers := []any{map[string]any{"name": "local_test", "config": config}}
+	if err := a.checkPartnerTaskMCP(servers, binding, "workspace", p["workspace"]); err != nil {
+		t.Fatalf("recorded stdio MCP with exact parent scope: %v", err)
+	}
+	config["cwd"] = "another-cwd"
+	if err := a.checkPartnerTaskMCP(servers, binding, "workspace", p["workspace"]); err == nil {
+		t.Fatal("unrepresentable stdio scope accepted")
+	}
+	config["transport"] = "unreviewed"
+	if err := a.checkPartnerTaskMCP(servers, binding, "workspace", p["workspace"]); err == nil {
+		t.Fatal("unreviewed transport accepted")
+	}
+	config["transport"] = "http"
+	binding["release_id"] = "grok-1.0.92-windows-amd64-unreviewed"
+	if err := a.checkPartnerTaskMCP(servers, binding, "workspace", p["workspace"]); err == nil {
+		t.Fatal("same version without exact release evidence was accepted")
 	}
 }
