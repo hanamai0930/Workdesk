@@ -201,6 +201,21 @@ sys.exit(7)
         text,pending=redact_login_chunk('-CODE\n',pending,['SECRET-CODE'])
         self.assertEqual(text,'[REDACTED]\n');self.assertFalse(pending)
 
+    def test_login_link_excludes_failed_api_endpoint_and_keeps_opaque_oauth(self):
+        from researchos.workdesk.partners.auth import LoginOutput
+        parser=LoginOutput('grok')
+        events=parser.feed('Error: failed request (https://auth.x.ai/oauth2/device/code): connection failed\n')
+        self.assertFalse(any(e.get('login_url') for e in events))
+        parser=LoginOutput('claude')
+        self.assertFalse(parser.feed('Open https://claude.ai/oauth/authorize\n'))
+        url='https://claude.ai/oauth/authorize?s-opaque_native-token'
+        events=parser.feed('Open '+url+'\n')
+        self.assertEqual(next(e['login_url'] for e in events if e['kind']=='link'),url)
+        parser=LoginOutput('claude')
+        target='https://claude.ai/oauth/authorize?state=fixture&client_id=official'
+        events=parser.feed('\x1b]8;;'+target+'\x1b\\https://claude.ai/oauth/authorize\x1b]8;;\x1b\\\n')
+        self.assertEqual(next(e['login_url'] for e in events if e['kind']=='link'),target)
+
     def test_sensitive_login_input_rejects_wrong_ids_and_newlines(self):
         from researchos.workdesk.partners.worker import PartnerWorker, NativeRejected
         worker=PartnerWorker({'partner_id':'claude','mode':'login'},lambda _:None)

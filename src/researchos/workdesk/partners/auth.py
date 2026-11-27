@@ -45,6 +45,17 @@ class LoginOutput:
                    "grok": ("x.ai", "grok.com"), "kimi": ("kimi.com", "kimi.ai"),
                    "glm": ("z.ai", "bigmodel.cn"), "qwen": ("qwen.ai", "qwenlm.ai"),
                    "gemini": ("accounts.google.com",)}.get(self.partner, ())
+        if self.partner == "grok" and value.path.rstrip(".,):") == "/oauth2/device/code":
+            # A failed device-authorization POST mentions its API endpoint.
+            # That endpoint is not the browser verification page.
+            return False
+        if self.partner == "claude" and value.path.endswith("/oauth/authorize"):
+            # A terminal soft-wrap must not publish the first URL fragment as
+            # a usable login page. The official OAuth request owns these values.
+            # Current official releases can use an opaque query token instead
+            # of the older named OAuth parameters. Preserve that native URL.
+            if not value.query:
+                return False
         return value.scheme == "https" and any(host == d or host.endswith("." + d) for d in domains)
 
     def feed(self, text, source="stdout", *, final=False):
@@ -81,7 +92,10 @@ class LoginOutput:
             self.success = True
         elif self.partner == "kimi" and re.search(r"(?:^|[\r\n])Logged in to [^\r\n]+", plain):
             self.success = True
-        urls = [u.rstrip(".,)") for u in re.findall(r"https?://[^\s\x1b<>\"']+(?=[\s\x1b<>\"'])", plain)]
+        # OSC 8 carries the actual link; its visible terminal label can omit
+        # OAuth query values. Extract the target before ANSI removes the OSC.
+        hyperlinks = re.findall(r"\x1b\]8;[^;\x1b\x07]*;(https?://[^\x1b\x07]+)(?:\x07|\x1b\\)", combined)
+        urls = hyperlinks + [u.rstrip(".,)") for u in re.findall(r"https?://[^\s\x1b<>\"']+(?=[\s\x1b<>\"'])", plain)]
         for url in urls:
             if not self._allowed_url(url):
                 continue

@@ -279,11 +279,14 @@ func (m *Manager) prepareZCode(ctx context.Context, version, program string, r *
 			return errors.New("官方ZCode发布内的provider资源不一致；未覆盖")
 		}
 	}
+	if e = extractZCodeKeyring(ctx, seven, payload, program, stage, env, arch); e != nil {
+		return e
+	}
 	r.Version = version
 	r.Source = "https://github.com/zai-org/ZCode/releases/tag/" + release.Tag
 	r.Sources = append(r.Sources, proof)
 	r.Dependencies = append(r.Dependencies, node)
 	r.Entry = []string{node.Path, entry}
-	r.Notes = append(r.Notes, "从校验通过的官方Windows发布包仅提取resources/glm及其官方provider配置；provider文件按独立Agent相对位置原样暂存，没有执行安装程序或安装桌面/Web客户端。")
+	r.Notes = append(r.Notes, "从校验通过的同一官方Windows发布包提取resources/glm、provider配置及独立Agent动态依赖的7个keyring原文件；ASAR仅在准备临时区有界读取，没有执行安装程序或安装桌面/Web客户端。")
 	return nil
 }

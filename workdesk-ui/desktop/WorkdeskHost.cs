@@ -131,6 +131,7 @@ internal sealed partial class WorkdeskHost : Form {
                     }
                     if (!m.ContainsKey("channel")) return;
                     if ((string)m["channel"]=="workdesk.work.login") {
+                        if(Equals(m.ContainsKey("action")?m["action"]:null,"open")) {await OpenWorkLogin(source,m);return;}
                         Uri target;
                         if(source.AbsolutePath==shellUrl.AbsolutePath && IsWorkLoginPage(source) && m.Count==2 && m.ContainsKey("url") &&
                            Uri.TryCreate(m["url"] as string,UriKind.Absolute,out target) && IsLocalWorkLogin(target)) {
@@ -163,13 +164,13 @@ internal sealed partial class WorkdeskHost : Form {
                     await ShowChat(provider,requested);
                 } catch(Exception exc) {Publish("error",exc.GetType().Name);}
             };
-            await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("if(location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+"){window.WorkdeskDesktop={engine:'WebView2',chatViews:true,chatAccounts:true,windowPreferences:true};}");
+            await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("if(location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+"){window.WorkdeskDesktop={engine:'WebView2',chatViews:true,chatAccounts:true,windowPreferences:true,workLoginLinks:true};}");
             // Forward only deliberate clicks on the shell's official Work login
             // link. Generic popups and all remote views keep their old rules.
             await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
                 "if(window===top && location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+" && location.pathname==="+json.Serialize(shellUrl.AbsolutePath)+")"+
                 "document.addEventListener('click',e=>{const a=e.target.closest?.('a.wd-partners-login-link');"+
-                "if(!e.isTrusted||e.button!==0||!a||a.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(a.hostname)||"+
+                "if(!e.isTrusted||e.button!==0||!a||a.dataset.workLoginManaged==='true'||a.protocol!=='http:'||!['127.0.0.1','localhost','[::1]'].includes(a.hostname)||"+
                 "!(/^(?:#connect|#settings\\/accounts(?:\\/[^/?#]+)?)$/.test(location.hash)))return;"+
                 "e.preventDefault();chrome.webview.postMessage({channel:'workdesk.work.login',url:a.href});},true);");
             shell.Source=shellUrl;WriteReport();
@@ -283,6 +284,31 @@ internal sealed partial class WorkdeskHost : Form {
     }
     static bool IsWorkLoginPage(Uri source) {
         return Regex.IsMatch(source.Fragment,@"\A(?:#connect|#settings/accounts(?:/[^/?#]+)?)\z",RegexOptions.CultureInvariant);
+    }
+    async Task OpenWorkLogin(Uri source,Dictionary<string,object> message) {
+        object rawId,rawProvider,rawUrl;
+        if(!message.TryGetValue("requestId",out rawId) || !(rawId is string) || !Regex.IsMatch((string)rawId,@"\A[A-Za-z0-9_-]{1,80}\z"))return;
+        string requestId=(string)rawId,state="FAILED",note="当前授权链接不可用，请核对登录状态后重试。";
+        try {
+            Uri target;
+            if(source.AbsolutePath==shellUrl.AbsolutePath && IsWorkLoginPage(source) && message.Count==5 &&
+               message.TryGetValue("provider",out rawProvider) && rawProvider is string && sites.ContainsKey((string)rawProvider) &&
+               message.TryGetValue("url",out rawUrl) && rawUrl is string && ((string)rawUrl).Length<=8192 &&
+               Uri.TryCreate((string)rawUrl,UriKind.Absolute,out target) && String.IsNullOrEmpty(target.UserInfo) &&
+               (target.Scheme=="https" && target.IsDefaultPort || (string)rawProvider=="deepseek" && IsLocalWorkLogin(target))) {
+                // A request can only launch the exact link currently displayed
+                // for this partner in the shell, not an arbitrary browser URL.
+                string test="(/^(?:#connect|#settings\\/accounts(?:\\/[^/?#]+)?)$/.test(location.hash) && "+
+                    "Array.from(document.querySelectorAll('a.wd-partners-login-link')).some(a=>a.getClientRects().length>0 && a.dataset.workLoginProvider==="+
+                    json.Serialize(rawProvider)+" && a.href==="+json.Serialize((string)rawUrl)+"))";
+                if(await shell.CoreWebView2.ExecuteScriptAsync(test)=="true") {
+                    note="无法打开默认浏览器，请检查浏览器后重试。";
+                    OpenExternal(target);
+                    state="OPENED";note="已交给默认浏览器，请在浏览器完成授权。";
+                }
+            }
+        } catch(Exception) { }
+        if(!IsDisposed && shell.CoreWebView2!=null) shell.CoreWebView2.PostWebMessageAsJson(json.Serialize(new {channel="workdesk.work.login",requestId,state=state,message=note}));
     }
     void OpenExternal(Uri uri) {
         bool handled=false;

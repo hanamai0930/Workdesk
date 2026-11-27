@@ -9,7 +9,7 @@
   .wd-partners-secondary summary,.wd-partners-management summary { cursor:pointer; color:var(--wk-muted); }
   .wd-partners-secondary[open]>summary,.wd-partners-management[open]>summary { margin-bottom:14px; }
   .wd-partners-management { padding:14px 16px; border:1px solid var(--wk-line); border-radius:10px; }
-  .wd-partners-login-link { display:inline-flex; align-items:center; gap:6px; color:var(--wk-action); text-decoration:underline; justify-self:start; }
+  .wd-partners-login-link { display:inline-flex; align-items:center; gap:6px; color:var(--wk-action); text-decoration:underline; justify-self:start;width:fit-content;max-width:100%;overflow-wrap:anywhere; }
   .wd-partners-device-code { margin:0; font-size:14px; }
   .wd-partners-operation { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .wd-partners .wd-settings-section-header { margin:0; }
@@ -29,6 +29,8 @@
   .wd-partners-state:is([data-state="CONNECTED"],[data-state="VERIFIED"],[data-state="AUTHENTICATED"],[data-state="COMPLETED"],[data-state="READY"],[data-state="LOCAL_READY"]) { color:var(--wk-good); background:color-mix(in srgb,var(--wk-good) 10%,var(--wk-bg)); }
   .wd-partners-state:is([data-state="FAILED"],[data-state="ERROR"],[data-state="UNKNOWN"],[data-state="ORPHANED_UNKNOWN"]) { color:light-dark(#a72b2b,#ffb4ad); }
   .wd-partners-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+  .wd-partners-login-open { display:grid;gap:7px;min-width:0; }
+  .wd-partners-login-link:focus-visible { outline:2px solid var(--wk-action);outline-offset:4px;border-radius:3px; }
   .wd-partners .wd-partners-actions { justify-content:flex-end; }
   .wd-partners-release,.wd-partners-account { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; gap:10px 14px; }
   .wd-partners-release+.wd-partners-release,.wd-partners-account+.wd-partners-account { border-top:1px solid var(--wk-line); padding-top:14px; }

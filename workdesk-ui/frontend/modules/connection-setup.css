@@ -63,6 +63,10 @@
   .wd-partners-embedded .wd-partners-state[data-state="AUTHENTICATED"] { color:var(--connect-accent); }
   .wd-partners-embedded :is(a,summary) { color:var(--connect-accent);font-size:13px;cursor:pointer; }
   .wd-partners-embedded .wd-partners-error { color:light-dark(#994038,#f0a49a); }
+  .wd-partners-embedded .wd-partners-login-open { display:grid;gap:7px;min-width:0; }
+  .wd-partners-embedded .wd-partners-login-link { display:inline-flex;align-items:center;gap:5px;width:fit-content;max-width:100%;overflow-wrap:anywhere;text-decoration:underline; }
+  .wd-partners-embedded .wd-partners-login-link:focus-visible { outline:2px solid var(--connect-accent);outline-offset:4px;border-radius:3px; }
+  .wd-connect-login-progress { overflow-wrap:anywhere; }
   @media(max-width:740px) {
     .wd-connect { grid-template-columns:minmax(0,1fr);width:min(500px,calc(100% - 24px));margin:0 auto;padding-block:14px; }
     .wd-connect-intro { border-radius:15px 15px 0 0;gap:16px; }

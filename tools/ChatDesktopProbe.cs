@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.WinForms;
@@ -47,7 +48,37 @@ internal sealed partial class WorkdeskHost {
         await Task.Delay(300);
         if(externalProbeOpens.Count!=2)throw new Exception("Local login can open outside the account UI");
         await ShellProbe("document.querySelector('#probe-external-link')?.remove()");
+        await ShellProbe("location.hash='#connect'");
+        await ShellProbe("window.workLoginProbe=[];chrome.webview.addEventListener('message',e=>{if(e.data?.channel==='workdesk.work.login')window.workLoginProbe.push(e.data);});"+
+            "const fixtureLogin=document.createElement('a');fixtureLogin.id='probe-external-link';fixtureLogin.className='wd-partners-login-link';fixtureLogin.dataset.workLoginProvider='deepseek';fixtureLogin.dataset.workLoginManaged='true';"+
+            "fixtureLogin.href="+json.Serialize(login)+";fixtureLogin.textContent='Local login fixture';document.body.append(fixtureLogin);");
+        await ShellProbe("chrome.webview.postMessage({channel:'workdesk.work.login',action:'open',requestId:'fixture_wrong',provider:'codex',url:fixtureLogin.href});"+
+            "chrome.webview.postMessage({channel:'workdesk.work.login',action:'open',requestId:'fixture_right',provider:'deepseek',url:fixtureLogin.href});");
+        await WaitProbe(()=>externalProbeOpens.Count==3);
+        if(externalProbeOpens[2].AbsoluteUri!=login || await shell.CoreWebView2.ExecuteScriptAsync(
+            "workLoginProbe.some(e=>e.requestId==='fixture_wrong'&&e.state==='FAILED') && workLoginProbe.some(e=>e.requestId==='fixture_right'&&e.state==='OPENED')")!="true")
+            throw new Exception("Work login did not acknowledge the exact browser handoff or reject a mismatched partner");
         checks.Add("user-clicked exact official Work login opens from connector and settings; unrelated local paths and links stay blocked");
+    }
+    async Task ProbeChatLoginFailure(List<string> checks) {
+        await ShellProbe("chrome.webview.postMessage({channel:'workdesk.chat.account',action:'open',provider:'codex'});");
+        try {await WaitProbe(()=>chatLogins.ContainsKey("codex") && chatLoginStates["codex"]=="OPENED");}
+        catch(Exception) {throw new Exception("Chat login did not report first load");}
+        var login=chatLogins["codex"];
+        var control=login.Controls.OfType<TableLayoutPanel>().Single();
+        var confirm=control.Controls.OfType<Button>().Single();
+        var retry=control.Controls.OfType<FlowLayoutPanel>().Single().Controls.OfType<LinkLabel>().First();
+        login.Controls.OfType<WebView2>().Single().CoreWebView2.Navigate(probeBase.TrimEnd('/')+"/unavailable");
+        try {await WaitProbe(()=>chatLoginStates["codex"]=="LOAD_FAILED");}
+        catch(Exception) {throw new Exception("Chat login did not recognize the HTTP failure");}
+        if(confirm.Enabled || !retry.Visible)throw new Exception("HTTP failure was shown as a usable Chat login");
+        typeof(LinkLabel).GetMethod("OnLinkClicked",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(retry,new object[]{new LinkLabelLinkClickedEventArgs(retry.Links[0])});
+        try {await WaitProbe(()=>chatLoginStates["codex"]=="OPENED" && confirm.Enabled);}
+        catch(Exception) {throw new Exception("Chat login did not recover after reload");}
+        login.Close();
+        if(await shell.CoreWebView2.ExecuteScriptAsync("chatAccountProbe.some(e=>e.provider==='codex'&&e.state==='LOAD_FAILED')")!="true")
+            throw new Exception("Chat Login failure not reported to the connector");
+        checks.Add("Chat login separates opening from loaded, reports an HTTP failure and recovers using the in-window reload");
     }
     async void RunProbe() {
         var checks=new List<string>();string error=null;
@@ -130,6 +161,7 @@ internal sealed partial class WorkdeskHost {
             foreach(var c in chats.Values)if(c.View.Visible)throw new Exception("Remote view covers settings");
             checks.Add("settings navigation hides every native chat view");
             await ProbeWorkLogin(checks);
+            await ProbeChatLoginFailure(checks);
             checks.Add("remote pages have neither host objects nor web-message access");
         }catch(Exception exc){error=exc.Message;}
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(reportPath),"probe-result.json"),json.Serialize(new {checks=checks,error=error,local_fixtures=true,model_requests=0}));

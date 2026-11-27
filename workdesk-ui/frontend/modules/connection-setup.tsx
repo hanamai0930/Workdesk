@@ -26,9 +26,12 @@ type Preferences = {
 type ChatAccountMessage = {
   channel?: string;
   provider?: Provider;
-  state?: 'OPENED' | 'CONFIRMED' | 'CLOSED' | 'FAILED';
+  state?: 'OPENING' | 'OPENED' | 'LOAD_FAILED' | 'CONFIRMED' | 'CLOSED' | 'FAILED';
+  message?: string;
   connections?: Accounts;
 };
+type ChatWindowState = {state:NonNullable<ChatAccountMessage['state']>;message?:string};
+const safeMessage=(value?:string)=>typeof value==='string'?value.replace(/https?:\/\/\S+/g,'官方页面').replace(/(?:token|code|state|key|secret|credential)\s*[:=]\s*[^\s,;]+/gi,'授权信息已隐藏').slice(0,180):undefined;
 type DesktopBridge = {
   postMessage(value: object): void;
   addEventListener(event: 'message', listener: (event: MessageEvent<ChatAccountMessage>) => void): void;
@@ -107,7 +110,8 @@ export function ConnectionSetup({ initialStatus, onEnter }: Props) {
   const [apiProviders,setApiProviders]=useState<{id:string;name:string}[]>([]);
   useEffect(()=>{const controller=new AbortController();fetch('api/v2/partners',{signal:controller.signal,cache:'no-store'}).then(response=>{if(!response.ok)throw Error();return response.json();}).then(value=>{if(!controller.signal.aborted){setPartners(value.partners||[]);setApiProviders(value.api_providers||[]);}}).catch(()=>{if(!controller.signal.aborted)setError('暂时无法读取官网列表。');});return()=>controller.abort();},[]);
   const [busy, setBusy] = useState(false);
-  const [chatPending, setChatPending] = useState<Provider>();
+  const [chatWindows, setChatWindows] = useState<Record<Provider,ChatWindowState>>({});
+  const chatLaunches=useRef<Record<Provider,number>>({});
   const [error, setError] = useState('');
   const preference = bridges().WorkdeskSettingsPreferences;
   const [seconds, setSeconds] = useState(() => preference?.get().connectionNoticeSeconds ?? 10);
@@ -157,11 +161,9 @@ export function ConnectionSetup({ initialStatus, onEnter }: Props) {
     if (!chatBridge) return;
     const receive = (event: MessageEvent<ChatAccountMessage>) => {
       const message = event.data;
-      if (message?.channel !== chatChannel) return;
-      if (message.state === 'OPENED') setChatPending(message.provider);
-      if (message.state === 'CLOSED' || message.state === 'FAILED' || message.state === 'CONFIRMED')
-        setChatPending(undefined);
-      if (message.state === 'FAILED') setError('无法打开官网 Chat，请重试。');
+      if (message?.channel !== chatChannel || !message.provider || !message.state || !alive.current) return;
+      const provider=message.provider,state=message.state;
+      setChatWindows(previous=>({...previous,[provider]:{state,message:safeMessage(message.message)}}));
       if (message.state !== 'CONFIRMED' || !message.provider) return;
       announce(message.provider, 'chat');
       void request<ConnectionStatus>().then(updated => {
@@ -198,12 +200,18 @@ export function ConnectionSetup({ initialStatus, onEnter }: Props) {
   }
 
   function startChatLogin() {
+    if(!chatBridge||!partners.some(partner=>partner.id===chatProvider))return;
     setError('');
-    try { chatBridge?.postMessage({ channel: chatChannel, action: 'open', provider: chatProvider }); }
-    catch { setError('暂时无法打开官网 Chat，请重试。'); }
+    const now=Date.now();if(chatWindows[chatProvider]?.state==='OPENING'&&now-(chatLaunches.current[chatProvider]||0)<400)return;
+    chatLaunches.current[chatProvider]=now;
+    setChatWindows(previous=>({...previous,[chatProvider]:{state:'OPENING'}}));
+    try { chatBridge.postMessage({ channel: chatChannel, action: 'open', provider: chatProvider }); }
+    catch { setChatWindows(previous=>({...previous,[chatProvider]:{state:'FAILED',message:'暂时无法打开官网 Chat，请重试。'}})); }
   }
 
-  const locked = busy || !!chatPending;
+  const locked = busy;
+  const chatWindow=chatWindows[chatProvider],chatFailed=chatWindow?.state==='FAILED'||chatWindow?.state==='LOAD_FAILED';
+  const chatProgress=chatWindow?.state==='OPENING'?'正在打开官网窗口…':chatWindow?.state==='OPENED'?'官网页面已打开。请在窗口中完成登录并确认。':chatFailed?(chatWindow.message||'官网页面未能载入，请重试打开。'):chatWindow?.state==='CLOSED'?'官网窗口已关闭，可再次打开。':chatWindow?.state==='CONFIRMED'?'已收到你在官网窗口中的登录确认。':'';
   const dismiss = (id: number) => setNotices(previous => previous.filter(item => item.id !== id));
   return <div className="wd-connect">
     <aside className="wd-connect-intro">
@@ -235,8 +243,9 @@ export function ConnectionSetup({ initialStatus, onEnter }: Props) {
         </label>
         <p>在 Workdesk 内打开 {chatProvider==='codex'?'ChatGPT':partners.find(item=>item.id===chatProvider)?.name||chatProvider} 官网。已登录的浏览器会话会在下次启动时复用。</p>
         <p role="status">{status.chat_accounts?.[chatProvider]?'Chat 账号已连接':'Chat 账号尚未确认登录'}</p>
-        {chatBridge ? <Button type="button" variant="outline" disabled={!!chatPending} onClick={startChatLogin}>
-          {chatPending ? '等待完成官网登录…' : '打开官网 Chat'}<ArrowRight/>
+        {chatProgress&&<p className={chatFailed?'wd-connect-error':'wd-connect-login-progress'} role={chatFailed?'alert':'status'}>{chatProgress}</p>}
+        {chatBridge ? <Button type="button" variant="outline" disabled={!partners.length} onClick={startChatLogin}>
+          {chatFailed?'重试打开官网 Chat':chatWindow&&['OPENING','OPENED'].includes(chatWindow.state)?'继续打开官网 Chat':'打开官网 Chat'}<ArrowRight/>
         </Button> : <p>请在 Workdesk 桌面应用中打开官网 Chat。</p>}
       </div> : <SettingsPartners mode={mode} refreshRevision={partnerRefresh} onReady={setPartnerReady}/>}
       {error && <p className="wd-connect-error" role="alert">{error}</p>}
