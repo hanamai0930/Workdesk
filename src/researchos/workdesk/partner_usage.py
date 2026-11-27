@@ -137,9 +137,12 @@ def _record(run, account, value, at, source, identity, *, protocol=None, model=N
             'usage_note': '仅最后原生用量观测；缺少消息身份，不能证明全程计费总量' if scope == 'UNIDENTIFIED_NATIVE_MESSAGE' else None}
 
 
-def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None,parent_attempt_ids=None):
+def run_records(db, start=0, end=None, *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None,parent_attempt_ids=None):
     if not has_partner_tables(db):
         return
+    def inside(at):
+        return start <= at and (end is None or at < end)
+
     accounts = {row['id']: row for row in objects(db, 'account')}
     event_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_events'").fetchone()
     for run in objects(db, 'run'):
@@ -151,8 +154,14 @@ def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider
         if any(selected != 'all' and selected != actual for selected, actual in ((partner_id, run.get('partner_id')),
                 (api_provider, _provider(run)), (account_id, run.get('account_id')), (route, connection.get('route') or 'account'))):
             continue
-        events = [(row[0], row[1], json.loads(row[2])) for row in db.execute(
-            'SELECT seq,at,data FROM core_partner_events WHERE run_id=? AND at<? ORDER BY seq', (run['id'], end))] if event_table else []
+        # An unbounded read has no SQL upper parameter. Infinity is not
+        # representable in the managed Python-to-Go JSON protocol.
+        query = 'SELECT seq,at,data FROM core_partner_events WHERE run_id=?'
+        params = (run['id'],)
+        if end is not None:
+            query += ' AND at<?'
+            params += (end,)
+        events = [(row[0], row[1], json.loads(row[2])) for row in db.execute(query + ' ORDER BY seq', params)] if event_table else []
         account = accounts.get(run.get('account_id'), {})
         intents, receipts = {}, {}
         for seq, at, event in events:
@@ -173,7 +182,7 @@ def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider
             for identity in dict.fromkeys((*intents, *receipts)):
                 observed, receipt = receipts.get(identity, (None, {}))
                 at = intents.get(identity, (observed, {}))[0]
-                if at is None or not start <= at < end:
+                if at is None or not inside(at):
                     continue
                 value = receipt.get('usage') if receipt.get('usage_complete', True) is not False else None
                 yield _record(run, account, value, at, 'partner_gateway', run['id'] + ':' + identity,
@@ -194,7 +203,7 @@ def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider
                 if isinstance(candidate, dict):
                     value, observed = candidate, at
         if isinstance(value, dict):
-            if start <= observed < end:
+            if inside(observed):
                 yield _record(run, account, value, observed, 'partner_native', run['id'] + ':native-summary', intents=len(intents), scope=scope)
                 continue
             if observed < start:
@@ -212,7 +221,7 @@ def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider
             if run.get('partner_id') == 'qwen' and update.get('sessionUpdate') == 'agent_message_chunk' and isinstance(_get(update, '_meta', 'usage'), dict):
                 identity = update.get('messageId') or _get(update, '_meta', 'message_id')
                 messages[identity or 'unidentified-last'] = (at, update['_meta']['usage'], 'NATIVE_MESSAGE' if identity else 'UNIDENTIFIED_NATIVE_MESSAGE', None)
-        selected = [(identity, item) for identity, item in messages.items() if start <= item[0] < end]
+        selected = [(identity, item) for identity, item in messages.items() if inside(item[0])]
         if selected:
             for index, (identity, (at, value, scope, model)) in enumerate(selected):
                 yield _record(run, account, value, at, 'partner_native', run['id'] + ':native:' + identity,
@@ -220,11 +229,11 @@ def run_records(db, start=0, end=float('inf'), *, partner_id='all', api_provider
             continue
         if intents:
             for identity, (at, event) in intents.items():
-                if start <= at < end:
+                if inside(at):
                     yield _record(run, account, None, at, 'partner_request_unknown', run['id'] + ':' + identity, intents=1, scope='REQUEST_INTENT_ONLY')
         else:
             at = run.get('created') or observed
-            if start <= at < end:
+            if inside(at):
                 yield _record(run, account, None, at, 'partner_native_unknown', run['id'] + ':unknown', scope='NO_USAGE_RECEIPT')
 
 
