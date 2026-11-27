@@ -33,3 +33,14 @@ python tools/windows-installer/check_installation.py 分发/Workdesk-Setup-Win10
 ```
 
 兼容范围与当前实测记录见 [安装指南](../../docs/INSTALL.md)。新包包含合作条件等待修复；已有 1.0.0 用户也可使用 [独立修复程序](../windows-repair/README.md)。
+
+## v1.2 伙伴选装预览
+
+在 Windows x64 上用开发组件库构建本地补充包，然后生成独立的选装窗口。目录与源码分开，包中仅含固定版本的组件文件、已登记运行依赖及校验清单。
+
+```powershell
+python tools/windows-installer/build_partner_preview_packs.py --components <组件库> --out <预览目录>/packages
+./tools/windows-installer/partner-preview/build.ps1 -Catalog <预览目录>/packages/catalog.json
+```
+
+打开生成的 Workdesk-Setup-Preview.exe 可以选择八个伙伴，导入本地 ZIP 并核对下载量和新增占用。包体大小取压缩文件的实际字节数，安装后占用按全新安装计算，共享运行依赖按版本及摘要去重。本轮交互止于确认清单。正式在线下载、安装和日用资料升级属于发布安装器。预览用本地补充包保留在构建目录。

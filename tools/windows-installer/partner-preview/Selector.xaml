@@ -1,0 +1,92 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Workdesk 1.2 · 安装预览" Width="904" Height="714" MinWidth="750" MinHeight="495"
+        WindowStartupLocation="CenterScreen" Background="#F6F7F4" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14"
+        Foreground="#23362E" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+  <Window.Resources>
+    <SolidColorBrush x:Key="Muted" Color="#52665C"/>
+    <Style TargetType="Button">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="BorderBrush" Value="#C6D2C9"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Foreground" Value="#244737"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+        <Border x:Name="Surface" CornerRadius="6" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+          <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border><ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.85"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="Small" TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource Muted}"/><Setter Property="FontSize" Value="12"/></Style>
+    <Style x:Key="HeaderCell" TargetType="TextBlock" BasedOn="{StaticResource Small}">
+      <Setter Property="VerticalAlignment" Value="Center"/><Setter Property="HorizontalAlignment" Value="Right"/>
+    </Style>
+  </Window.Resources>
+  <Grid Background="#F6F7F4">
+    <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="*"/><RowDefinition Height="65"/></Grid.RowDefinitions>
+    <Border Background="#FFFFFF" BorderBrush="#DAE0DA" BorderThickness="0,0,0,1" Padding="26,0">
+      <DockPanel LastChildFill="False">
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+          <Border Background="#245542" Width="31" Height="31" CornerRadius="7"><TextBlock Text="W" FontFamily="Georgia" FontWeight="Bold" FontSize="19" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+          <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold">Workdesk</TextBlock>
+          <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#63766C">1.2</TextBlock>
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Style="{StaticResource Small}">Windows x64　·　安装预览</TextBlock>
+      </DockPanel>
+    </Border>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="26,21,26,18">
+        <TextBlock x:Name="PageTitle" FontSize="25" FontWeight="SemiBold" Text="选择工作伙伴"/>
+        <TextBlock x:Name="PageHelp" Margin="0,5,0,18" Foreground="{StaticResource Muted}" Text="按需勾选官方工作端，也可以稍后在设置中添加。"/>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="210"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <Border Background="White" BorderBrush="#D4DED5" BorderThickness="1" CornerRadius="8" ClipToBounds="True">
+              <StackPanel>
+                <Grid Height="38" Margin="14,0,14,0">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="98"/><ColumnDefinition Width="98"/></Grid.ColumnDefinitions>
+                  <CheckBox x:Name="SelectAll" Content="工作端" VerticalContentAlignment="Center" VerticalAlignment="Center" ToolTip="全选或取消全部伙伴"/>
+                  <TextBlock x:Name="ListHeader" Visibility="Collapsed" Text="组件" VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="1" x:Name="SizeHeader" Style="{StaticResource HeaderCell}" Text="包体大小" ToolTip="补充包压缩后的实际字节数"/>
+                  <TextBlock Grid.Column="2" x:Name="DiskHeader" Style="{StaticResource HeaderCell}" Text="安装后占用" ToolTip="单独安装这个伙伴所需的文件大小，包含它的运行依赖"/>
+                </Grid>
+                <StackPanel x:Name="PartnerRows"/>
+              </StackPanel>
+            </Border>
+            <TextBlock x:Name="Feedback" Margin="2,7,0,0" TextWrapping="Wrap" FontSize="12" Foreground="#774B18" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
+          </StackPanel>
+          <StackPanel Grid.Column="2">
+            <Border Background="#EAF1E9" BorderBrush="#D2DFD1" BorderThickness="1" CornerRadius="8" Padding="16">
+              <StackPanel>
+                <TextBlock FontWeight="SemiBold">本次安装</TextBlock>
+                <TextBlock Margin="0,15,0,0" FontWeight="SemiBold">Workdesk 主程序</TextBlock>
+                <TextBlock Style="{StaticResource Small}" Margin="0,3,0,0">随主安装包提供</TextBlock>
+                <Border Margin="0,14,0,13" Height="1" Background="#C9D7CB"/>
+                <TextBlock x:Name="Picked" Text="已选 0 位伙伴"/>
+                <TextBlock Margin="0,12,0,1" Style="{StaticResource Small}">伙伴需下载</TextBlock>
+                <TextBlock x:Name="Download" FontSize="22" FontWeight="SemiBold" Text="0 MB" Foreground="#23543D"/>
+                <TextBlock Margin="0,9,0,0" Style="{StaticResource Small}">伙伴安装后新增占用</TextBlock>
+                <TextBlock x:Name="Installed" Margin="0,2,0,0" Text="0 MB" ToolTip="相同版本的共享运行依赖只计算一次"/>
+              </StackPanel>
+            </Border>
+            <Button x:Name="Import" Margin="0,12,0,0" Content="导入本地补充包…" ToolTip="选择一个或多个已下载的伙伴 ZIP，校验后自动勾选"/>
+            <TextBlock x:Name="ImportHint" Text="本地包校验通过后免下载。" Style="{StaticResource Small}" Margin="3,7,0,0" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+    <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#DAE0DA" BorderThickness="0,1,0,0" Padding="26,0">
+      <DockPanel LastChildFill="False">
+        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="12">此预览仅核对安装清单。</TextBlock>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="Back" Margin="0,0,10,0" Visibility="Collapsed">返回调整</Button>
+          <Button x:Name="Next" Foreground="White" Background="#23543D" BorderBrush="#23543D" FontWeight="SemiBold" MinWidth="108">查看清单　›</Button>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </Grid>
+</Window>
