@@ -1,6 +1,6 @@
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Workdesk 1.2 · 安装预览" Width="904" Height="714" MinWidth="750" MinHeight="495"
+        Title="Workdesk 1.2 · 伙伴安装" Width="904" Height="714" MinWidth="750" MinHeight="495"
         WindowStartupLocation="CenterScreen" Background="#F6F7F4" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="14"
         Foreground="#23362E" UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
   <Window.Resources>
@@ -35,7 +35,7 @@
           <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" FontSize="18" FontWeight="SemiBold">Workdesk</TextBlock>
           <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#63766C">1.2</TextBlock>
         </StackPanel>
-        <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Style="{StaticResource Small}">Windows x64　·　安装预览</TextBlock>
+        <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Style="{StaticResource Small}">Windows x64　·　伙伴安装</TextBlock>
       </DockPanel>
     </Border>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -64,16 +64,16 @@
               <StackPanel>
                 <TextBlock FontWeight="SemiBold">本次安装</TextBlock>
                 <TextBlock Margin="0,15,0,0" FontWeight="SemiBold">Workdesk 主程序</TextBlock>
-                <TextBlock Style="{StaticResource Small}" Margin="0,3,0,0">随主安装包提供</TextBlock>
+                <TextBlock Style="{StaticResource Small}" Margin="0,3,0,0">已随主安装包提供</TextBlock>
                 <Border Margin="0,14,0,13" Height="1" Background="#C9D7CB"/>
                 <TextBlock x:Name="Picked" Text="已选 0 位伙伴"/>
-                <TextBlock Margin="0,12,0,1" Style="{StaticResource Small}">伙伴需下载</TextBlock>
+                <TextBlock Margin="0,12,0,1" Style="{StaticResource Small}">线上所选伙伴的参考包体</TextBlock>
                 <TextBlock x:Name="Download" FontSize="22" FontWeight="SemiBold" Text="0 MB" Foreground="#23543D"/>
-                <TextBlock Margin="0,9,0,0" Style="{StaticResource Small}">伙伴安装后新增占用</TextBlock>
+                <TextBlock Margin="0,9,0,0" Style="{StaticResource Small}">全新安装的伙伴占用</TextBlock>
                 <TextBlock x:Name="Installed" Margin="0,2,0,0" Text="0 MB" ToolTip="相同版本的共享运行依赖只计算一次"/>
               </StackPanel>
             </Border>
-            <Button x:Name="Import" Margin="0,12,0,0" Content="导入本地补充包…" ToolTip="选择一个或多个 .wdpartner 伙伴补充包，校验后自动勾选"/>
+            <Button x:Name="Import" Margin="0,12,0,0" Content="导入本地补充包…" ToolTip="选择一个或多个 .wdpa 伙伴补充包，校验后自动勾选"/>
             <TextBlock x:Name="ImportHint" Text="本地包校验通过后免下载。" Style="{StaticResource Small}" Margin="3,7,0,0" TextWrapping="Wrap"/>
           </StackPanel>
         </Grid>
@@ -81,7 +81,7 @@
     </ScrollViewer>
     <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#DAE0DA" BorderThickness="0,1,0,0" Padding="26,0">
       <DockPanel LastChildFill="False">
-        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="12">此预览仅核对安装清单。</TextBlock>
+        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="12">联网选装从官方源获取，实际下载量因依赖而异。</TextBlock>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
           <Button x:Name="Back" Margin="0,0,10,0" Visibility="Collapsed">返回调整</Button>
           <Button x:Name="Next" Foreground="White" Background="#23543D" BorderBrush="#23543D" FontWeight="SemiBold" MinWidth="108">查看清单　›</Button>

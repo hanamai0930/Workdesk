@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -18,7 +19,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
 
-namespace Workdesk.InstallationPreview
+namespace Workdesk.Installation
 {
     public sealed class Dependency
     {
@@ -32,6 +33,7 @@ namespace Workdesk.InstallationPreview
         public string name { get; set; }
         public string version { get; set; }
         public string file { get; set; }
+        public string release_id { get; set; }
         public string sha256 { get; set; }
         public long bytes { get; set; }
         public long installed_bytes { get; set; }
@@ -47,7 +49,12 @@ namespace Workdesk.InstallationPreview
 
     internal class Selector
     {
-        const string PackageExtension = ".wdpartner";
+        const string PackageExtension = ".wdpa";
+        const string LegacyExtension = ".wdpartner";
+        readonly string packageDirectory;
+        readonly Dictionary<string,string> localFiles = new Dictionary<string,string>();
+        bool installing;
+        bool finished;
         static readonly byte[] PackageHeader = Encoding.ASCII.GetBytes("WDPARTNER\u0001");
         readonly Window window;
         readonly Partner[] partners;
@@ -67,8 +74,9 @@ namespace Workdesk.InstallationPreview
             return stream;
         }
 
-        internal Selector()
+        internal Selector(string packageDirectory)
         {
+            this.packageDirectory = packageDirectory;
             using (var stream = Resource("selector.xaml")) window = (Window)XamlReader.Load(stream);
             using (var stream = Resource("catalog.json"))
             using (var reader = new StreamReader(stream))
@@ -96,9 +104,14 @@ namespace Workdesk.InstallationPreview
                 if (on) selected.UnionWith(partners.Select(p => p.id));
                 Render();
             };
-            Control<Button>("Next").Click += delegate {
-                if (confirming) window.Close();
+            Control<Button>("Next").Click += async delegate {
+                if (finished || (confirming && selected.Count == 0)) window.Close();
+                else if (confirming) await InstallSelected();
                 else { confirming = true; Feedback(""); Render(); }
+            };
+            window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) {
+                if (installing) e.Cancel = MessageBox.Show(window, "当前伙伴将继续在后台安装。关闭窗口并跳过后续伙伴？",
+                    "Workdesk", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes;
             };
             Control<Button>("Back").Click += delegate { confirming = false; Render(); };
             Control<Button>("Import").Click += async delegate { await Browse(); };
@@ -181,7 +194,7 @@ namespace Workdesk.InstallationPreview
             else
             {
                 grid.Children.Add(name);
-                Cell(grid, 1, local.Contains(p.id) ? "已校验本地包" : "联网下载").Foreground = muted;
+                Cell(grid, 1, local.Contains(p.id) ? "已校验本地包" : "官方源下载").Foreground = muted;
                 Cell(grid, 2, Size(p.bytes));
             }
             AddGrid(grid);
@@ -209,7 +222,7 @@ namespace Workdesk.InstallationPreview
             Control<TextBlock>("PageHelp").Text = confirming ? "核对本次选择的组件和来源。" : "按需勾选官方工作端，也可以稍后在设置中添加。";
             Control<TextBlock>("SizeHeader").Text = confirming ? "来源" : "包体大小";
             Control<TextBlock>("DiskHeader").Text = confirming ? "包体大小" : "安装后占用";
-            Control<Button>("Next").Content = confirming ? "关闭预览" : "查看清单　›";
+            Control<Button>("Next").Content = confirming ? (selected.Count == 0 ? "完成" : "安装所选伙伴") : "查看清单　›";
             if (confirming)
             {
                 var main = Columns();
@@ -233,16 +246,18 @@ namespace Workdesk.InstallationPreview
         {
             var picker = new OpenFileDialog {
                 Title = "选择本地伙伴补充包", Multiselect = true, DefaultExt = PackageExtension,
-                Filter = "Workdesk 伙伴补充包 (*" + PackageExtension + ")|*" + PackageExtension
+                Filter = "Workdesk 伙伴补充包 (*.wdpa;*.wdpartner)|*.wdpa;*.wdpartner"
             };
-            string nearby = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "packages");
+            string nearby = packageDirectory;
             if (Directory.Exists(nearby)) picker.InitialDirectory = nearby;
             if (picker.ShowDialog(window) == true) await ImportFiles(picker.FileNames);
         }
 
         static bool IsPartnerFile(string file)
         {
-            return String.Equals(Path.GetExtension(file), PackageExtension, StringComparison.OrdinalIgnoreCase);
+            var ext = Path.GetExtension(file);
+            return String.Equals(ext, PackageExtension, StringComparison.OrdinalIgnoreCase) ||
+                   String.Equals(ext, LegacyExtension, StringComparison.OrdinalIgnoreCase);
         }
 
         static bool HasPackageHeader(Stream stream)
@@ -284,7 +299,7 @@ namespace Workdesk.InstallationPreview
                     {
                         var match = await Task.Run(() => Match(file));
                         if (match == null) failures.Add(Path.GetFileName(file));
-                        else { local.Add(match.id); selected.Add(match.id); matched++; }
+                        else { local.Add(match.id); localFiles[match.id] = file; selected.Add(match.id); matched++; }
                     }
                     catch (IOException) { failures.Add(Path.GetFileName(file)); }
                     catch (UnauthorizedAccessException) { failures.Add(Path.GetFileName(file)); }
@@ -295,6 +310,64 @@ namespace Workdesk.InstallationPreview
             finally
             {
                 importing = false; SetEnabled(true); Render();
+            }
+        }
+
+        async Task InstallSelected()
+        {
+            if (installing || finished) return;
+            installing = true;
+            int complete = 0;
+            SetEnabled(false);
+            Control<Button>("Back").IsEnabled = false;
+            try {
+                foreach (var partner in Picks().ToArray()) {
+                    Feedback("正在" + (local.Contains(partner.id) ? "导入 " : "从官方源准备 ") + partner.name + "…");
+                    string file;
+                    localFiles.TryGetValue(partner.id, out file);
+                    await Task.Run(() => InstallOne(partner, file));
+                    complete++;
+                }
+                Control<TextBlock>("PageTitle").Text = "伙伴已就绪";
+                Control<TextBlock>("PageHelp").Text = "可以打开 Workdesk，在账号与模型中选择连接。";
+                Feedback("已完成 " + complete + " 位伙伴的安装。");
+            } catch (Exception ex) {
+                Control<TextBlock>("PageTitle").Text = "安装未完成";
+                Feedback("已完成 " + complete + " 位伙伴。" + ex.Message);
+            } finally {
+                installing = false;
+                finished = true;
+                Control<Button>("Back").Visibility = Visibility.Collapsed;
+                Control<Button>("Next").IsEnabled = true;
+                Control<Button>("Next").Content = "关闭";
+            }
+        }
+
+        static void InstallOne(Partner partner, string bundle)
+        {
+            string root = AppDomain.CurrentDomain.BaseDirectory;
+            var start = new ProcessStartInfo {
+                FileName = Path.Combine(root, "runtime", "python", "python.exe"),
+                Arguments = "-B -s -X utf8 tools/partner_command.py",
+                WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            var codec = new JavaScriptSerializer();
+            var request = new {id=partner.id, version=partner.version, release_id=partner.release_id, bundle=bundle};
+            using (var process = Process.Start(start)) {
+                var output = process.StandardOutput.ReadToEndAsync();
+                var errors = process.StandardError.ReadToEndAsync();
+                var bytes = Encoding.UTF8.GetBytes(codec.Serialize(request) + "\n");
+                process.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
+                process.StandardInput.Close();
+                process.WaitForExit();
+                Task.WaitAll(output, errors);
+                if (String.IsNullOrWhiteSpace(output.Result)) throw new IOException("本机安装服务未返回结果。");
+                var result = codec.Deserialize<Dictionary<string,object>>(output.Result);
+                if (process.ExitCode != 0 || result == null || !result.ContainsKey("ok") || !true.Equals(result["ok"]))
+                    throw new IOException(result != null && result.ContainsKey("error") ? Convert.ToString(result["error"]) : "安装服务回执异常。");
+                if (!partner.release_id.Equals(result["release_id"])) throw new IOException("安装回执的工作端版本不符。");
             }
         }
 
@@ -331,14 +404,14 @@ namespace Workdesk.InstallationPreview
             }
             Assert(selected.Count == 2 && DownloadBytes() == Picks().Sum(p => p.bytes));
             var pkg = partners.Single(p => p.id == "deepseek");
-            string file = Path.Combine(dir, "packages", pkg.file);
+            string file = Path.Combine(packageDirectory, pkg.file);
             // A renamed ZIP or a different format revision is not a partner package.
             Assert(!HasPackageHeader(new MemoryStream(new byte[] { 0x50, 0x4b, 0x03, 0x04 })));
             Assert(!HasPackageHeader(new MemoryStream(Encoding.ASCII.GetBytes("WDPARTNER\u0002"))));
             Assert(!IsPartnerFile("legacy.zip") && IsPartnerFile("renamed.WDPARTNER"));
             await ImportFiles(new[] { file });
             Assert(local.Contains(pkg.id) && DownloadBytes() == partners.Single(p => p.id == "codex").bytes);
-            await ImportFiles(new[] { Path.Combine(dir, "packages", "catalog.json") });
+            await ImportFiles(new[] { Path.Combine(packageDirectory, "catalog.json") });
             Assert(selected.Count == 2 && Control<TextBlock>("Feedback").Text.Contains("未匹配"));
             Control<Button>("Next").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Assert(confirming && Control<StackPanel>("PartnerRows").Children.Count == 3);
@@ -348,7 +421,7 @@ namespace Workdesk.InstallationPreview
             Assert(selected.Count == 8 && InstalledBytes() <= partners.Sum(p => p.installed_bytes));
             Control<CheckBox>("SelectAll").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Assert(selected.Count == 0 && DownloadBytes() == 0);
-            await ImportFiles(partners.Select(p => Path.Combine(dir, "packages", p.file)).ToArray());
+            await ImportFiles(partners.Select(p => Path.Combine(packageDirectory, p.file)).ToArray());
             Assert(local.Count == 8 && selected.Count == 8 && DownloadBytes() == 0);
         }
 
@@ -357,12 +430,14 @@ namespace Workdesk.InstallationPreview
         [STAThread]
         public static int Main(string[] args)
         {
-            bool test = args.Length == 1 && args[0] == "--check";
+            bool test = args.Contains("--check");
             string dir = AppDomain.CurrentDomain.BaseDirectory;
             try
             {
                 var app = new Application();
-                var picker = new Selector();
+                int index = Array.IndexOf(args, "--package-dir");
+                string packs = index >= 0 && index + 1 < args.Length ? Path.GetFullPath(args[index + 1]) : Path.Combine(dir, "partners");
+                var picker = new Selector(packs);
                 if (test)
                 {
                     picker.window.ShowInTaskbar = false;
@@ -379,7 +454,7 @@ namespace Workdesk.InstallationPreview
             catch (Exception ex)
             {
                 if (test) File.WriteAllText(Path.Combine(dir, "preview-check-error.txt"), ex.ToString());
-                else MessageBox.Show(ex.Message, "Workdesk 安装预览");
+                else MessageBox.Show(ex.Message, "Workdesk 伙伴安装");
                 return 1;
             }
         }

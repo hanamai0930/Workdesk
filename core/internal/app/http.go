@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"mime"
 	"net/http"
 	"net/url"
@@ -471,7 +472,7 @@ func (a *App) UIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if route == "" {
-		marker := fmt.Sprintf(`<html data-workdesk-channel="development" data-workdesk-default-project="%s"`, a.Profile.DefaultProjectID)
+		marker := fmt.Sprintf(`<html data-workdesk-channel="%s" data-workdesk-default-project="%s"`, a.Profile.Channel, html.EscapeString(a.Profile.DefaultProjectID))
 		raw = []byte(strings.Replace(string(raw), "<html", marker, 1))
 	}
 	w.Header().Set("Content-Type", mime.TypeByExtension(ext))

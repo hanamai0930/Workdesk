@@ -841,6 +841,10 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 				return errors.New("伙伴不存在")
 			}
 			op := map[string]any{"id": ID(), "kind": kind, "partner_id": partner, "release_id": releaseID, "version": str(p["version"]), "allow_restore_download": p["allow_restore_download"], "state": "QUEUED", "command_id": id, "created": now(), "owner_epoch": a.Epoch, "process_instance": a.Process}
+			if kind == "component.prepare" {
+				op["bundle_path"] = str(p["bundle_path"])
+				op["expected_release"] = str(p["expected_release"])
+			}
 			if e = putPartner(s, "operation", op); e != nil {
 				return e
 			}
@@ -1302,7 +1306,7 @@ func (a *App) componentOperation(op map[string]any) {
 	manager.OperationID = str(op["id"])
 	switch str(op["kind"]) {
 	case "component.prepare", "component.update":
-		result, err = manager.Prepare(ctx, str(op["partner_id"]), str(op["version"]))
+		result, err = manager.PrepareSelected(ctx, str(op["partner_id"]), str(op["version"]), str(op["expected_release"]), str(op["bundle_path"]))
 	case "component.remove":
 		a.admission.Lock()
 		err = a.write(func(s *storage.Session) error {

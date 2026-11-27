@@ -1,5 +1,6 @@
 """Local installation identity. This separates state; it is not a tool sandbox."""
 from functools import lru_cache
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -20,8 +21,33 @@ def _marks(base, stamp):
     return dict(line.split(None, 1) for line in result.stdout.splitlines() if len(line.split(None, 1)) == 2)
 
 
+def release_state_root(base):
+    local = os.environ.get('LOCALAPPDATA')
+    if not local or not Path(local).is_absolute():
+        raise ValueError('无法确定当前用户的安装版资料目录。')
+    identity = sha256(os.path.normcase(str(Path(base).resolve())).encode('utf-8')).hexdigest()[:16]
+    root = Path(local).resolve() / 'Workdesk-v1.2' / 'instances' / identity
+    if root.resolve() != root:
+        raise ValueError('安装版资料根不能重定向。')
+    return root
+
+
+def release_marker(base):
+    marker = Path(base) / 'release.json'
+    if not marker.exists():
+        return None
+    value = json.loads(marker.read_text(encoding='utf-8-sig'))
+    if 'profile_layout' not in value:
+        return None
+    if any(value.get(k) != v for k, v in {'schema': 1, 'profile_layout': 1, 'channel': 'release', 'product': 'Workdesk'}.items()):
+        raise ValueError('安装版本标识无效。')
+    return value
+
+
 def local_marks(base=None):
     base = Path(base or SOURCE_ROOT).resolve()
+    if release_marker(base):
+        return {'workdesk.channel': 'release', 'workdesk.instanceconfig': str(release_state_root(base) / 'instance.json')}
     marker = base / '.git'
     if not marker.exists():
         return {}
@@ -78,7 +104,7 @@ def load_profile(base=None):
     channel = marks.get('workdesk.channel')
     if channel is None:
         return None
-    if channel != 'development':
+    if channel not in ('development', 'release'):
         raise ValueError('本机实例通道标记不受支持。')
     config = _absolute(marks.get('workdesk.instanceconfig'), 'instanceConfig')
     try:
@@ -94,7 +120,11 @@ def load_profile(base=None):
     for field in ('program_root', 'user_root', 'data_root', 'python_executable'):
         profile[field] = str(_absolute(profile.get(field), field))
     development_root=_absolute(profile.get('development_root'), 'development_root')
-    if any(not Path(profile[field]).is_relative_to(development_root) or Path(profile[field])==development_root
+    if channel == 'release':
+        if (development_root != release_state_root(base) or Path(profile['user_root']) != development_root / 'user'
+                or Path(profile['python_executable']) != base / 'runtime/python/python.exe'):
+            raise ValueError('安装版配置不属于本程序与用户。')
+    elif any(not Path(profile[field]).is_relative_to(development_root) or Path(profile[field])==development_root
            for field in ('program_root','user_root')):
         raise ValueError('开发源码和用户根必须位于登记的开发根下。')
     protected=profile.get('protected_roots',[])
@@ -104,7 +134,7 @@ def load_profile(base=None):
         raise ValueError('开发实例配置不属于本程序目录。')
     if type(profile.get('ui_port')) is not int or not 1024 <= profile['ui_port'] <= 65535:
         raise ValueError('开发界面端口无效。')
-    if profile.get('sync_branch') != 'codex/v2-dev':
+    if channel == 'development' and profile.get('sync_branch') != 'codex/v2-dev':
         raise ValueError('开发公开同步只能使用 codex/v2-dev。')
     profile['config_path'] = str(config)
     profile['initial_data_root'] = profile['data_root']
@@ -140,9 +170,11 @@ def snapshot(locations, process_instance='', implementation_revision=''):
         result = subprocess.run(['git', '-C', str(locations.base), *args], capture_output=True,
                                 encoding='utf-8', errors='replace', creationflags=flags)
         return result.stdout.strip() if result.returncode == 0 else ''
-    return {'schema': 1, 'channel': 'development' if profile else 'daily',
+    installed = release_marker(locations.base) if profile and profile['channel'] == 'release' else None
+    return {'schema': 1, 'channel': profile['channel'] if profile else 'daily',
             'instance_id': profile['instance_id'] if profile else 'daily-' + str(locations.user or locations.data),
             'process_instance': process_instance, 'program_root': str(locations.base),
             'user_root': str(locations.user) if locations.user else None, 'data_root': str(locations.data),
-            'source_revision': git('rev-parse', 'HEAD'), 'source_dirty': bool(git('status', '--porcelain')),
+            'source_revision': installed['source_revision'] if installed else git('rev-parse', 'HEAD'),
+            'source_dirty': False if installed else bool(git('status', '--porcelain')),
             'implementation_revision': implementation_revision, 'protocol': 1}

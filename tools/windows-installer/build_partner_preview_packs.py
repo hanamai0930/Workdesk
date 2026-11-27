@@ -1,4 +1,4 @@
-"""Build Windows x64 offline .wdpartner v1 packages for the Workdesk 1.2 local installer preview."""
+"""Build Windows x64 offline .wdpa v1 packages for the Workdesk 1.2 local installer preview."""
 from __future__ import annotations
 
 import argparse
@@ -106,7 +106,7 @@ def verify_package(path, contents):
     # Verify the complete finished container (including metadata and the gzip
     # footer) against the trusted input manifest without extracting to disk.
     with path.open("rb") as source:
-        checked(source.read(len(MAGIC)) == MAGIC, "Wrong .wdpartner v1 header")
+        checked(source.read(len(MAGIC)) == MAGIC, "Wrong .wdpa v1 header")
         with gzip.GzipFile(fileobj=source, mode="rb") as gz:
             with tarfile.open(mode="r|", fileobj=gz, bufsize=65536) as tar:
                 for name, _source, size, digest in contents:
@@ -133,7 +133,7 @@ def build_one(root, out, release, facts):
     folder = Path(record["path"]).resolve()
     checked(folder.parent == root / id_ and folder.name == release[len(id_) + 1:], "Component root mismatch")
     rows = directory_manifest(record, root)
-    target = out / ("Workdesk-Partner-" + release + ".wdpartner")
+    target = out / ("Workdesk-Partner-" + release + ".wdpa")
     dependencies, files = bundle_dependencies(root, record)
     entries = []
     for arg in record["entry"]:

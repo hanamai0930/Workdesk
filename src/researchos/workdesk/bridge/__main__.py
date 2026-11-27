@@ -23,7 +23,7 @@ def install_profile(value):
     if profile is None:
         return
     if (not isinstance(profile, dict) or profile.get('schema') != 1 or
-            profile.get('channel') != 'development'):
+            profile.get('channel') not in ('development', 'release')):
         raise ValueError('应用核心提供的实例配置无效。')
     profile = dict(profile)
     profile['config_path'] = value.get('config_path') or os.environ.get('WORKDESK_INSTANCE_CONFIG')

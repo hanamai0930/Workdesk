@@ -2,6 +2,7 @@
 package instance
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,7 +108,7 @@ func Within(path, parent string) bool {
 func overlap(a, b string) bool { return SamePath(a, b) || Within(a, b) || Within(b, a) }
 
 func (p *Profile) validate() error {
-	if p.Schema != 1 || p.Channel != "development" {
+	if p.Schema != 1 || (p.Channel != "development" && p.Channel != "release") {
 		return errors.New("unsupported development instance format or channel")
 	}
 	if !regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`).MatchString(p.InstanceID) {
@@ -121,7 +122,19 @@ func (p *Profile) validate() error {
 		}
 		*field = resolved
 	}
-	if !Within(p.ProgramRoot, p.DevelopmentRoot) || !Within(p.UserRoot, p.DevelopmentRoot) {
+	if p.Channel == "release" {
+		digest := sha256.Sum256([]byte(comparable(p.ProgramRoot)))
+		local, err := resolvePath(os.Getenv("LOCALAPPDATA"), "localappdata")
+		if err != nil {
+			return err
+		}
+		expected := filepath.Join(local, "Workdesk-v1.2", "instances", fmt.Sprintf("%x", digest[:8]))
+		if !SamePath(p.DevelopmentRoot, expected) || !SamePath(p.UserRoot, filepath.Join(expected, "user")) ||
+			!SamePath(p.ConfigPath, filepath.Join(expected, "instance.json")) ||
+			!SamePath(p.PythonExecutable, filepath.Join(p.ProgramRoot, "runtime", "python", "python.exe")) {
+			return errors.New("installed profile ownership mismatch")
+		}
+	} else if !Within(p.ProgramRoot, p.DevelopmentRoot) || !Within(p.UserRoot, p.DevelopmentRoot) {
 		return errors.New("development program and user roots must stay inside the registered development root")
 	}
 	if overlap(p.ProgramRoot, p.UserRoot) {
@@ -133,7 +146,7 @@ func (p *Profile) validate() error {
 	if p.UIPort < 1024 || p.UIPort > 65535 {
 		return errors.New("invalid development UI port")
 	}
-	if p.SyncBranch != "codex/v2-dev" {
+	if p.Channel == "development" && p.SyncBranch != "codex/v2-dev" {
 		return errors.New("development publishing must target codex/v2-dev")
 	}
 	protected := append([]string(nil), p.ProtectedRoots...)
@@ -238,6 +251,20 @@ func Load(configPath, programRoot string) (*Profile, error) {
 // ValidateLocalMarks binds an explicitly loaded profile to this checkout's local
 // Git identity. Kept separate so isolated contract tests need no Git repository.
 func (p *Profile) ValidateLocalMarks() error {
+	if p.Channel == "release" {
+		var release struct {
+			Schema           int
+			ProfileLayout    int `json:"profile_layout"`
+			Channel, Product string
+		}
+		if err := readJSON(filepath.Join(p.ProgramRoot, "release.json"), &release); err != nil {
+			return err
+		}
+		if release.Schema != 1 || release.ProfileLayout != 1 || release.Channel != "release" || release.Product != "Workdesk" {
+			return errors.New("unrecognized Workdesk installation")
+		}
+		return nil
+	}
 	read := func(key string) (string, error) {
 		cmd := exec.Command("git", "-C", p.ProgramRoot, "config", "--local", "--get", key)
 		hideWindow(cmd)

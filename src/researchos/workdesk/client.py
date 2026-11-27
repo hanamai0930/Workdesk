@@ -56,6 +56,8 @@ class Client:
                     if backend.poll() is not None:break
                     time.sleep(.1)
                 raise ConnectionError('Go核心尚未确认启动；保留诊断，未回落旧核心。')
+            if profile and profile['channel'] == 'release':
+                raise ConnectionError('安装版核心尚未就绪，请使用 Workdesk 启动入口。')
             env=clean_env();env['PYTHONPATH']=str(self.locations.base/'src')
             executable=self.locations.python
             if os.name=='nt' and executable.with_name('pythonw.exe').exists():executable=executable.with_name('pythonw.exe')

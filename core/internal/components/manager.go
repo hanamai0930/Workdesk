@@ -234,6 +234,16 @@ func (m *Manager) Verify(ctx context.Context, id string) (Release, error) {
 }
 
 func (m *Manager) Prepare(ctx context.Context, componentID, version string) (Release, error) {
+	return m.PrepareSelected(ctx, componentID, version, "", "")
+}
+
+// PrepareSelected keeps online preparation and authenticated local import behind
+// the same component manager, staging transaction, immutable records and owner.
+func (m *Manager) PrepareSelected(ctx context.Context, componentID, version, expectedRelease, bundle string) (Release, error) {
+	pin, pinned := bundlePins[componentID]
+	if (expectedRelease != "" || bundle != "") && (!pinned || pin.release != expectedRelease || pin.version != version || platform() != "windows-amd64") {
+		return Release{}, errors.New("此组件不符合本次发行的固定版本")
+	}
 	unlock := m.lock()
 	defer unlock()
 	if m.OperationID != "" && !operationPattern.MatchString(m.OperationID) {
@@ -271,15 +281,19 @@ func (m *Manager) Prepare(ctx context.Context, componentID, version string) (Rel
 	}
 	r := Release{Schema: 1, ComponentID: componentID, Platform: platform(), Managed: true, State: "AVAILABLE", PreparedAt: time.Now().UTC().Format(time.RFC3339), OperationID: m.OperationID, Sources: []Source{}, Entry: []string{}}
 	m.note("正在准备 " + p.Endpoint)
-	switch componentID {
-	case "grok":
-		e = m.prepareGrok(ctx, version, program, &r)
-	case "kimi":
-		e = m.prepareKimi(ctx, version, program, &r)
-	case "glm":
-		e = m.prepareZCode(ctx, version, program, &r)
-	default:
-		e = m.prepareNPM(ctx, p, version, program, &r)
+	if bundle != "" {
+		e = m.unpackPartner(ctx, bundle, pin, stage, program, &r)
+	} else {
+		switch componentID {
+		case "grok":
+			e = m.prepareGrok(ctx, version, program, &r)
+		case "kimi":
+			e = m.prepareKimi(ctx, version, program, &r)
+		case "glm":
+			e = m.prepareZCode(ctx, version, program, &r)
+		default:
+			e = m.prepareNPM(ctx, p, version, program, &r)
+		}
 	}
 	if e != nil {
 		_ = writeJSON(filepath.Join(stage, "failed.json"), map[string]any{"component_id": componentID, "operation_id": m.OperationID, "at": time.Now().UTC().Format(time.RFC3339), "error": e.Error(), "no_model_request": true})
@@ -298,6 +312,9 @@ func (m *Manager) Prepare(ctx context.Context, componentID, version string) (Rel
 		r.Bytes += f.Bytes
 	}
 	r.ID = componentID + "-" + r.Version + "-" + r.Platform + "-" + digest[:16]
+	if expectedRelease != "" && r.ID != expectedRelease {
+		return Release{}, errors.New("官方源的准备结果与验收版本不同；请导入此版本的伙伴补充包")
+	}
 	r.Path = filepath.Join(m.Root, componentID, r.Version+"-"+r.Platform+"-"+digest[:16])
 	for i, arg := range r.Entry {
 		if arg == program || strings.HasPrefix(arg, program+string(os.PathSeparator)) {

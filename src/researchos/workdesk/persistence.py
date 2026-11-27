@@ -18,7 +18,7 @@ from .paths import atomic_json,atomic_bytes,data_owner_lock
 from .store import ACTIVE,UNKNOWN,Store,canonical,digest,uid
 
 
-MAX_TOTAL=512*1024*1024
+MAX_TOTAL=2*1024*1024*1024
 DATABASE_FILE_LIMIT=128*1024*1024
 ORDINARY_FILE_LIMIT=64*1024*1024
 
@@ -27,7 +27,7 @@ def snapshot_file_limit(name):
     # The root ledger grows with immutable evidence; selected files keep their
     # original limit. The total package remains bounded separately.
     return DATABASE_FILE_LIMIT if name=='tasks.sqlite3' else ORDINARY_FILE_LIMIT
-BACKUP_SECONDS=20
+BACKUP_SECONDS=120
 
 
 def safe_name(name):
@@ -211,7 +211,7 @@ class Persistence:
                     source=workspace.plain(self.s.locations.data/name,self.s.locations.data)
                     raw=workspace.io_path(source).read_bytes()
                 total+=len(raw)
-                if len(raw)>snapshot_file_limit(name) or total>MAX_TOTAL:raise ValueError('快照超过128MiB根数据库、64MiB普通文件或512MiB总量上限。')
+                if len(raw)>snapshot_file_limit(name) or total>MAX_TOTAL:raise ValueError('快照超过128MiB根数据库、64MiB普通文件或2GiB总量上限。')
                 if any(secret in raw for secret in secrets):raise ValueError('快照发现指定供应商凭据，拒绝导出；未输出值。')
                 if name!='tasks.sqlite3':
                     destination=workspace.io_path(state/name);destination.parent.mkdir(parents=True,exist_ok=True);destination.write_bytes(raw)
@@ -247,9 +247,10 @@ class Persistence:
                 if path.is_file():workspace.plain(path,workspace.io_path(root)).unlink()
             atomic_json(root/'FAILED.json',{'state':'FAILED','error':type(exc).__name__+': '+str(exc),'no_activation':True});raise
 
-    def cross_check(self,db,manifest,*,asset_root):
+    @classmethod
+    def cross_check(cls,db,manifest,*,asset_root):
         for row in db.execute("SELECT data FROM collaboration WHERE kind='integration'"):
-            for name,expected in self.displaced_files(json.loads(row[0])).items():
+            for name,expected in cls.displaced_files(json.loads(row[0])).items():
                 if manifest.get(name)!=expected:raise ValueError('快照缺少整合保留版本证据或版本不符。')
         from .library_assets import required_assets
         for name,expected in required_assets(db,asset_root=asset_root).items():

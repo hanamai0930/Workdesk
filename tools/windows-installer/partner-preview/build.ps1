@@ -15,9 +15,9 @@ $compilerArgs = @('/nologo','/target:winexe','/platform:x64','/optimize+','/code
 foreach ($ref in $refs) { $compilerArgs += '/reference:' + (Join-Path $framework $ref) }
 $compilerArgs += '/resource:' + $catalogPath + ',catalog.json'
 $compilerArgs += '/resource:' + (Join-Path $PSScriptRoot 'Selector.xaml') + ',selector.xaml'
-$program = Join-Path $destination 'Workdesk-Setup-Preview.exe'
+$program = Join-Path $destination 'Workdesk-Partners.exe'
 $compilerArgs += '/out:' + $program
 $compilerArgs += Join-Path $PSScriptRoot 'Selector.cs'
 & (Join-Path $framework 'csc.exe') @compilerArgs
-if ($LASTEXITCODE -ne 0) { throw '编译选装预览失败。' }
+if ($LASTEXITCODE -ne 0) { throw '编译伙伴选装程序失败。' }
 Write-Output $program

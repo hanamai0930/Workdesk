@@ -106,6 +106,8 @@ func Open(path string, allowMigration bool) (*Store, error) {
 
 func (s *Store) Path() string { return s.path }
 
+func (s *Store) InitiallyEmpty() bool { return s.initiallyEmpty }
+
 func (s *Store) validate() error {
 	var count int
 	if err := s.db.QueryRowContext(s.ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meta'").Scan(&count); err != nil {

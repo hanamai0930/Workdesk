@@ -124,8 +124,19 @@ func New(p *instance.Profile, db *storage.Store, implementation, source string, 
 	if err := a.loadSources(); err != nil {
 		return nil, err
 	}
+	freshRelease := p.Channel == "release" && db.InitiallyEmpty()
 	if err := db.InitializeCore(); err != nil {
 		return nil, err
+	}
+	if freshRelease {
+		if err := db.MigratePartners(); err != nil {
+			return nil, err
+		}
+	}
+	if p.Channel == "release" {
+		if version, err := db.Schema(); err != nil || version != "3" {
+			return nil, errors.New("installed database requires an explicit backed-up migration")
+		}
 	}
 	epoch, err := db.AdvanceOwnerEpoch()
 	if err != nil {
@@ -399,7 +410,7 @@ func inside(path, root string) bool {
 func (a *App) Identity() map[string]any {
 	schema, _ := a.DB.Schema()
 	schemaNumber, _ := strconv.Atoi(schema)
-	return map[string]any{"schema": 1, "channel": "development", "instance_id": a.Profile.InstanceID, "process_instance": a.Process, "program_root": a.Profile.ProgramRoot, "user_root": a.Profile.UserRoot, "data_root": a.Profile.DataRoot, "source_revision": a.Source, "source_dirty": a.SourceDirty, "implementation_revision": a.Implementation, "protocol": 2, "core_engine": "go", "storage_schema": schemaNumber, "owner_epoch": a.Epoch, "legacy_bridge_protocol": 1, "default_project_id": a.Profile.DefaultProjectID}
+	return map[string]any{"schema": 1, "channel": a.Profile.Channel, "instance_id": a.Profile.InstanceID, "process_instance": a.Process, "program_root": a.Profile.ProgramRoot, "user_root": a.Profile.UserRoot, "data_root": a.Profile.DataRoot, "source_revision": a.Source, "source_dirty": a.SourceDirty, "implementation_revision": a.Implementation, "protocol": 2, "core_engine": "go", "storage_schema": schemaNumber, "owner_epoch": a.Epoch, "legacy_bridge_protocol": 1, "default_project_id": a.Profile.DefaultProjectID}
 }
 func (a *App) legacyRequest(ctx context.Context, method, path string, body any) (int, any, error) {
 	var result struct {

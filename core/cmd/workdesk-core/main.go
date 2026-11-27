@@ -110,7 +110,7 @@ func run() error {
 	if err = atomicJSON(filepath.Join(p.DataRoot, "backend.json"), state); err != nil {
 		return err
 	}
-	uiState := map[string]any{"app": "workdesk-ui-02", "revision": a.Implementation, "port": p.UIPort, "token": a.UIToken, "instance": a.Process, "pid": os.Getpid(), "instance_id": p.InstanceID, "channel": "development", "program_root": p.ProgramRoot, "user_root": p.UserRoot, "data_root": p.DataRoot, "core_engine": "go"}
+	uiState := map[string]any{"app": "workdesk-ui-02", "revision": a.Implementation, "port": p.UIPort, "token": a.UIToken, "instance": a.Process, "pid": os.Getpid(), "instance_id": p.InstanceID, "channel": p.Channel, "program_root": p.ProgramRoot, "user_root": p.UserRoot, "data_root": p.DataRoot, "core_engine": "go"}
 	uiRecord := filepath.Join(p.UserRoot, "runtime", "ui", "instance-core.json")
 	if err = atomicJSON(uiRecord, uiState); err != nil {
 		return err

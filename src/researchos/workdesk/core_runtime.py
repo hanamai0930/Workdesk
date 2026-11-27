@@ -27,7 +27,11 @@ def selection(locations):
     if not manifest_path.is_relative_to(core_root):
         raise ValueError('核心清单越出程序位置。')
     manifest = read_json(manifest_path)
-    executable = Path(manifest['executable']).resolve()
+    executable = Path(manifest['executable'])
+    if not executable.is_absolute():
+        executable = manifest_path.parent / executable
+    executable = executable.resolve()
+    manifest['executable'] = str(executable)
     if not executable.is_relative_to(core_root) or not executable.is_file():
         raise ValueError('所选Go核心缺失，未回退旧核心。')
     if sha256(executable.read_bytes()).hexdigest() != manifest['binary_sha256']:
@@ -133,21 +137,17 @@ def start(locations, profile, *, fixture=False, manifest=None):
     expected_implementation(locations) if not fixture else None
     if (Path(locations.user) / 'runtime/development-stop.json').exists():
         raise ValueError('开发实例已请求停止，请从显式开发启动入口重开。')
-    try:
-        source = subprocess.run(['git', '-C', str(locations.base), 'rev-parse', 'HEAD'],
-                                capture_output=True, text=True, check=True,
-                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        source = 'UNKNOWN'
+    if profile['channel'] == 'release':
+        from .instance import release_marker
+        source = release_marker(locations.base)['source_revision']
+        dirty = False
+    else:
+        source, dirty = checkout_revision(locations.base)
     args = [manifest['executable'], '--config', profile['config_path'], '--base', str(locations.base),
             '--implementation', manifest['implementation_revision'], '--source', source]
     if fixture:
         args.append('--fixture')
-    dirty = subprocess.run(['git', '-C', str(locations.base), 'status', '--porcelain', '--',
-                            'src', 'core', 'contracts', 'workdesk-ui', 'tools/dev_instance.py'],
-                           capture_output=True, text=True,
-                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-    if dirty.returncode or dirty.stdout.strip():
+    if dirty:
         args.append('--source-dirty')
     log = Path(locations.user) / 'runtime/core-launch.log'
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -156,6 +156,20 @@ def start(locations, profile, *, fixture=False, manifest=None):
                                    stdout=stream, stderr=stream,
                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     return process
+
+
+def checkout_revision(base):
+    try:
+        source = subprocess.run(['git', '-C', str(base), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True, check=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        source = 'UNKNOWN'
+    dirty = subprocess.run(['git', '-C', str(base), 'status', '--porcelain', '--',
+                            'src', 'core', 'contracts', 'workdesk-ui', 'tools/dev_instance.py'],
+                           capture_output=True, text=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    return source, bool(dirty.returncode or dirty.stdout.strip())
 
 
 def prepare_migration(profile, executable, *, fixture=False):

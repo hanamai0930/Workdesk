@@ -1,5 +1,20 @@
 # Windows 安装包构建
 
+## v1.2.0 伙伴选装版
+
+运行 `Workdesk-Setup-1.2.0-x64.exe` 后，安装向导可打开伙伴管理窗口。直接勾选名称会从官方源安装，也可用“导入本地补充包…”一次选择多份 `.wdpa`。文件选择器兼容同版本的 `.wdpartner`。八个官方端各自选装，包体和预计占用在选择时显示。开始菜单中的“Workdesk 1.2 → 伙伴管理”可再次打开此窗口。
+
+安装版有独立的程序和资料目录。首次使用前可从已停止的 1.0.1 安装版导入旧库，保留升级前备份；账号及 API Key 在新版重新连接。升级及卸载前可从开始菜单选择“停止 Workdesk 1.2”。卸载保留实例资料，在原程序位置重新安装可继续使用。
+
+构建使用以下入口，运行组件和发行产物在仓库以外准备。
+
+- `build_release_runtime.py` 汇集冻结的 Go 核心、界面及明确指定的运行组件。为每次发行准备干净的程序目录。
+- `build_partner_preview_packs.py` 生成伙伴包及校验清单。`partner-preview/build.ps1` 将该清单嵌入伙伴管理程序，Go 核心的 `bundle_pins.go` 固定同一组包和发布版本。
+- `build_12.py` 按 `Workdesk12.iss` 将程序、选装窗口、WebView2 离线安装器、依赖许可和 Poppler 对应源码合并为主安装程序。
+- `check_12.py --root <发行工作目录> --legacy-fixture <旧库测试副本>` 使用最终 EXE 验证导入、启动、伙伴安装、覆盖安装和卸载。该检查使用尚无已登记 1.2 安装的 Windows 测试账户。
+
+## v1.0.1 通用兼容版
+
 `Workdesk.iss` 提供原 1.0.0 安装配置，以及 `ReleaseBuild + Win10Compatibility` 的 1.0.1 通用兼容配置。兼容版文件名为 `Workdesk-Setup-Win10-Win11-x64.exe`，最低系统为 Windows 10 1809（17763）x64，也允许 Windows 11 x64。
 
 ## 构建输入

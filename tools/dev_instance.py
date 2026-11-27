@@ -21,6 +21,7 @@ BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE / 'src'))
 from researchos.workdesk.instance import configure_environment, load_profile
 from researchos.workdesk.paths import atomic_json, process_identity
+from researchos.workdesk.persistence import BACKUP_SECONDS, MAX_TOTAL, snapshot_file_limit
 from researchos.workdesk.workspace import io_path
 
 
@@ -99,7 +100,7 @@ def checked_backend(profile):
             or not same_path(health.get('program_base'), profile['program_root'])):
         raise ValueError('开发控制服务身份不符；未发送控制命令。')
     identity = request_json(origin + '/api/v1/instance', token=state['viewer'])
-    if (identity.get('schema') != 1 or identity.get('channel') != 'development'
+    if (identity.get('schema') != 1 or identity.get('channel') != profile['channel']
             or identity.get('instance_id') != profile['instance_id']
             or identity.get('process_instance') != state['instance']
             or any(not same_path(identity.get(field), profile[field])
@@ -131,7 +132,7 @@ def checked_ui(profile):
             # Another revision may have left an old state file at the same port.
             continue
         if (health.get('instance_id') != profile['instance_id']
-                or health.get('channel') != 'development'
+                or health.get('channel') != profile['channel']
                 or any(not same_path(health.get(field), profile[field])
                        for field in ('program_root', 'user_root', 'data_root'))):
             raise ValueError('开发界面归属不符；未发送退出请求。')
@@ -147,7 +148,8 @@ def command(profile, backend, kind, payload):
     atomic_json(record, value)
     try:
         result = request_json(backend['origin'] + '/api/v1/command', token=backend['state']['control'],
-                              payload={'id': identity, 'kind': kind, 'payload': payload}, timeout=25)
+                              payload={'id': identity, 'kind': kind, 'payload': payload},
+                              timeout=BACKUP_SECONDS+30 if kind in {'backup.create','backup.restore'} else 25)
     except RequestRejected:
         atomic_json(record, {**value, 'state': 'REJECTED'})
         raise
@@ -163,7 +165,7 @@ def command(profile, backend, kind, payload):
 
 def status(profile):
     backend, ui = checked_backend(profile), checked_ui(profile)
-    return {'channel': 'development', 'instance_id': profile['instance_id'],
+    return {'channel': profile['channel'], 'instance_id': profile['instance_id'],
             'program_root': profile['program_root'], 'user_root': profile['user_root'],
             'data_root': profile['data_root'], 'ui_origin': ui['origin'] if ui else None,
             'ui_state': 'RUNNING' if ui else 'STOPPED',
@@ -362,10 +364,10 @@ def package_files(root, manifest):
             physical = io_path(candidate)
             if physical.is_symlink() or (hasattr(physical, 'is_junction') and physical.is_junction()):
                 raise ValueError('开发备份文件不能使用链接。')
-        limit = (128 if name == 'tasks.sqlite3' else 64) * 1024 * 1024
+        limit = snapshot_file_limit(name)
         physical = io_path(path)
         size = physical.stat().st_size; total += size
-        if size > limit or total > 512 * 1024 * 1024:
+        if size > limit or total > MAX_TOTAL:
             raise ValueError('开发备份超过文件或总量上限。')
         raw = physical.read_bytes()
         if len(raw) != item['bytes'] or sha256(raw).hexdigest() != item['sha256']:
