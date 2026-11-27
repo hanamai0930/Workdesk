@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import codecs
+from hashlib import sha256
 import io
 import os
 from pathlib import Path
@@ -127,6 +128,7 @@ class PartnerWorker:
         self.session_id = config.get("session_id") or (("sess_" + uuid.uuid4().hex) if config.get("partner_id") == "glm" else str(uuid.uuid4()))
         self.thread_id = self.turn_id = None
         self.requests = {}
+        self.zcode_permission_lock = threading.Lock()
         self.pending_auth_methods = []
         self.done = threading.Event()
         self.stop_requested = threading.Event()
@@ -711,6 +713,9 @@ class PartnerWorker:
                 # The fixed protocol allows terminal events to omit inputId,
                 # but only its already-bound native turn can settle this send.
                 return
+        if self.spec.protocol == "zcode" and "id" in message and method == "interaction/requestPermission":
+            self._zcode_permission(message, params)
+            return
         self.emit(type="event", kind="native_event", native=message)
         if self.spec.protocol == "codex" and method == "account/login/completed":
             self.codex_login_receipt = params
@@ -808,6 +813,26 @@ class PartnerWorker:
                 self.emit(type="error", error="Official ZCode turn failed", native=params)
                 self.done.set()
 
+    def _zcode_permission(self, message, params):
+        # ZCode retries the same pending native operation with a new RPC id.
+        # Preserve one human decision for the exact session, turn and payload,
+        # but reply to the most recent transport id. Changed input asks again.
+        if (params.get("sessionId") != self.session_id or
+                (self.turn_id and params.get("turnId") != self.turn_id) or
+                any(not isinstance(params.get(k), str) or not params[k]
+                    for k in ("requestId", "turnId", "toolCallId", "toolName"))):
+            self.rpc.send({"id": message["id"], "error": {
+                "code": -32602, "message": "Native permission identity mismatch"}})
+            return
+        payload = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        ident = "zcode-permission-" + sha256(payload.encode()).hexdigest()
+        with self.zcode_permission_lock:
+            pending = ident in self.requests
+            self.requests[ident] = message
+        if not pending:
+            self.emit(type="approval", request_id=ident, message=message["method"],
+                      options=params.get("options"), native=params)
+
     def _host_callback(self, message, method, params):
         """Answer native host reads; these are neither prompts nor approvals."""
         result = None
@@ -822,6 +847,14 @@ class PartnerWorker:
         elif self.spec.protocol == "zcode" and method == "session/readReplyLanguage":
             # Official protocol specifies null for a host without this setting.
             result = {"language": None}
+        elif self.spec.protocol == "zcode" and method == "interaction/requestOfficialMcpAuthHeaders":
+            # No Workdesk credential is a ZCode desktop-plugin assertion. A
+            # native component can continue without this optional host feature.
+            result = {"ok": False, "reason": "official_auth_unavailable"}
+            self.rpc.send({"id": message["id"], "result": result})
+            self.emit(type="event", kind="native_host_callback", method=method, response=result,
+                      source="OFFICIAL_FIXED_RELEASE_HOST_DEFAULTS")
+            return True
         elif self.config.get("partner_id") == "qwen" and method == "craft/drainMidTurnQueue":
             # Workdesk has no queued mid-turn guidance. This does not schedule
             # another native turn or synthesize model content.
@@ -882,7 +915,8 @@ class PartnerWorker:
             self.config["selected_auth_method"] = self._auth_method_selection(command.get("auth_method") or command.get("text"))
         elif action in {"approval", "input"} and command.get("request_id"):
             ident = str(command["request_id"])
-            message = self.requests.pop(ident, None)
+            with self.zcode_permission_lock:
+                message = self.requests.pop(ident, None)
             if message is None:
                 raise NativeRejected("Native request is absent or already resolved")
             accepted = command.get("decision") in {"accept", "allow", "allowed-once"}

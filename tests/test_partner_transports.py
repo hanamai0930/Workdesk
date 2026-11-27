@@ -371,6 +371,44 @@ sys.exit(7)
             worker._native_message({'id': 1, 'method': method, 'params': {'sessionId': 'different-session'}})
             self.assertEqual(worker.rpc.sent[-1]['error']['code'], -32602)
 
+    def test_zcode_native_permission_retry_shares_exact_human_request(self):
+        from researchos.workdesk.partners.worker import NativeRejected, PartnerWorker
+        events, sent = [], []
+        worker = PartnerWorker({'partner_id': 'glm', 'session_id': 'native-session'}, events.append)
+        worker.spec = type('Spec', (), {'protocol': 'zcode'})()
+        worker.turn_id = 'native-turn'
+        worker.rpc = type('Rpc', (), {'send': lambda _, message: sent.append(message)})()
+        method = 'interaction/requestPermission'
+        params = {'sessionId': 'native-session', 'turnId': 'native-turn', 'requestId': 'native-request',
+                  'toolCallId': 'native-tool-call', 'toolName': 'local_probe', 'input': {},
+                  'options': [{'kind': 'allow_once'}, {'kind': 'allow_always'}]}
+        worker._native_message({'id': 1, 'method': method, 'params': params})
+        worker._native_message({'id': 2, 'method': method, 'params': params})
+        worker._native_message({'id': 3, 'method': method, 'params': {**params, 'turnId': 'old-turn'}})
+        self.assertEqual(sent[-1]['error']['code'], -32602)
+        ident, = worker.requests
+        self.assertEqual([e['request_id'] for e in events if e['type'] == 'approval'], [ident])
+        worker.control({'action': 'approval', 'request_id': ident, 'decision': 'allow'})
+        self.assertEqual(sent[-1], {'id': 2, 'result': {'decision': 'allow'}})
+        with self.assertRaises(NativeRejected):
+            worker.control({'action': 'approval', 'request_id': ident, 'decision': 'allow'})
+        worker._native_message({'id': 4, 'method': method, 'params': {**params, 'input': {'new': True}}})
+        self.assertNotIn(ident, worker.requests)
+        self.assertEqual(len(worker.requests), 1)
+
+    def test_zcode_plugin_auth_callback_has_no_credentials_and_no_user_input(self):
+        from researchos.workdesk.partners.worker import PartnerWorker
+        events, sent = [], []
+        worker = PartnerWorker({'partner_id': 'glm', 'route': 'api', 'api_key': 'FIXTURE_SECRET'}, events.append)
+        worker.spec = type('Spec', (), {'protocol': 'zcode'})()
+        worker.rpc = type('Rpc', (), {'send': lambda _, message: sent.append(message)})()
+        worker._native_message({'id': 0, 'method': 'interaction/requestOfficialMcpAuthHeaders',
+                                'params': {'targetOrigin': 'https://official.invalid'}})
+        self.assertEqual(sent, [{'id': 0, 'result': {'ok': False, 'reason': 'official_auth_unavailable'}}])
+        self.assertFalse(worker.requests)
+        self.assertFalse([e for e in events if e['type'] in ('input', 'approval')])
+        self.assertNotIn('FIXTURE_SECRET', str(events + sent))
+
     def test_native_approval_prefers_allow_once(self):
         from researchos.workdesk.partners.worker import PartnerWorker
         events, sent = [], []
