@@ -24,27 +24,36 @@ import (
 
 type runningJob struct{ cancel context.CancelFunc }
 type Job struct {
-	ID                     string         `json:"id"`
-	ProjectID              string         `json:"project_id"`
-	State                  string         `json:"state"`
-	Summary                string         `json:"summary,omitempty"`
-	Error                  string         `json:"error,omitempty"`
-	Artifacts              []Artifact     `json:"artifacts"`
-	Logs                   []LogSegment   `json:"logs"`
-	Created                float64        `json:"created"`
-	Updated                float64        `json:"updated"`
-	OwnerEpoch             int64          `json:"owner_epoch"`
-	ProjectRoot            string         `json:"project_root"`
-	OutputDir              string         `json:"output_dir"`
-	InputFiles             []string       `json:"input_files"`
-	PID                    int            `json:"pid,omitempty"`
-	ProcessInstance        string         `json:"process_instance"`
-	DataRoot               string         `json:"data_root"`
-	ImplementationRevision string         `json:"implementation_revision"`
-	ToolVersion            string         `json:"tool_version"`
-	OwnedProcess           map[string]any `json:"owned_process,omitempty"`
+	CommandID              string           `json:"command_id,omitempty"`
+	TaskID                 string           `json:"task_id,omitempty"`
+	AttemptID              string           `json:"attempt_id,omitempty"`
+	SpecHash               string           `json:"spec_hash,omitempty"`
+	AuthorizationID        string           `json:"authorization_id,omitempty"`
+	InputVersions          []Artifact       `json:"input_versions,omitempty"`
+	Checks                 []map[string]any `json:"checks,omitempty"`
+	Decisions              []map[string]any `json:"decisions,omitempty"`
+	ID                     string           `json:"id"`
+	ProjectID              string           `json:"project_id"`
+	State                  string           `json:"state"`
+	Summary                string           `json:"summary,omitempty"`
+	Error                  string           `json:"error,omitempty"`
+	Artifacts              []Artifact       `json:"artifacts"`
+	Logs                   []LogSegment     `json:"logs"`
+	Created                float64          `json:"created"`
+	Updated                float64          `json:"updated"`
+	OwnerEpoch             int64            `json:"owner_epoch"`
+	ProjectRoot            string           `json:"project_root"`
+	OutputDir              string           `json:"output_dir"`
+	InputFiles             []string         `json:"input_files"`
+	PID                    int              `json:"pid,omitempty"`
+	ProcessInstance        string           `json:"process_instance"`
+	DataRoot               string           `json:"data_root"`
+	ImplementationRevision string           `json:"implementation_revision"`
+	ToolVersion            string           `json:"tool_version"`
+	OwnedProcess           map[string]any   `json:"owned_process,omitempty"`
 }
 type Artifact struct {
+	SourceJobID  string `json:"source_job_id,omitempty"`
 	Path         string `json:"path"`
 	SHA256       string `json:"sha256"`
 	Bytes        int64  `json:"bytes"`
@@ -69,7 +78,7 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 	var receipt map[string]any
 	fresh := false
 	var job *Job
-	var cancelID string
+	var cancelID, taskID, attemptID string
 	err := a.write(func(s *storage.Session) error {
 		prior, e := s.Execute(`SELECT kind,payload_hash,receipt FROM commands WHERE id=?`, []any{id})
 		if e != nil {
@@ -83,57 +92,86 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			return json.Unmarshal([]byte(str(row[2])), &receipt)
 		}
 		switch kind {
-		case "tool.run":
-			project := str(p["project_id"])
-			if project == "" {
-				project = a.Profile.DefaultProjectID
-			}
-			r, e := s.Execute(`SELECT root FROM projects WHERE id=?`, []any{project})
+		case "tool.authorize":
+			receipt, e = a.createToolGrant(s, id, p)
 			if e != nil {
 				return e
 			}
-			if len(r.Rows) != 1 {
-				return errors.New("请选择已登记项目")
+			taskID, attemptID = str(p["task_id"]), str(p["attempt_id"])
+		case "tool.revoke":
+			var grant toolGrant
+			receipt, grant, e = a.revokeToolGrant(s, p)
+			if e != nil {
+				return e
 			}
-			root := str(r.Rows[0][0])
-			if info, e := os.Stat(root); e != nil || !info.IsDir() {
-				return errors.New("项目目录不存在")
+			taskID, attemptID = grant.TaskID, grant.AttemptID
+		case "tool.decide":
+			var current *Job
+			receipt, current, e = a.toolDecision(s, id, p)
+			if e != nil {
+				return e
 			}
-			jobID := ID()
-			output := str(p["output_dir"])
-			if output == "" {
-				output = filepath.Join(a.Profile.DataRoot, "results", jobID)
-			}
-			if !filepath.IsAbs(output) || !inside(output, filepath.Join(a.Profile.DataRoot, "results")) {
-				return errors.New("概要成果应保存在开发资料的results目录")
-			}
-			if _, e = os.Lstat(output); !os.IsNotExist(e) {
-				return errors.New("成果目标已存在或无法核对，不覆盖")
-			}
-			files := []string{}
-			if v, exists := p["input_files"]; exists {
-				arr, ok := v.([]any)
-				if !ok || len(arr) > 200 {
-					return errors.New("材料列表无效")
+			taskID, attemptID = current.TaskID, current.AttemptID
+		case "tool.run":
+			if authoritativeDocument(p) {
+				job, e = a.authorizedJob(s, p)
+				if e != nil {
+					return e
 				}
-				for _, x := range arr {
-					value, ok := x.(string)
-					if !ok {
-						return errors.New("材料路径无效")
-					}
-					name := value
-					if !filepath.IsAbs(name) {
-						name = filepath.Join(root, name)
-					}
-					if !inside(name, root) {
-						return errors.New("材料不属于所选项目")
-					}
-					files = append(files, value)
+				taskID, attemptID = job.TaskID, job.AttemptID
+			} else {
+				project := str(p["project_id"])
+				if project == "" {
+					project = a.Profile.DefaultProjectID
 				}
+				r, e := s.Execute(`SELECT root FROM projects WHERE id=?`, []any{project})
+				if e != nil {
+					return e
+				}
+				if len(r.Rows) != 1 {
+					return errors.New("请选择已登记项目")
+				}
+				root := str(r.Rows[0][0])
+				if info, e := os.Stat(root); e != nil || !info.IsDir() {
+					return errors.New("项目目录不存在")
+				}
+				jobID := ID()
+				output := str(p["output_dir"])
+				if output == "" {
+					output = filepath.Join(a.Profile.DataRoot, "results", jobID)
+				}
+				if !filepath.IsAbs(output) || !inside(output, filepath.Join(a.Profile.DataRoot, "results")) {
+					return errors.New("概要成果应保存在开发资料的results目录")
+				}
+				if _, e = os.Lstat(output); !os.IsNotExist(e) {
+					return errors.New("成果目标已存在或无法核对，不覆盖")
+				}
+				files := []string{}
+				if v, exists := p["input_files"]; exists {
+					arr, ok := v.([]any)
+					if !ok || len(arr) > 200 {
+						return errors.New("材料列表无效")
+					}
+					for _, x := range arr {
+						value, ok := x.(string)
+						if !ok {
+							return errors.New("材料路径无效")
+						}
+						name := value
+						if !filepath.IsAbs(name) {
+							name = filepath.Join(root, name)
+						}
+						if !inside(name, root) {
+							return errors.New("材料不属于所选项目")
+						}
+						files = append(files, value)
+					}
+				}
+				job = &Job{ID: jobID, ProjectID: project, State: "QUEUED", Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProjectRoot: root, OutputDir: output, InputFiles: files, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: "material-summary/1"}
 			}
-			job = &Job{ID: jobID, ProjectID: project, State: "QUEUED", Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProjectRoot: root, OutputDir: output, InputFiles: files, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: "material-summary/1"}
+			job.CommandID = id
 			data, _ := json.Marshal(job)
-			_, e = s.Execute(`INSERT INTO core_tool_jobs VALUES(?,?,?,?,?)`, []any{job.ID, project, job.State, string(data), job.Updated})
+			_, e = s.Execute(`INSERT INTO core_tool_jobs VALUES(?,?,?,?,?)`, []any{job.ID, job.ProjectID, job.State, string(data), job.Updated})
 			if e != nil {
 				return e
 			}
@@ -158,6 +196,7 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			if current.OwnerEpoch != a.Epoch {
 				return errors.New("原工具归属不同，先核对")
 			}
+			taskID, attemptID = current.TaskID, current.AttemptID
 			current.State = "STOP_REQUESTED"
 			current.Updated = now()
 			data, _ := json.Marshal(current)
@@ -175,8 +214,12 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 		if _, e = s.Execute(`INSERT INTO core_command_metadata VALUES(?,?)`, []any{id, "core-json-v2"}); e != nil {
 			return e
 		}
-		payload, _ := json.Marshal(map[string]any{"command_id": id, "receipt": receipt, "owner_epoch": a.Epoch})
-		_, e = s.Execute(`INSERT INTO events(at,task_id,attempt_id,kind,payload) VALUES(?,NULL,NULL,?,?)`, []any{now(), kind, string(payload)})
+		eventReceipt := receipt
+		if kind == "tool.authorize" {
+			eventReceipt = map[string]any{"authorization_id": id, "state": "AUTHORIZED"}
+		}
+		payload, _ := json.Marshal(map[string]any{"command_id": id, "receipt": eventReceipt, "owner_epoch": a.Epoch})
+		_, e = s.Execute(`INSERT INTO events(at,task_id,attempt_id,kind,payload) VALUES(?,?,?,?,?)`, []any{now(), nullID(taskID), nullID(attemptID), kind, string(payload)})
 		fresh = true
 		return e
 	})
@@ -207,7 +250,7 @@ func (a *App) saveJob(job *Job, kind string) error {
 			return e
 		}
 		event, _ := json.Marshal(map[string]any{"invocation_id": job.ID, "state": job.State, "owner_epoch": a.Epoch})
-		_, e := s.Execute(`INSERT INTO events(at,task_id,attempt_id,kind,payload) VALUES(?,NULL,NULL,?,?)`, []any{now(), kind, string(event)})
+		_, e := s.Execute(`INSERT INTO events(at,task_id,attempt_id,kind,payload) VALUES(?,?,?,?,?)`, []any{now(), nullID(job.TaskID), nullID(job.AttemptID), kind, string(event)})
 		return e
 	})
 }
@@ -242,8 +285,23 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 		fmt.Fprintln(a.Log, e)
 		return
 	}
-	request, _ := json.Marshal(map[string]any{"project_root": job.ProjectRoot, "input_files": job.InputFiles, "output_dir": job.OutputDir})
-	cmd := exec.CommandContext(ctx, a.Profile.PythonExecutable, "-B", "-X", "utf8", "-m", "researchos.workdesk.professional_tools.summary")
+	req := map[string]any{"project_root": job.ProjectRoot, "input_files": job.InputFiles, "output_dir": job.OutputDir}
+	module := "researchos.workdesk.professional_tools.summary"
+	if job.ToolVersion == documentVersion {
+		frozen, cleanup, e := a.documentRequest(job)
+		if e != nil {
+			a.admission.Unlock()
+			job.State = "FAILED"
+			job.Error = e.Error()
+			_ = a.saveJob(job, "tool.failed_no_start")
+			return
+		}
+		defer cleanup()
+		module = "researchos.workdesk.professional_tools.document"
+		req = frozen
+	}
+	request, _ := json.Marshal(req)
+	cmd := exec.CommandContext(ctx, a.Profile.PythonExecutable, "-B", "-X", "utf8", "-m", module)
 	cmd.Dir = a.Profile.ProgramRoot
 	cmd.Env = bridge.Environment(map[string]string{"PYTHONPATH": a.pythonSources(), "WORKDESK_HOME": a.Profile.UserRoot, "WORKDESK_DATA_DIR": a.Profile.DataRoot})
 	cmd.Stdin = bytes.NewReader(request)
@@ -255,7 +313,6 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 	cmd.Stderr = errLog
 	quietCommand(cmd)
 	owner, err := startOwnedCommand(cmd)
-	a.admission.Unlock()
 	if owner != nil {
 		defer owner.Close()
 		job.OwnedProcess = owner.Identity()
@@ -263,6 +320,9 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 	if err == nil {
 		job.PID = cmd.Process.Pid
 		_ = a.saveJob(job, "tool.process_started")
+	}
+	a.admission.Unlock()
+	if err == nil {
 		err = owner.Wait()
 		job.OwnedProcess = owner.Identity()
 	}
@@ -276,10 +336,11 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 		}
 	} else {
 		var result struct {
-			State     string     `json:"state"`
-			Summary   string     `json:"summary"`
-			Error     string     `json:"error"`
-			Artifacts []Artifact `json:"artifacts"`
+			State     string           `json:"state"`
+			Summary   string           `json:"summary"`
+			Error     string           `json:"error"`
+			Artifacts []Artifact       `json:"artifacts"`
+			Checks    []map[string]any `json:"checks"`
 		}
 		decodeErr := json.Unmarshal(stdout.Bytes(), &result)
 		if err != nil || decodeErr != nil || result.State != "COMPLETED" {
@@ -292,6 +353,11 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 			job.State = "COMPLETED"
 			job.Summary = result.Summary
 			job.Artifacts = result.Artifacts
+			job.Checks = result.Checks
+			if len(job.Artifacts) == 0 && job.ToolVersion == documentVersion {
+				job.State = "FAILED"
+				job.Error = "文档工具未返回成果"
+			}
 			for i := range job.Artifacts {
 				artifact := job.Artifacts[i]
 				if e := verifyArtifact(job.OutputDir, artifact); e != nil {
@@ -345,19 +411,35 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
-func verifyArtifact(root string, artifact Artifact) error {
+func verifiedArtifactBytes(root string, artifact Artifact) ([]byte, error) {
 	if !inside(artifact.Path, root) {
-		return errors.New("工具成果路径越界")
+		return nil, errors.New("工具成果路径越界")
 	}
-	raw, e := os.ReadFile(artifact.Path)
+	f, e := os.Open(artifact.Path)
 	if e != nil {
-		return e
+		return nil, e
+	}
+	defer f.Close()
+	info, e := f.Stat()
+	if e != nil {
+		return nil, e
+	}
+	if !info.Mode().IsRegular() || info.Size() != artifact.Bytes {
+		return nil, errors.New("工具成果版本不一致")
+	}
+	raw, e := io.ReadAll(io.LimitReader(f, artifact.Bytes+1))
+	if e != nil {
+		return nil, e
 	}
 	digest := sha256.Sum256(raw)
 	if int64(len(raw)) != artifact.Bytes || hex.EncodeToString(digest[:]) != artifact.SHA256 {
-		return errors.New("工具成果版本不一致")
+		return nil, errors.New("工具成果版本不一致")
 	}
-	return nil
+	return raw, nil
+}
+func verifyArtifact(root string, artifact Artifact) error {
+	_, e := verifiedArtifactBytes(root, artifact)
+	return e
 }
 func (a *App) serveArtifact(w http.ResponseWriter, r *http.Request, id, path string) error {
 	rows, e := a.query(`SELECT data,state FROM core_tool_jobs WHERE id=?`, id)
@@ -378,19 +460,33 @@ func (a *App) serveArtifact(w http.ResponseWriter, r *http.Request, id, path str
 		if artifact.Path != path {
 			continue
 		}
-		if e = verifyArtifact(job.OutputDir, artifact); e != nil {
-			return e
-		}
-		raw, e := os.ReadFile(path)
+		raw, e := verifiedArtifactBytes(job.OutputDir, artifact)
 		if e != nil {
 			return e
 		}
-		w.Header().Set("Content-Type", artifact.Mime+"; charset=utf-8")
+		// Only inert text or signature-checked raster images can be served inline.
+		contentType := "application/octet-stream"
+		inline := false
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".txt", ".md", ".csv", ".log", ".json", ".tex":
+			contentType = "text/plain; charset=utf-8"
+			inline = true
+		case ".png", ".jpg", ".jpeg":
+			if detected := http.DetectContentType(raw); detected == "image/png" || detected == "image/jpeg" {
+				contentType = detected
+				inline = true
+			}
+		}
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
-		if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		if r.URL.Query().Get("download") == "1" || !inline {
 			name := urlPathEscape(filepath.Base(path))
-			fallback := "workdesk-result" + filepath.Ext(path)
+			fallback := "workdesk-result"
+			if ext := filepath.Ext(path); len(ext) <= 12 && safeExtension.MatchString(ext) {
+				fallback += ext
+			}
 			w.Header().Set("Content-Disposition", "attachment; filename=\""+fallback+"\"; filename*=UTF-8''"+name)
 		}
 		_, e = w.Write(raw)
@@ -398,6 +494,9 @@ func (a *App) serveArtifact(w http.ResponseWriter, r *http.Request, id, path str
 	}
 	return errors.New("文件不属于本次成果清单")
 }
+
+var safeExtension = regexp.MustCompile(`^\.[a-zA-Z0-9]+$`)
+
 func urlPathEscape(s string) string { return strings.ReplaceAll(url.QueryEscape(s), "+", "%20") }
 
 func (a *App) resolveJob(job *Job) error {

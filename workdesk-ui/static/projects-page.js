@@ -22,11 +22,50 @@
       </section>`:''}
     </section>`;
   }
+  const versionLabels={selection:'选定材料',input:'工具输入',previous_result:'修订所用成果',result:'任务成果',job:'工具成果'};
+  async function projectVersions(panel,project,more){
+    const query=new URLSearchParams({limit:'30'});
+    if(more)query.set('cursor',panel.dataset.cursor||'0');
+    const response=await fetch('api/v2/projects/'+encodeURIComponent(project)+'/materials?'+query,{cache:'no-store'});
+    const value=await response.json();
+    if(!response.ok)throw Error(value.error||'项目清单读取失败');
+    if(!panel.isConnected)return;
+    const rows=value.materials||[];
+    if(!more)panel.innerHTML='<div data-version-rows></div>';
+    const list=panel.querySelector('[data-version-rows]');
+    for(const row of rows){
+      const line=document.createElement('div'),label=document.createElement('label'),input=document.createElement('input');
+      input.type='checkbox';input.dataset.version=JSON.stringify(row.version);
+      label.append(input,document.createTextNode(' '+(versionLabels[row.kind]||row.kind)+' · '+row.name+' · '+row.bytes+' 字节 · '+row.sha256.slice(0,12)));
+      line.append(label);list.append(line);
+    }
+    panel.querySelector('[data-version-actions]')?.remove();
+    if(!list.children.length){list.textContent='尚无已登记的材料或成果版本。';return;}
+    panel.dataset.cursor=value.cursor;
+    const actions=document.createElement('div');actions.dataset.versionActions='';
+    actions.innerHTML=(value.has_more?S.button('查看更多',`data-project="versions-more" data-id="${h(project)}"`):'')+
+      S.button('导出选定版本',`data-project="versions-export" data-id="${h(project)}"`);
+    panel.append(actions);
+  }
+  async function exportVersions(panel,project){
+    const refs=[...panel.querySelectorAll('[data-version]:checked')];
+    if(!refs.length||refs.length>32)throw Error('请选择 1 至 32 个版本。');
+    const q=new URLSearchParams();for(const el of refs)q.append('version',el.dataset.version);
+    const reply=await fetch('api/v2/projects/'+encodeURIComponent(project)+'/export?'+q,{cache:'no-store'});
+    if(!reply.ok){const error=await reply.json();throw Error(error.error||'版本导出失败');}
+    const url=URL.createObjectURL(await reply.blob());
+    const a=document.createElement('a');a.href=url;a.download='Workdesk-项目材料与成果.zip';a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+  }
   function projectCard(p){
     const values=edited(p),dirty=changed(p),reason=removalReason(p);
     return `<article class="sp-card" data-project-card="${h(p.id)}"><div class="sp-row"><h2>${h(p.name)}</h2><span class="sp-badge">${p.exists?'目录可用':'目录不可用'}</span></div>
       <p class="sp-note">${h(p.root)} · ${p.work_items} 个任务 · ${p.project_conversations} 条项目对话 · ${p.records} 条执行记录 · ${p.drafts} 个草稿 · ${p.goals} 个目标</p>
       <a class="project-primary-link" href="#work-items/project/${h(p.id)}">进入项目任务与对话</a>
+      ${document.documentElement.dataset.workdeskChannel?`<div class="sp-actions">
+        ${S.button('文档工具',`data-project="document-tools" data-id="${h(p.id)}"`)}
+        ${S.button('材料与成果版本',`data-project="versions" data-id="${h(p.id)}"`)}
+      </div><section aria-label="项目版本清单" aria-live="polite" data-project-versions></section>`:''}
       <form data-project-edit="${h(p.id)}">
         ${S.field('项目名称','title',values.title,'required maxlength="100"')}${S.select('工作场景','scene',scenes,values.scene)}
         <div class="sp-actions"><button type="submit" ${dirty?'':'disabled'} aria-describedby="project-save-${h(p.id)}">保存名称和场景</button>
@@ -62,6 +101,12 @@
   document.addEventListener('input',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='name')v.name=e.target.value;});
   document.addEventListener('change',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='scene')v.scene=e.target.value;});
   document.addEventListener('click',async e=>{const el=e.target.closest('[data-project]');if(!active()||!el||el.disabled||v.busy)return;v.busy=true;try{const a=el.dataset.project,p=v.data.projects.find(p=>p.id===el.dataset.id);
+    if(a==='document-tools')window.dispatchEvent(new CustomEvent('workdesk-document-tools',{detail:{project_id:p.id,project_root:p.root}}));
+    if(a==='versions'||a==='versions-more'||a==='versions-export'){
+      const panel=el.closest('[data-project-card]').querySelector('[data-project-versions]');
+      try{if(a==='versions-export')await exportVersions(panel,p.id);else await projectVersions(panel,p.id,a==='versions-more');}
+      catch(error){let message=panel.querySelector('[role="alert"]');if(!message){message=document.createElement('p');message.setAttribute('role','alert');panel.append(message);}message.textContent=error.message;}
+    }
     if(a==='pick'){const path=await S.directory();if(path){v.folder=path;if(!v.name)v.name=path.split(/[\\/]/).at(-1);draw();}}
     if(a==='pin')await S.command('work.project-record',{project_id:p.id,revision:p.revision,pinned:!p.pinned});
     if(a==='remove'&&await S.confirm('移除此工作区登记？',p.name,'项目文件和历史审计会保留；仍被记录、草稿或目标使用的登记不会移除。',{tone:'danger',confirmLabel:'移除登记'}))await S.command('work.projects-remove',{projects:[{id:p.id,revision:p.revision}],confirm:true});

@@ -34,6 +34,7 @@ type App struct {
 	mu                              sync.Mutex
 	admission                       sync.Mutex
 	retiring                        atomic.Bool
+	documentProbe                   documentProviderProbe
 	sourceFiles                     map[string]string
 	sessions                        map[string]*storage.Session
 	processes                       map[string]map[string]any

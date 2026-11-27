@@ -8,7 +8,15 @@ version = "0.1.0"
 description = "Local Workdesk task, collaboration, and native provider control"
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = ["pypdf>=6.21,<7", "Pillow>=11,<13", "tokenizers>=0.22,<0.23", "PyYAML==6.0.3"]
+dependencies = ["pypdf>=6.21,<7", "Pillow>=11,<13", "tokenizers>=0.22,<0.23", "PyYAML==6.0.3",
+    "openpyxl>=3.1,<4", "python-docx>=1.2,<2", "python-pptx>=1.0,<2", "lxml>=5,<7",
+    "reportlab>=4.4,<5", "pypdfium2>=4.30,<6", "markdown-it-py>=4,<5", "nh3>=0.3,<1", "pylatexenc>=2.10,<3", "mini-racer==0.14.1",
+    "winrt-Windows.Media.Ocr; sys_platform == 'win32'",
+    "winrt-Windows.Globalization; sys_platform == 'win32'",
+    "winrt-Windows.Graphics.Imaging; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams; sys_platform == 'win32'",
+    "winrt-Windows.Foundation; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections; sys_platform == 'win32'"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

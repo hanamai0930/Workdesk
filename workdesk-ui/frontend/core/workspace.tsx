@@ -192,6 +192,7 @@ export default function CoreWorkspace({instance}: {instance: InstanceIdentity}) 
       </select></label>
       {project && <p className="core-path">{projects.find(row => row.id === project)?.root}</p>}
       {projectPage.has_more && <Button size="sm" variant="outline" onClick={moreProjects}>加载更多项目</Button>}
+      <Button size="sm" variant="outline" disabled={!project} onClick={() => window.dispatchEvent(new CustomEvent('workdesk-document-tools',{detail:{project_id:project,project_root:projects.find(row => row.id === project)?.root}}))}>文档工具</Button>
       <div className="core-tool"><div><strong>文本与 CSV 概要</strong><p>读取所选项目的材料，生成概要和文件清单。</p></div>
         <Button size="sm" disabled={!project || busy || !!unknownCommand} onClick={() => execute('tool.run', {project_id: project})}>生成本地概要</Button></div>
       <div className="core-jobs" aria-live="polite">{jobs.slice(0, 20).map(job => <article className="core-job" key={job.id}>
@@ -199,7 +200,7 @@ export default function CoreWorkspace({instance}: {instance: InstanceIdentity}) 
           {live.has(job.state) && <Button size="sm" variant="outline" disabled={busy || !!unknownCommand} onClick={() => execute('tool.cancel', {invocation_id: job.id})}>停止</Button>}</div>
         {job.error && <p className="core-error">{job.error}</p>}
         {job.artifacts?.map(file => <div className="core-artifact" key={file.path}><span title={file.path}>{file.path.split(/[\\/]/).at(-1)}</span>
-          <Button size="sm" variant="ghost" onClick={() => showArtifact(job, file)}>查看</Button>
+          {(!file.mime || /^(text\/|application\/json)/.test(file.mime)) && <Button size="sm" variant="ghost" onClick={() => showArtifact(job, file)}>查看</Button>}
           <a href={'api/' + artifactRoute(job.id, file.path) + '&download=1'} download>下载</a></div>)}
         {!!job.logs?.length && <details><summary>运行日志</summary>{job.logs.map(log => <div className="core-artifact" key={log.stream + ':' + log.segment}>
           <span>{log.stream === 'stderr' ? '错误日志' : '运行日志'} · {log.segment + 1}</span>

@@ -39,6 +39,7 @@
     if(r.kind==='partner_run')return '';
     const actions=[['rename','重命名'],['pin',r.pinned?'取消置顶':'置顶']];
     if(!isCooperation(r)||r.archived||r.can_archive)actions.push(['archive',r.archived?'取消归档':'归档']);
+    if(r.kind==='task'&&document.documentElement.dataset.workdeskChannel)actions.push(['document-tools','文档工具']);
     if(!isCooperation(r))actions.push(['md','导出 Markdown'],['json','导出 JSON'],['delete','删除']);
     return `<details class="records-more"><summary aria-haspopup="menu" aria-label="${h(r.title)}的更多操作">更多操作</summary>
       <div class="records-menu" role="menu" aria-label="记录操作">${actions.map(([action,label])=>S.button(label,
@@ -203,6 +204,13 @@
       if(action==='more')return await load(true);
       if(action==='cancel'){v.edit=null;draw();return;}
       const r=v.rows.find(r=>r.id===button.dataset.id&&r.kind===button.dataset.kind);
+      if(r && action==='document-tools'){
+        const {record}=await window.WorkdeskCore.request('v2/records/task/'+encodeURIComponent(r.id));
+        if(active()&&record?.id===r.id&&record.project_id){
+          window.dispatchEvent(new CustomEvent('workdesk-document-tools',{detail:{project_id:record.project_id,task_id:r.id}}));
+        }
+        return;
+      }
       if(r){const menu=button.closest('.records-more');if(menu){menu.open=false;menu.querySelector('summary')?.focus();}await operate(action,r);}
     }catch(error){if(active()){v.error=error.message;draw();}}
     finally{v.busy=false;}

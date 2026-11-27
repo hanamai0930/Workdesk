@@ -7,5 +7,18 @@
   "command": {"fields": ["id", "kind", "payload"], "receipt_lookup": "/api/v1/receipt?id={id}", "unknown_no_resend": true},
   "read_models": ["/api/v2/projects", "/api/v2/records", "/api/v2/records/{kind}/{id}", "/api/v2/events", "/api/v2/runtime", "/api/v2/components"],
   "professional_tool": {"command": "tool.run", "cancel": "tool.cancel", "tool": "material-summary/1", "model_requests": 0, "log_segment_bytes": 4194304, "log_read_default_bytes": 65536, "log_route": "/api/v2/jobs/{id}/log"},
+  "document_tool": {
+    "version": "document/1", "catalog": "/api/v2/tools", "contexts": "/api/v2/tool-contexts?project_id={project_id}",
+    "authorize": {"kind":"tool.authorize","payload":["project_id","tool_version","input_files","parameters","confirm"],"optional_parent":["task_id","attempt_id","spec_hash"],"ttl_seconds":900,"single_use":true},
+    "discovery": {"capabilities_key":"format","probe_state":["CHECKED","UNKNOWN"],"per_format":["ready","missing","operations"],"operations":["render_pages","recalculate","ocr_languages","typeset_pdf"]},
+    "input_files": {"create":[],"edit":"project-relative paths or project version references","result_ref":{"kind":"job","source":"prior invocation_id","entry":"zero-based artifact index as string","sha256":"exact artifact digest"}},
+    "example_parameters":{"action":"edit","format":"xlsx","name":"budget.xlsx","sheet":"Budget","cells":{"B2":120,"B3":80},"expected":{"B4":200}},
+    "revoke": {"kind":"tool.revoke","payload":["authorization_id"],"scope":"unused authorization"},
+    "run": {"kind":"tool.run","payload":["authorization_id"],"receipt":"invocation_id"},
+    "list": "/api/v2/jobs?project_id={project_id}&task_id={task_id}&cursor={cursor}", "detail": "/api/v2/jobs/{id}",
+    "decision": {"kind":"tool.decide","payload":["invocation_id","path","sha256","decision","confirm"],"decisions":["accept","revise"],"optional":["note"]},
+    "materials":"/api/v2/projects/{project_id}/materials","export":"/api/v2/projects/{project_id}/export?version={url_encoded_version_json}","export_selection":"repeat version for up to 32 files; 64 MiB total; ZIP with manifest.json",
+    "artifact":"/api/v2/jobs/{id}/artifact?path={path}&download=1","model_requests":0
+  },
   "ownership": {"lock": "backend.lock", "byte_offset": 0, "byte_length": 1, "writer": "go-core", "stale_epoch_rejected": true}
 }

@@ -74,8 +74,8 @@ def free_port():
 
 
 class Chain:
-    def __init__(self, executable):
-        self.root = BASE.parent / 'artifacts' / 'stage1' / ('c-' + uuid.uuid4().hex[:8])
+    def __init__(self, executable, evidence_stage="stage1"):
+        self.root = BASE.parent / 'artifacts' / evidence_stage / ('c-' + uuid.uuid4().hex[:8])
         self.root.mkdir(parents=True, exist_ok=False)
         self.user = self.root / 'user'
         self.data = self.user / 'libraries' / 'main'

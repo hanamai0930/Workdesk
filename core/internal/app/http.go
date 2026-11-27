@@ -125,7 +125,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
 			return
 		}
-		if kind == "tool.run" || kind == "tool.cancel" {
+		if kind == "tool.run" || kind == "tool.cancel" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
 			result, e := a.toolCommand(body)
 			if e != nil {
 				failed(w, e)
@@ -182,6 +182,19 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, error) {
 	q := r.URL.Query()
+	if strings.HasPrefix(path, "/api/v2/projects/") && (strings.HasSuffix(path, "/materials") || strings.HasSuffix(path, "/export")) {
+		return a.projectMaterials(w, r, path)
+	}
+	if path == "/api/v2/tools" {
+		return a.documentCatalog(), nil
+	}
+	if path == "/api/v2/tool-contexts" {
+		rows, e := a.query("SELECT t.title,t.id AS task_id,t.spec_hash,a.id AS attempt_id"+eligibleContexts+" ORDER BY a.started DESC LIMIT 200", q.Get("project_id"), now())
+		return map[string]any{"contexts": rows}, e
+	}
+	if path == "/api/v2/jobs" || (strings.HasPrefix(path, "/api/v2/jobs/") && strings.Count(path, "/") == 4) {
+		return a.documentJobs(q, strings.TrimPrefix(strings.TrimPrefix(path, "/api/v2/jobs"), "/"))
+	}
 	if path == "/api/v2/partners" || path == "/api/v2/components" || path == "/api/v2/accounts" || path == "/api/v2/connections" || path == "/api/v2/component-operations" || path == "/api/v2/partner-runs" {
 		return a.partnersView(path)
 	}
