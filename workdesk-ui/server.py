@@ -187,7 +187,7 @@ class Handler(BaseHTTPRequestHandler):
         new_route=urlsplit(self.path).path[len(self.server.prefix):]
         if new_route not in SETUP_POST | {'api/stop','api/v1/command','api/v1/profile-check','api/v1/resource-quota-check',
                 'api/v1/settings-qwen-quota','api/v1/settings-qwen-quota-login','api/v1/settings-qwen-quota-cancel','api/v1/coordinator-text-rework-recovery',
-                'api/v1/fixed-public-skills','api/v1/fixed-capability-preview','api/open-chat','api/pick-directory',
+                'api/v1/fixed-public-skills','api/v1/fixed-capability-preview','api/open-chat','api/pick-directory','api/pick-partner-bundle',
                 'api/preferences','api/preferences/recover','api/open-project-file','api/dev-exit'}:
             self.reply(404, {'error': '此界面没有任务派发入口。'}); return
         try:
@@ -238,19 +238,32 @@ class Handler(BaseHTTPRequestHandler):
                 parsed=urlsplit(target);expected=urlsplit(targets[data['provider']])
                 if parsed.scheme!='https' or parsed.netloc!=expected.netloc:raise ValueError('仅打开所选工作端的官方 HTTPS 页面。')
                 open_window(target);self.reply(200,{'opened':True});return
-            if new_route=='api/pick-directory':
-                if data:raise ValueError('目录选择不接受外部命令。')
-                try:
-                    result=subprocess.run([sys.executable,str(HERE/'pick_directory.py')],capture_output=True,text=True,encoding='utf-8',timeout=180,
-                                          creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-                except subprocess.TimeoutExpired:raise ValueError('目录选择已超时，请重新选择文件夹。') from None
-                if result.returncode:raise ValueError('目录选择器未能打开，请重试选择文件夹。')
-                self.reply(200,{'path':json.loads(result.stdout).get('path')});return
+            if new_route in {'api/pick-directory', 'api/pick-partner-bundle'}:
+                if data:raise ValueError('文件选择器不接受外部参数。')
+                bundle = new_route == 'api/pick-partner-bundle'
+                self.reply(200, {'path': self.pick_path(bundle)});return
             if new_route.startswith('api/v1/'):
                 self.reply(200,self.server.backend.request(new_route[len('api/v1/'):],data));return
             with self.server.workspace_lock: result = self.server.workspace.stop(data)
             self.reply(200, result)
         except (*READ_ERRORS, json.JSONDecodeError) as exc: self.reply(409, {'error': str(exc), 'state': '未知'})
+
+    def pick_path(self, bundle):
+        command = [sys.executable, str(HERE/'pick_directory.py')]
+        if bundle:
+            command.append('--partner-bundle')
+        label = '伙伴补充包' if bundle else '文件夹'
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=180,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        except subprocess.TimeoutExpired:
+            raise ValueError('选择已超时，请重新选择' + label + '。') from None
+        if result.returncode:
+            raise ValueError('未能打开选择窗口，请重新选择' + label + '。')
+        path = json.loads(result.stdout).get('path')
+        if bundle and path and (not Path(path).is_absolute() or Path(path).suffix.lower() not in {'.wdpa', '.wdpartner'}):
+            raise ValueError('请选择 .wdpa 或 .wdpartner 伙伴补充包。')
+        return path
 
     def open_project_file(self, data):
         from urllib.parse import urlencode

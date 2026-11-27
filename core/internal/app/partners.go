@@ -840,6 +840,19 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 			if !validPartner(partner) {
 				return errors.New("伙伴不存在")
 			}
+			if kind != "connection.inspect" {
+				pending, e := s.Execute(`SELECT id FROM core_partner_objects WHERE kind='operation'
+					AND json_extract(data,'$.partner_id')=?
+					AND json_extract(data,'$.kind') IN ('component.prepare','component.update','component.remove')
+					AND json_extract(data,'$.state') NOT IN ('COMPLETED','FAILED','CANCELLED','STOPPED_RUNTIME','FAILED_NO_SEND')
+					LIMIT 1`, []any{partner})
+				if e != nil {
+					return e
+				}
+				if len(pending.Rows) != 0 {
+					return errors.New("此伙伴已有未完成的安装或卸载，请先核对原操作")
+				}
+			}
 			op := map[string]any{"id": ID(), "kind": kind, "partner_id": partner, "release_id": releaseID, "version": str(p["version"]), "allow_restore_download": p["allow_restore_download"], "state": "QUEUED", "command_id": id, "created": now(), "owner_epoch": a.Epoch, "process_instance": a.Process}
 			if kind == "component.prepare" {
 				op["bundle_path"] = str(p["bundle_path"])
@@ -1167,6 +1180,9 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 			if e != nil {
 				return e
 			}
+			if str(op["state"]) != "ORPHANED_UNKNOWN" {
+				return errors.New("只有待核对的组件操作可以核对")
+			}
 			found := false
 			if op["kind"] == "component.remove" {
 				if r, e := a.componentManager().Get(str(op["release_id"])); e == nil && r.State == "REMOVED" {
@@ -1306,6 +1322,18 @@ func (a *App) componentOperation(op map[string]any) {
 	manager.OperationID = str(op["id"])
 	switch str(op["kind"]) {
 	case "component.prepare", "component.update":
+		var last components.Progress
+		var updated time.Time
+		manager.Progress = func(progress components.Progress) {
+			now := time.Now()
+			if progress == last || (progress.Phase == last.Phase && progress.Total == last.Total && progress.Done != progress.Total && now.Sub(updated) < 400*time.Millisecond) {
+				return
+			}
+			op["progress"] = progress
+			if a.savePartner("operation", op) == nil {
+				last, updated = progress, now
+			}
+		}
 		result, err = manager.PrepareSelected(ctx, str(op["partner_id"]), str(op["version"]), str(op["expected_release"]), str(op["bundle_path"]))
 	case "component.remove":
 		a.admission.Lock()
@@ -1338,6 +1366,7 @@ func (a *App) componentOperation(op map[string]any) {
 		result, err = manager.Inspect(ctx, str(op["release_id"]))
 	}
 	op["state"] = "COMPLETED"
+	delete(op, "progress")
 	op["result"] = result
 	if err != nil {
 		op["state"] = "FAILED"

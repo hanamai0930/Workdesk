@@ -67,7 +67,7 @@ def main():
     manifest['executable'] = core.name
     write_json(core.parent / 'manifest.json', manifest)
     write_json(target / 'release.json', {'schema': 1, 'profile_layout': 1, 'product': 'Workdesk', 'channel': 'release',
-               'version': '1.2.0', 'source_revision': manifest['implementation_revision']})
+               'version': '1.2.1', 'source_revision': manifest['implementation_revision']})
     compiler = Path(os.environ['WINDIR']) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     subprocess.run([compiler, '/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/reference:System.Windows.Forms.dll',
                     '/out:' + str(target / 'Workdesk.exe'), BASE / 'tools/windows-installer/WorkdeskReleaseLauncher.cs'], check=True)

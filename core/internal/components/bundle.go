@@ -36,7 +36,7 @@ type packedHeader struct {
 
 // Hash a private copy first. A removable drive, rename or subsequent write to
 // the user-selected file cannot change any bytes handed to the archive reader.
-func openPinnedBundle(source, stage string, pin bundlePin) (*os.File, error) {
+func (m *Manager) openPinnedBundle(ctx context.Context, source, stage string, pin bundlePin) (*os.File, error) {
 	ext := strings.ToLower(filepath.Ext(source))
 	if !filepath.IsAbs(source) || (ext != ".wdpa" && ext != ".wdpartner") {
 		return nil, errors.New("请选择本机的 Workdesk 伙伴补充包")
@@ -58,7 +58,11 @@ func openPinnedBundle(source, stage string, pin bundlePin) (*os.File, error) {
 		return nil, err
 	}
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, hash), io.LimitReader(src, pin.bytes+1))
+	m.progress("verify_bundle", 0, pin.bytes)
+	writer := &progressWriter{ctx: ctx, target: io.MultiWriter(tmp, hash), report: func(done int64) {
+		m.progress("verify_bundle", done, pin.bytes)
+	}}
+	n, err := io.Copy(writer, io.LimitReader(src, pin.bytes+1))
 	if err == nil && (n != pin.bytes || hex.EncodeToString(hash.Sum(nil)) != pin.hash) {
 		err = errors.New("补充包校验失败")
 	}
@@ -73,7 +77,7 @@ func openPinnedBundle(source, stage string, pin bundlePin) (*os.File, error) {
 }
 
 func (m *Manager) unpackPartner(ctx context.Context, path string, pin bundlePin, stage, program string, r *Release) error {
-	input, err := openPinnedBundle(path, stage, pin)
+	input, err := m.openPinnedBundle(ctx, path, stage, pin)
 	if err != nil {
 		return err
 	}
@@ -113,6 +117,10 @@ func (m *Manager) unpackPartner(ctx context.Context, path string, pin bundlePin,
 	}
 	defer staged.Close()
 	var total int64
+	m.progress("extract", 0, pin.componentBytes)
+	writer := &progressWriter{ctx: ctx, report: func(done int64) {
+		m.progress("extract", done, pin.componentBytes)
+	}}
 	for {
 		if err = ctx.Err(); err != nil {
 			return err
@@ -128,7 +136,8 @@ func (m *Manager) unpackPartner(ctx context.Context, path string, pin bundlePin,
 			return errors.New("伙伴包成员路径或类型无效")
 		}
 		name := h.Name
-		if strings.HasPrefix(name, "component/") {
+		component := strings.HasPrefix(name, "component/")
+		if component {
 			name = "program/" + strings.TrimPrefix(name, "component/")
 		} else if !strings.HasPrefix(name, "dependencies/") {
 			return errors.New("伙伴包出现未知文件类别")
@@ -145,7 +154,12 @@ func (m *Manager) unpackPartner(ctx context.Context, path string, pin bundlePin,
 		if e != nil {
 			return e
 		}
-		n, copyErr := io.Copy(out, archive)
+		var target io.Writer = out
+		if component {
+			writer.target = out
+			target = writer
+		}
+		n, copyErr := io.Copy(target, archive)
 		closeErr := out.Close()
 		if copyErr != nil {
 			return copyErr

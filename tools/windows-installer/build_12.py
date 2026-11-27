@@ -11,7 +11,8 @@ import subprocess
 import tempfile
 
 REPO = Path(__file__).resolve().parents[2]
-NAME = "Workdesk-Setup-1.2.0-x64.exe"
+VERSION = "1.2.1"
+NAME = f"Workdesk-Setup-{VERSION}-x64.exe"
 WEBVIEW = "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 WEBVIEW_HASH = "47bc51387aff95c1275ce38cfbbb5fbab99b43b33214049877bbcdbcc7a970d5"
 COMPILER_HASH = "e0f9f1dc32032650c6629f6dee41eb6d20ba140e4e3c07c25d8a24f9ba781644"
@@ -56,7 +57,7 @@ def checked_program(path):
         if not (path / rel).is_file():
             raise ValueError("Missing program input: " + rel)
     marker = json.loads((path / "release.json").read_text(encoding="utf-8-sig"))
-    if marker.get("version") != "1.2.0":
+    if marker.get("version") != VERSION:
         raise ValueError("Wrong program version")
     for f in path.rglob("*"):
         if f.is_symlink() or f.is_junction():
@@ -96,7 +97,7 @@ def build(args):
             subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True)
         artifact = root / NAME
         (temp / NAME).replace(artifact)
-    record = {"version": "1.2.0", "name": NAME, "sha256": digest(artifact), "bytes": artifact.stat().st_size,
+    record = {"version": VERSION, "name": NAME, "sha256": digest(artifact), "bytes": artifact.stat().st_size,
               "selector_sha256": digest(selector), "catalog_sha256": digest(root / "partners/catalog.json"),
               "webview_sha256": WEBVIEW_HASH, "compiler_sha256": COMPILER_HASH}
     (root / "setup-build.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")

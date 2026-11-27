@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -209,9 +210,20 @@ func extractZip(path, root string, strip int, keep func(string) bool) error {
 }
 
 func tree(root string) ([]File, string, error) {
+	return treeWithProgress(root, context.Background(), nil)
+}
+
+func treeWithProgress(root string, ctx context.Context, report func(int64)) ([]File, string, error) {
 	files := []File{}
+	var progress *progressWriter
+	if report != nil {
+		progress = &progressWriter{ctx: ctx, report: report}
+	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, e error) error {
 		if e != nil {
+			return e
+		}
+		if e = ctx.Err(); e != nil {
 			return e
 		}
 		if d.Type()&os.ModeSymlink != 0 {
@@ -232,7 +244,12 @@ func tree(root string) ([]File, string, error) {
 			return e
 		}
 		h := sha256.New()
-		n, e := io.Copy(h, f)
+		var target io.Writer = h
+		if progress != nil {
+			progress.target = h
+			target = progress
+		}
+		n, e := io.Copy(target, f)
 		f.Close()
 		if e != nil {
 			return e

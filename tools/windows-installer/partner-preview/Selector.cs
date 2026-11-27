@@ -47,6 +47,28 @@ namespace Workdesk.Installation
         public Partner[] partners { get; set; }
     }
 
+    public sealed class InstallMessage
+    {
+        public string type { get; set; }
+        public string phase { get; set; }
+        public long done { get; set; }
+        public long total { get; set; }
+        public bool ok { get; set; }
+        public bool retryable { get; set; }
+        public string error { get; set; }
+        public string release_id { get; set; }
+    }
+
+    internal sealed class InstallFailure : IOException
+    {
+        internal bool Retryable { get; private set; }
+
+        internal InstallFailure(string message, bool retryable) : base(message)
+        {
+            Retryable = retryable;
+        }
+    }
+
     internal class Selector
     {
         const string PackageExtension = ".wdpa";
@@ -55,6 +77,10 @@ namespace Workdesk.Installation
         readonly Dictionary<string,string> localFiles = new Dictionary<string,string>();
         bool installing;
         bool finished;
+        bool closing;
+        string failedPartner;
+        readonly HashSet<string> completed = new HashSet<string>();
+        readonly HashSet<string> needsReview = new HashSet<string>();
         static readonly byte[] PackageHeader = Encoding.ASCII.GetBytes("WDPARTNER\u0001");
         readonly Window window;
         readonly Partner[] partners;
@@ -99,8 +125,9 @@ namespace Workdesk.Installation
                     throw new InvalidDataException("伙伴包目录不完整：" + p.name);
             }
             Control<CheckBox>("SelectAll").Click += delegate {
-                bool on = selected.Count != partners.Length;
+                bool on = Pending().Count() != partners.Length - completed.Count;
                 selected.Clear();
+                selected.UnionWith(completed);
                 if (on) selected.UnionWith(partners.Select(p => p.id));
                 Render();
             };
@@ -112,8 +139,10 @@ namespace Workdesk.Installation
             window.Closing += delegate(object sender, System.ComponentModel.CancelEventArgs e) {
                 if (installing) e.Cancel = MessageBox.Show(window, "当前伙伴将继续在后台安装。关闭窗口并跳过后续伙伴？",
                     "Workdesk", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes;
+                closing = !e.Cancel;
             };
-            Control<Button>("Back").Click += delegate { confirming = false; Render(); };
+            Control<Button>("Back").Click += delegate { confirming = false; Feedback(""); Render(); };
+            Control<Button>("Close").Click += delegate { window.Close(); };
             Control<Button>("Import").Click += async delegate { await Browse(); };
             Render();
         }
@@ -128,7 +157,8 @@ namespace Workdesk.Installation
         }
 
         IEnumerable<Partner> Picks() { return partners.Where(p => selected.Contains(p.id)); }
-        long DownloadBytes() { return Picks().Where(p => !local.Contains(p.id)).Sum(p => p.bytes); }
+        IEnumerable<Partner> Pending() { return Picks().Where(p => !completed.Contains(p.id)); }
+        long DownloadBytes() { return Pending().Where(p => !local.Contains(p.id)).Sum(p => p.bytes); }
         long InstalledBytes()
         {
             var chosen = Picks().ToArray();
@@ -138,7 +168,8 @@ namespace Workdesk.Installation
 
         void Totals()
         {
-            Control<TextBlock>("Picked").Text = "已选 " + selected.Count + " 位伙伴";
+            Control<TextBlock>("Picked").Text = completed.Count == 0 ? "已选 " + selected.Count + " 位伙伴" :
+                "已安装 " + completed.Count + " 位 · 待安装 " + Pending().Count() + " 位";
             Control<TextBlock>("Download").Text = Size(DownloadBytes());
             Control<TextBlock>("Installed").Text = Size(InstalledBytes());
             Control<CheckBox>("SelectAll").IsChecked = selected.Count == 0 ? (bool?)false :
@@ -173,11 +204,11 @@ namespace Workdesk.Installation
             {
                 var label = new StackPanel { Orientation = Orientation.Horizontal };
                 label.Children.Add(name);
-                if (local.Contains(p.id)) label.Children.Add(new TextBlock {
-                    Text = "本地", FontSize = 11, Foreground = accent, Margin = new Thickness(9, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center
+                if (completed.Contains(p.id) || local.Contains(p.id)) label.Children.Add(new TextBlock {
+                    Text = completed.Contains(p.id) ? "已安装" : "本地", FontSize = 11, Foreground = accent, Margin = new Thickness(9, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center
                 });
                 var check = new CheckBox {
-                    Content = label, IsChecked = selected.Contains(p.id), IsEnabled = !importing, Cursor = Cursors.Hand,
+                    Content = label, IsChecked = selected.Contains(p.id), IsEnabled = !importing && !completed.Contains(p.id), Cursor = Cursors.Hand,
                     VerticalAlignment = VerticalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Center,
                     ToolTip = p.name + " " + p.version
                 };
@@ -194,7 +225,10 @@ namespace Workdesk.Installation
             else
             {
                 grid.Children.Add(name);
-                Cell(grid, 1, local.Contains(p.id) ? "已校验本地包" : "官方源下载").Foreground = muted;
+                string source = local.Contains(p.id) ? "已校验本地包" : "官方源下载";
+                if (completed.Contains(p.id)) source = "已安装";
+                if (needsReview.Contains(p.id)) source = "待核对";
+                Cell(grid, 1, source).Foreground = completed.Contains(p.id) ? accent : muted;
                 Cell(grid, 2, Size(p.bytes));
             }
             AddGrid(grid);
@@ -213,16 +247,24 @@ namespace Workdesk.Installation
             rows.Children.Clear(); boxes.Clear();
             var edit = confirming ? Visibility.Collapsed : Visibility.Visible;
             var review = confirming ? Visibility.Visible : Visibility.Collapsed;
+            bool retry = confirming && failedPartner != null && selected.Contains(failedPartner);
             Control<CheckBox>("SelectAll").Visibility = edit;
             Control<TextBlock>("ListHeader").Visibility = review;
-            Control<Button>("Back").Visibility = review;
-            Control<Button>("Import").Visibility = edit;
-            Control<TextBlock>("ImportHint").Visibility = edit;
-            Control<TextBlock>("PageTitle").Text = confirming ? "确认安装清单" : "选择工作伙伴";
-            Control<TextBlock>("PageHelp").Text = confirming ? "核对本次选择的组件和来源。" : "按需勾选官方工作端，也可以稍后在设置中添加。";
+            Control<Button>("Back").Visibility = finished ? Visibility.Collapsed : review;
+            Control<Button>("Close").Visibility = retry && !finished ? Visibility.Visible : Visibility.Collapsed;
+            Control<Button>("Import").Visibility = retry && !finished ? Visibility.Visible : edit;
+            Control<TextBlock>("ImportHint").Visibility = Control<Button>("Import").Visibility;
+            Control<TextBlock>("PageTitle").Text = finished ? "伙伴已就绪" : retry ? "安装未完成" :
+                confirming ? "确认安装清单" : "选择工作伙伴";
+            Control<TextBlock>("PageHelp").Text = finished ? "可以打开 Workdesk，在账号与模型中选择连接。" :
+                retry ? (Pending().Any(p => needsReview.Contains(p.id)) ?
+                    "请在 Workdesk 核对待确认的伙伴。可返回调整其余选择。" : "可重试待安装的伙伴，也可导入本地补充包。") :
+                confirming ? "核对本次选择的组件和来源。" : "按需勾选官方工作端，也可以稍后在设置中添加。";
             Control<TextBlock>("SizeHeader").Text = confirming ? "来源" : "包体大小";
             Control<TextBlock>("DiskHeader").Text = confirming ? "包体大小" : "安装后占用";
-            Control<Button>("Next").Content = confirming ? (selected.Count == 0 ? "完成" : "安装所选伙伴") : "查看清单　›";
+            Control<Button>("Next").Content = finished ? "关闭" : confirming ?
+                (!Pending().Any() ? "完成" : retry ? "重试安装" : "安装所选伙伴") : "查看清单　›";
+            SetEnabled(!installing && !importing);
             if (confirming)
             {
                 var main = Columns();
@@ -285,7 +327,7 @@ namespace Workdesk.Installation
 
         async Task ImportFiles(string[] files)
         {
-            if (importing) return;
+            if (installing || importing || finished) return;
             importing = true;
             SetEnabled(false);
             int matched = 0;
@@ -299,7 +341,7 @@ namespace Workdesk.Installation
                     {
                         var match = await Task.Run(() => Match(file));
                         if (match == null) failures.Add(Path.GetFileName(file));
-                        else { local.Add(match.id); localFiles[match.id] = file; selected.Add(match.id); matched++; }
+                        else if (!completed.Contains(match.id)) { local.Add(match.id); localFiles[match.id] = file; selected.Add(match.id); matched++; }
                     }
                     catch (IOException) { failures.Add(Path.GetFileName(file)); }
                     catch (UnauthorizedAccessException) { failures.Add(Path.GetFileName(file)); }
@@ -313,42 +355,78 @@ namespace Workdesk.Installation
             }
         }
 
-        async Task InstallSelected()
+        async Task InstallSelected(Func<Partner,string,IProgress<InstallMessage>,Task> install = null)
         {
             if (installing || finished) return;
+            if (!Pending().Any()) { window.Close(); return; }
             installing = true;
-            int complete = 0;
+            failedPartner = null;
             SetEnabled(false);
-            Control<Button>("Back").IsEnabled = false;
+            Partner current = null;
             try {
-                foreach (var partner in Picks().ToArray()) {
-                    Feedback("正在" + (local.Contains(partner.id) ? "导入 " : "从官方源准备 ") + partner.name + "…");
+                foreach (var partner in Pending().ToArray()) {
+                    current = partner;
+                    Render();
+                    Feedback("");
+                    ShowProgress(partner, new InstallMessage { phase = "prepare" });
+                    var progress = new Progress<InstallMessage>(value => {
+                        if (installing && !closing && current == partner) ShowProgress(partner, value);
+                    });
                     string file;
                     localFiles.TryGetValue(partner.id, out file);
-                    await Task.Run(() => InstallOne(partner, file));
-                    complete++;
+                    if (install == null) await Task.Run(() => InstallOne(partner, file, progress));
+                    else await install(partner, file, progress);
+                    if (closing) return;
+                    completed.Add(partner.id);
                 }
-                Control<TextBlock>("PageTitle").Text = "伙伴已就绪";
-                Control<TextBlock>("PageHelp").Text = "可以打开 Workdesk，在账号与模型中选择连接。";
-                Feedback("已完成 " + complete + " 位伙伴的安装。");
+                finished = true;
+                Feedback("已完成 " + completed.Count + " 位伙伴的安装。");
             } catch (Exception ex) {
-                Control<TextBlock>("PageTitle").Text = "安装未完成";
-                Feedback("已完成 " + complete + " 位伙伴。" + ex.Message);
+                if (closing) return;
+                if (current == null) throw;
+                failedPartner = current.id;
+                var failure = ex as InstallFailure;
+                if (failure == null || !failure.Retryable) needsReview.Add(current.id);
+                Feedback(current.name + " · " + ex.Message);
             } finally {
                 installing = false;
-                finished = true;
-                Control<Button>("Back").Visibility = Visibility.Collapsed;
-                Control<Button>("Next").IsEnabled = true;
-                Control<Button>("Next").Content = "关闭";
+                if (!closing) {
+                    Control<StackPanel>("ProgressArea").Visibility = Visibility.Collapsed;
+                    Render();
+                }
             }
         }
 
-        static void InstallOne(Partner partner, string bundle)
+        void ShowProgress(Partner partner, InstallMessage message)
+        {
+            string stage;
+            switch (message.phase) {
+                case "download": stage = "下载"; break;
+                case "verify_bundle": stage = "校验补充包"; break;
+                case "extract": stage = "解包"; break;
+                case "verify_files": stage = "校验安装文件"; break;
+                case "publish": stage = "登记安装结果"; break;
+                default: stage = "准备安装"; break;
+            }
+            var bar = Control<ProgressBar>("InstallProgress");
+            bar.IsIndeterminate = message.total <= 0;
+            string suffix = "";
+            if (!bar.IsIndeterminate) {
+                bar.Value = Math.Min(100, Math.Max(0, message.done * 100.0 / message.total));
+                suffix = " " + Math.Floor(bar.Value).ToString(CultureInfo.InvariantCulture) + "%";
+            }
+            string status = (completed.Count + 1) + " / " + selected.Count + " · " + partner.name + " · " + stage + suffix;
+            Control<TextBlock>("ProgressText").Text = status;
+            AutomationProperties.SetName(bar, status);
+            Control<StackPanel>("ProgressArea").Visibility = Visibility.Visible;
+        }
+
+        static void InstallOne(Partner partner, string bundle, IProgress<InstallMessage> progress)
         {
             string root = AppDomain.CurrentDomain.BaseDirectory;
             var start = new ProcessStartInfo {
                 FileName = Path.Combine(root, "runtime", "python", "python.exe"),
-                Arguments = "-B -s -X utf8 tools/partner_command.py",
+                Arguments = "-I -B -X utf8 tools/partner_command.py --progress",
                 WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
@@ -356,27 +434,35 @@ namespace Workdesk.Installation
             var codec = new JavaScriptSerializer();
             var request = new {id=partner.id, version=partner.version, release_id=partner.release_id, bundle=bundle};
             using (var process = Process.Start(start)) {
-                var output = process.StandardOutput.ReadToEndAsync();
                 var errors = process.StandardError.ReadToEndAsync();
                 var bytes = Encoding.UTF8.GetBytes(codec.Serialize(request) + "\n");
                 process.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
                 process.StandardInput.Close();
+                InstallMessage result = null;
+                string line;
+                while ((line = process.StandardOutput.ReadLine()) != null) {
+                    var message = codec.Deserialize<InstallMessage>(line);
+                    if (message == null) continue;
+                    if (message.type == "progress") progress.Report(message);
+                    else result = message;
+                }
                 process.WaitForExit();
-                Task.WaitAll(output, errors);
-                if (String.IsNullOrWhiteSpace(output.Result)) throw new IOException("本机安装服务未返回结果。");
-                var result = codec.Deserialize<Dictionary<string,object>>(output.Result);
-                if (process.ExitCode != 0 || result == null || !result.ContainsKey("ok") || !true.Equals(result["ok"]))
-                    throw new IOException(result != null && result.ContainsKey("error") ? Convert.ToString(result["error"]) : "安装服务回执异常。");
-                if (!partner.release_id.Equals(result["release_id"])) throw new IOException("安装回执的工作端版本不符。");
+                errors.GetAwaiter().GetResult();
+                if (result == null) throw new InstallFailure("本机安装服务未返回结果，请先核对原操作。", false);
+                if (process.ExitCode != 0 || !result.ok)
+                    throw new InstallFailure(result.error ?? "安装服务回执异常。", result.retryable);
+                if (!partner.release_id.Equals(result.release_id)) throw new InstallFailure("安装回执的工作端版本不符。", false);
             }
         }
 
         void SetEnabled(bool enabled)
         {
-            Control<Button>("Next").IsEnabled = enabled;
-            Control<Button>("Import").IsEnabled = enabled;
+            Control<Button>("Next").IsEnabled = enabled && (!confirming || !Pending().Any(p => needsReview.Contains(p.id)));
+            Control<Button>("Back").IsEnabled = enabled;
+            Control<Button>("Close").IsEnabled = enabled;
+            Control<Button>("Import").IsEnabled = enabled && !finished;
             Control<CheckBox>("SelectAll").IsEnabled = enabled;
-            foreach (var box in boxes.Values) box.IsEnabled = enabled;
+            foreach (var box in boxes) box.Value.IsEnabled = enabled && !completed.Contains(box.Key);
         }
 
         void Screenshot(string filepath)
@@ -423,6 +509,40 @@ namespace Workdesk.Installation
             Assert(selected.Count == 0 && DownloadBytes() == 0);
             await ImportFiles(partners.Select(p => Path.Combine(packageDirectory, p.file)).ToArray());
             Assert(local.Count == 8 && selected.Count == 8 && DownloadBytes() == 0);
+
+            selected.IntersectWith(new[] { "codex", "deepseek", "kimi" });
+            local.Remove(pkg.id);
+            localFiles.Remove(pkg.id);
+            Control<Button>("Next").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            var attempted = new List<string>();
+            await InstallSelected(async (partner, bundle, progress) => {
+                attempted.Add(partner.id);
+                if (partner.id == "deepseek") {
+                    Assert(bundle == null);
+                    progress.Report(new InstallMessage { phase = "download", done = 55, total = 100 });
+                    await Task.Yield();
+                    Assert(Control<ProgressBar>("InstallProgress").Value == 55 &&
+                        Control<TextBlock>("ProgressText").Text.Contains("2 / 3 · DeepSeek · 下载 55%"));
+                    Screenshot(Path.Combine(dir, "progress.png"));
+                    throw new InstallFailure("下载连接中断。", true);
+                }
+            });
+            Assert(attempted.SequenceEqual(new[] { "codex", "deepseek" }) && completed.SetEquals(new[] { "codex" }));
+            Assert(!finished && Control<Button>("Next").Content.Equals("重试安装") && Control<Button>("Next").IsEnabled &&
+                Control<Button>("Back").IsEnabled && Control<Button>("Close").Visibility == Visibility.Visible &&
+                Control<Button>("Import").Visibility == Visibility.Visible);
+            Screenshot(Path.Combine(dir, "retry.png"));
+            Control<Button>("Back").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Assert(!confirming && !boxes["codex"].IsEnabled && selected.Contains("codex"));
+            await ImportFiles(new[] { file });
+            Control<Button>("Next").RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            await InstallSelected((partner, bundle, progress) => {
+                attempted.Add(partner.id);
+                if (partner.id == "deepseek") Assert(bundle == file);
+                return Task.FromResult(0);
+            });
+            Assert(finished && completed.Count == 3 && attempted.SequenceEqual(new[] { "codex", "deepseek", "deepseek", "kimi" }));
+            Assert(Control<TextBlock>("Feedback").Text == "已完成 3 位伙伴的安装。");
         }
 
         static void Assert(bool ok) { if (!ok) throw new InvalidDataException("选装预览检查失败。"); }

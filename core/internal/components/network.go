@@ -207,6 +207,7 @@ func (m *Manager) download(ctx context.Context, raw, expectedSHA, integrity stri
 		return "", Source{}, e
 	}
 	req.Header.Set("User-Agent", "Workdesk-Components/1")
+	m.progress("download", 0, 0)
 	res, e := m.Client.Do(req)
 	if e != nil {
 		return "", Source{}, e
@@ -221,7 +222,12 @@ func (m *Manager) download(ctx context.Context, raw, expectedSHA, integrity stri
 		return "", Source{}, e
 	}
 	defer os.Remove(tmp)
-	n, e := io.Copy(f, io.LimitReader(res.Body, 2<<30+1))
+	total := max(0, res.ContentLength)
+	m.progress("download", 0, total)
+	writer := &progressWriter{ctx: ctx, target: f, report: func(done int64) {
+		m.progress("download", done, total)
+	}}
+	n, e := io.Copy(writer, io.LimitReader(res.Body, 2<<30+1))
 	closeErr := f.Close()
 	if e != nil {
 		return "", Source{}, e
@@ -232,6 +238,7 @@ func (m *Manager) download(ctx context.Context, raw, expectedSHA, integrity stri
 	if n > 2<<30 {
 		return "", Source{}, errors.New("组件下载超过2GiB")
 	}
+	m.progress("prepare", 0, 0)
 	proof, e := verify(tmp)
 	if e != nil {
 		return "", Source{}, e

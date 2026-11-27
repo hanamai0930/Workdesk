@@ -57,6 +57,10 @@
                 <StackPanel x:Name="PartnerRows"/>
               </StackPanel>
             </Border>
+            <StackPanel x:Name="ProgressArea" Margin="2,9,0,0" Visibility="Collapsed">
+              <TextBlock x:Name="ProgressText" Style="{StaticResource Small}" Margin="0,0,0,6" TextWrapping="Wrap"/>
+              <ProgressBar x:Name="InstallProgress" Height="7" Minimum="0" Maximum="100" Foreground="#23543D" Background="#DEE8DF"/>
+            </StackPanel>
             <TextBlock x:Name="Feedback" Margin="2,7,0,0" TextWrapping="Wrap" FontSize="12" Foreground="#774B18" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite"/>
           </StackPanel>
           <StackPanel Grid.Column="2">
@@ -83,6 +87,7 @@
       <DockPanel LastChildFill="False">
         <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="{StaticResource Muted}" FontSize="12">联网选装从官方源获取，实际下载量因依赖而异。</TextBlock>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="Close" Margin="0,0,10,0" Visibility="Collapsed">关闭</Button>
           <Button x:Name="Back" Margin="0,0,10,0" Visibility="Collapsed">返回调整</Button>
           <Button x:Name="Next" Foreground="White" Background="#23543D" BorderBrush="#23543D" FontWeight="SemiBold" MinWidth="108">查看清单　›</Button>
         </StackPanel>

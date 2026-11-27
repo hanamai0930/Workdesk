@@ -72,27 +72,37 @@ def snapshot_matches(locations, revision):
     return True
 
 
-def freeze(base, data, executable):
+def freeze(base, data, executable, *, source_files=None):
     base, data, executable = Path(base).resolve(), Path(data).resolve(), Path(executable).resolve()
-    names = []
-    for folder, suffixes in [(base / 'src/researchos/workdesk', {'.py', '.mjs'}),
-                             (base / 'core', {'.go', '.mod', '.sum'}),
-                             (base / 'contracts', {'.json'})]:
-        names.extend(p for p in folder.rglob('*') if p.is_file() and p.suffix in suffixes and '__pycache__' not in p.parts)
-    for declaration in ('api_providers.json', 'permissions.json', 'native_features.json'):
-        catalog = base / 'src/researchos/workdesk/partners' / declaration
-        if catalog.is_file():
-            names.append(catalog)
-    names.extend(p for p in (base / 'workdesk-ui').glob('*.py') if p.is_file())
-    names.extend(p for p in (base / 'workdesk-ui/archive_sources').glob('*.py') if p.is_file())
-    for folder in ('workdesk-ui/static', 'workdesk-ui/dist'):
-        names.extend(p for p in (base / folder).rglob('*') if p.is_file() and not p.is_symlink())
-    source = {p.relative_to(base).as_posix(): sha256(p.read_bytes()).hexdigest() for p in sorted(names)}
-    content = {p.relative_to(base).as_posix(): p.read_bytes() for p in names}
-    binary_hash = sha256(executable.read_bytes()).hexdigest()
+    if source_files is None:
+        names = []
+        for folder, suffixes in [(base / 'src/researchos/workdesk', {'.py', '.mjs'}),
+                                 (base / 'core', {'.go', '.mod', '.sum'}),
+                                 (base / 'contracts', {'.json'})]:
+            names.extend(p for p in folder.rglob('*') if p.is_file() and p.suffix in suffixes and '__pycache__' not in p.parts)
+        for declaration in ('api_providers.json', 'permissions.json', 'native_features.json'):
+            catalog = base / 'src/researchos/workdesk/partners' / declaration
+            if catalog.is_file():
+                names.append(catalog)
+        names.extend(p for p in (base / 'workdesk-ui').glob('*.py') if p.is_file())
+        names.extend(p for p in (base / 'workdesk-ui/archive_sources').glob('*.py') if p.is_file())
+        for folder in ('workdesk-ui/static', 'workdesk-ui/dist'):
+            names.extend(p for p in (base / folder).rglob('*') if p.is_file() and not p.is_symlink())
+        content = {p.relative_to(base).as_posix(): p.read_bytes() for p in sorted(names)}
+    else:
+        content = {}
+        for name in source_files:
+            path = (base / name).resolve()
+            if not path.is_relative_to(base) or path.relative_to(base).as_posix() != name:
+                raise ValueError('安装版本清单的路径无效。')
+            content[name] = path.read_bytes()
+    source = {name: sha256(raw).hexdigest() for name, raw in content.items()}
+    if source_files is not None and source != source_files:
+        raise ValueError('程序内容与安装版本不符，请重新运行安装程序。')
     # The stable snapshot path is independent from its eventual installation directory.
     content['core/workdesk-core.exe'] = executable.read_bytes()
     manifest = {name: sha256(raw).hexdigest() for name, raw in sorted(content.items())}
+    binary_hash = manifest['core/workdesk-core.exe']
     revision = sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
     from .workspace import io_path
     root = io_path(data / 'implementations' / revision)

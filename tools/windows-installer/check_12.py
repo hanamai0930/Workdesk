@@ -36,7 +36,7 @@ def library(path):
                 db.execute('SELECT count(*) FROM work_items').fetchone()[0], db.execute('PRAGMA integrity_check').fetchone()[0])
 
 
-def verify(root, fixture):
+def verify(root, fixture, previous_setup):
     if registered() is not None:
         raise ValueError('Existing registered Workdesk 1.2 installation; use a different test account.')
     root = root.resolve()
@@ -51,12 +51,14 @@ def verify(root, fixture):
     assert old_meta[0] == '1'
     env = dict(os.environ, LOCALAPPDATA=str(trial / 'local'), WORKDESK_RELEASE_DATA_HOME=str(legacy))
     (trial / 'local').mkdir()
-    exe = root / 'Workdesk-Setup-1.2.0-x64.exe'
+    build = json.loads((root / 'setup-build.json').read_bytes())
+    exe = root / build['name']
     quiet = ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART']
     setup = [exe, *quiet, '/NOICONS', '/CURRENTUSER', '/DIR=' + str(app)]
     launcher = app / 'Workdesk.exe'
     py = [app / 'runtime/python/python.exe', '-I', '-B', '-X', 'utf8']
     state_cmd = [*py, app / 'tools/release_instance.py']
+    partners = json.loads((root / 'partners/catalog.json').read_bytes())['partners']
 
     def run(argv, *, data=None, success=True):
         result = subprocess.run(argv, input=data, cwd=trial, env=env, capture_output=True, encoding='utf-8',
@@ -65,14 +67,38 @@ def verify(root, fixture):
             raise RuntimeError(f'{Path(argv[0]).name} returned {result.returncode}. See installer logs in {trial}')
         return result.stdout
 
+    def install_partner(partner_id, *, progress=False):
+        item = next(p for p in partners if p['id'] == partner_id)
+        request = {k: item[k] for k in ('id', 'version', 'release_id')}
+        request['bundle'] = str(root / 'partners' / item['file'])
+        output = run([*py, app / 'tools/partner_command.py', *(['--progress'] if progress else [])],
+                     data=json.dumps(request))
+        rows = [json.loads(line) for line in output.splitlines()]
+        installed = rows[-1]
+        assert installed['ok'] and installed['release_id'] == item['release_id']
+        return installed, rows[:-1]
+
     try:
-        run([*setup, '/TASKS=import101', '/LOG=' + str(trial / 'install.log')])
+        first = [previous_setup, *setup[1:]] if previous_setup else setup
+        run([*first, '/TASKS=import101', '/LOG=' + str(trial / 'install.log')])
         assert registered() == app
         receipt, = (trial / 'local').glob('Workdesk-v1.2/instances/*/user/config/v101-import.json')
         db = Path(json.loads(receipt.read_bytes())['data_root']) / 'tasks.sqlite3'
         migrated = library(db)
         assert migrated[0] == '3' and migrated[1:] == old_meta[1:] and sha(old_db) == old_sha
         print('Install and legacy import passed', flush=True)
+        if previous_setup:
+            previous_component, _ = install_partner('glm')
+            previous_profile = json.loads(run([*state_cmd, 'status']))
+            assert json.loads((app / 'release.json').read_bytes())['version'] == '1.2.0'
+            run([*state_cmd, 'stop'])
+            run([*setup, '/TASKS=', '/LOG=' + str(trial / 'upgrade.log')])
+            assert registered() == app and library(db) == migrated
+            assert json.loads((app / 'release.json').read_bytes())['version'] == build['version']
+            assert json.loads(run([*state_cmd, 'status']))['instance_id'] == previous_profile['instance_id']
+            components = Path(previous_profile['user_root']).parent / 'components/.records'
+            assert (components / (previous_component['release_id'] + '.json')).is_file()
+            print('Upgrade from 1.2.0 retained the installation identity and data', flush=True)
         selector = app / 'Workdesk-Partners.exe'
         run([selector, '--check', '--package-dir', root / 'partners'])
         assert (app / 'selection.png').is_file() and (app / 'review.png').is_file()
@@ -81,11 +107,9 @@ def verify(root, fixture):
         assert status['backend_state'] == status['ui_state'] == 'RUNNING' and status['channel'] == 'release'
         assert Path(status['data_root']) == db.parent
         run([launcher, '--check-stopped'], success=False)
-        item = next(p for p in json.loads((root / 'partners/catalog.json').read_bytes())['partners'] if p['id'] == 'kimi')
-        request = {k: item[k] for k in ('id', 'version', 'release_id')}
-        request['bundle'] = str(root / 'partners' / item['file'])
-        installed = json.loads(run([*py, app / 'tools/partner_command.py'], data=json.dumps(request)))
-        assert installed['ok'] and installed['release_id'] == item['release_id']
+        installed, progress = install_partner('kimi', progress=bool(previous_setup))
+        if previous_setup:
+            assert any(row.get('type') == 'progress' and row.get('total', 0) > 0 for row in progress), progress
         print('Installed selector, eight bundles, release services, and Kimi installation passed', flush=True)
         run([*state_cmd, 'stop'])
         run([launcher, '--check-stopped'])
@@ -95,7 +119,8 @@ def verify(root, fixture):
         assert registered() is None and not launcher.exists() and library(db) == migrated and sha(old_db) == old_sha
         record = dict(setup_sha256=sha(exe), install=True, legacy_import=True, selector_bundles=8,
                       dashboard_and_backend=True, running_guard=True, offline_component=installed['release_id'],
-                      stop=True, in_place_reinstall=True, uninstall_kept_data=True, original_library_preserved=True)
+                      stop=True, in_place_reinstall=True, uninstall_kept_data=True, original_library_preserved=True,
+                      upgraded_from_1_2_0=bool(previous_setup), progress_updates=len(progress))
         (root / 'installer-acceptance.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
         print(json.dumps(record))
     finally:
@@ -108,5 +133,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path)
     parser.add_argument('--legacy-fixture', required=True, type=Path)
+    parser.add_argument('--previous-setup', type=Path)
     args = parser.parse_args()
-    verify(args.root, args.legacy_fixture)
+    verify(args.root, args.legacy_fixture, args.previous_setup.resolve(strict=True) if args.previous_setup else None)

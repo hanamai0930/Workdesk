@@ -46,6 +46,7 @@ internal sealed partial class WorkdeskHost : Form {
     bool wantsChat;
     string closePreference = "keyboard";
     bool closeShortcut, closingPrompt;
+    bool pickingPartnerBundle;
     Rectangle chatBounds;
 
     [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -130,6 +131,17 @@ internal sealed partial class WorkdeskHost : Form {
                         return;
                     }
                     if (!m.ContainsKey("channel")) return;
+                    if (Equals(m["channel"],"workdesk.partner.bundle")) {
+                        object request;
+                        if(source.AbsolutePath==shellUrl.AbsolutePath &&
+                           Regex.IsMatch(source.Fragment,@"\A#settings/accounts(?:/[^/?#]+)?\z",RegexOptions.CultureInvariant) &&
+                           m.Count==2 && m.TryGetValue("requestId",out request) && request is string &&
+                           Regex.IsMatch((string)request,@"\A[A-Za-z0-9_-]{1,80}\z") && !pickingPartnerBundle) {
+                            pickingPartnerBundle=true;
+                            BeginInvoke((Action)(()=>ChoosePartnerBundle((string)request)));
+                        }
+                        return;
+                    }
                     if ((string)m["channel"]=="workdesk.work.login") {
                         if(Equals(m.ContainsKey("action")?m["action"]:null,"open")) {await OpenWorkLogin(source,m);return;}
                         Uri target;
@@ -164,7 +176,7 @@ internal sealed partial class WorkdeskHost : Form {
                     await ShowChat(provider,requested);
                 } catch(Exception exc) {Publish("error",exc.GetType().Name);}
             };
-            await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("if(location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+"){window.WorkdeskDesktop={engine:'WebView2',chatViews:true,chatAccounts:true,windowPreferences:true,workLoginLinks:true};}");
+            await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("if(location.origin==="+json.Serialize(shellUrl.GetLeftPart(UriPartial.Authority))+"){window.WorkdeskDesktop={engine:'WebView2',chatViews:true,chatAccounts:true,windowPreferences:true,workLoginLinks:true,partnerBundlePicker:true};}");
             // Forward only deliberate clicks on the shell's official Work login
             // link. Generic popups and all remote views keep their old rules.
             await shell.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
@@ -179,6 +191,24 @@ internal sealed partial class WorkdeskHost : Form {
             MessageBox.Show("Workdesk桌面视图未能启动。请查看本地桌面诊断记录。","Workdesk",MessageBoxButtons.OK,MessageBoxIcon.Error);
             Close();
         }
+    }
+    void ChoosePartnerBundle(string requestId) {
+        string path=null,error=null;
+        try {
+            using(var dialog=new OpenFileDialog()) {
+                dialog.Title="导入本地补充包";
+                dialog.Filter="Workdesk 伙伴补充包 (*.wdpa; *.wdpartner)|*.wdpa;*.wdpartner";
+                dialog.CheckFileExists=true;
+                dialog.RestoreDirectory=true;
+                if(dialog.ShowDialog(this)==DialogResult.OK)path=dialog.FileName;
+            }
+        } catch(Exception) {
+            error="未能打开补充包选择窗口，请重试。";
+        } finally {
+            pickingPartnerBundle=false;
+        }
+        if(!IsDisposed && shell.CoreWebView2!=null)
+            shell.CoreWebView2.PostWebMessageAsJson(json.Serialize(new {channel="workdesk.partner.bundle",requestId,path,error}));
     }
     void UpdateBounds(Dictionary<string,object> m) {
         var b=(Dictionary<string,object>)m["bounds"];

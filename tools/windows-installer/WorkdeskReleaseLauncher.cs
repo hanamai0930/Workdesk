@@ -6,8 +6,8 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("Workdesk")]
 [assembly: System.Reflection.AssemblyProduct("Workdesk")]
-[assembly: System.Reflection.AssemblyVersion("1.2.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.2.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.2.1.0")]
 
 class WorkdeskReleaseLauncher {
     [STAThread]

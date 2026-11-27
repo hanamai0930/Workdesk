@@ -5,18 +5,18 @@
 [Setup]
 AppId={#ProductId}
 AppName=Workdesk 1.2
-AppVersion=1.2.0
-AppVerName=Workdesk 1.2.0
+AppVersion=1.2.1
+AppVerName=Workdesk 1.2.1
 AppPublisher=Workdesk
 DefaultDirName={localappdata}\Programs\Workdesk-1.2
 DefaultGroupName=Workdesk 1.2
-UninstallDisplayName=Workdesk 1.2.0
+UninstallDisplayName=Workdesk 1.2.1
 UninstallDisplayIcon={app}\Workdesk.exe
-VersionInfoVersion=1.2.0.0
-VersionInfoDescription=Workdesk 1.2.0 Windows x64 Installer
+VersionInfoVersion=1.2.1.0
+VersionInfoDescription=Workdesk 1.2.1 Windows x64 Installer
 VersionInfoProductName=Workdesk
 OutputDir={#OutputRoot}
-OutputBaseFilename=Workdesk-Setup-1.2.0-x64
+OutputBaseFilename=Workdesk-Setup-1.2.1-x64
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os

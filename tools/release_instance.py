@@ -81,7 +81,8 @@ def prepare_core(profile):
     selection_path = Path(profile['user_root']) / 'config/core.json'
     snapshot = locations.data / 'implementations' / expected / 'manifest.json'
     if not snapshot.is_file() or not core_runtime.snapshot_matches(locations, expected):
-        actual = core_runtime.freeze(BASE, locations.data, manifest_path.parent / 'workdesk-core.exe')
+        actual = core_runtime.freeze(BASE, locations.data, manifest_path.parent / 'workdesk-core.exe',
+                                     source_files=manifest['source_files'])
         if actual['implementation_revision'] != expected:
             raise ValueError('程序内容与安装版本不符，请重新运行安装程序。')
     value = {'schema': 1, 'engine': 'go', 'manifest': str(manifest_path)}

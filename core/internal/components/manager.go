@@ -61,6 +61,7 @@ type Manager struct {
 	Root        string
 	Client      *http.Client
 	Log         func(string)
+	Progress    func(Progress)
 	OperationID string
 	rootErr     error
 }
@@ -241,6 +242,9 @@ func (m *Manager) Prepare(ctx context.Context, componentID, version string) (Rel
 // the same component manager, staging transaction, immutable records and owner.
 func (m *Manager) PrepareSelected(ctx context.Context, componentID, version, expectedRelease, bundle string) (Release, error) {
 	pin, pinned := bundlePins[componentID]
+	if bundle != "" && expectedRelease == "" && (version == "" || version == "latest") {
+		version, expectedRelease = pin.version, pin.release
+	}
 	if (expectedRelease != "" || bundle != "") && (!pinned || pin.release != expectedRelease || pin.version != version || platform() != "windows-amd64") {
 		return Release{}, errors.New("此组件不符合本次发行的固定版本")
 	}
@@ -281,6 +285,7 @@ func (m *Manager) PrepareSelected(ctx context.Context, componentID, version, exp
 	}
 	r := Release{Schema: 1, ComponentID: componentID, Platform: platform(), Managed: true, State: "AVAILABLE", PreparedAt: time.Now().UTC().Format(time.RFC3339), OperationID: m.OperationID, Sources: []Source{}, Entry: []string{}}
 	m.note("正在准备 " + p.Endpoint)
+	m.progress("prepare", 0, 0)
 	if bundle != "" {
 		e = m.unpackPartner(ctx, bundle, pin, stage, program, &r)
 	} else {
@@ -302,7 +307,14 @@ func (m *Manager) PrepareSelected(ctx context.Context, componentID, version, exp
 	if e = ctx.Err(); e != nil {
 		return Release{}, e
 	}
-	files, digest, e := tree(program)
+	var verifyTotal int64
+	if bundle != "" {
+		verifyTotal = pin.componentBytes
+	}
+	m.progress("verify_files", 0, verifyTotal)
+	files, digest, e := treeWithProgress(program, ctx, func(done int64) {
+		m.progress("verify_files", done, verifyTotal)
+	})
 	if e != nil {
 		return Release{}, e
 	}
@@ -325,6 +337,7 @@ func (m *Manager) PrepareSelected(ctx context.Context, componentID, version, exp
 	if e = m.validate(r); e != nil {
 		return Release{}, e
 	}
+	m.progress("publish", 0, 0)
 	if e = os.MkdirAll(filepath.Dir(r.Path), 0700); e != nil {
 		return Release{}, e
 	}

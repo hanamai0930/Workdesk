@@ -12,6 +12,9 @@
   .wd-partners-login-link { display:inline-flex; align-items:center; gap:6px; color:var(--wk-action); text-decoration:underline; justify-self:start;width:fit-content;max-width:100%;overflow-wrap:anywhere; }
   .wd-partners-device-code { margin:0; font-size:14px; }
   .wd-partners-operation { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .wd-partners-install-progress { display:grid; gap:6px; width:100%; color:var(--wk-muted); }
+  .wd-partners-install-progress>div { display:flex; justify-content:space-between; gap:8px; }
+  .wd-partners-install-progress progress { width:100%; height:8px; accent-color:var(--wk-action); }
   .wd-partners .wd-settings-section-header { margin:0; }
   .wd-partners-note,.wd-partners-empty { margin:0; color:var(--wk-muted); font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
   .wd-partners-picker { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
