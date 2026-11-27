@@ -157,7 +157,7 @@ export function ApiChat({v,chat}:any){
           </div>
         </ComposerPrimitive.Root>
         <p className="wd-api-caption">{deepseek?'本chat由deepseek的API提供服务。TOKEN有价，请谨慎聊天':'本聊天通过 Qwen API 发送，按官方用量规则计费。'}</p>
-        {api&&!api.ready&&<p className="wd-api-status">尚未配置有效的 {name} API 凭据。<a href="#connect">连接 API</a></p>}
+        {api&&<p className="wd-api-status">{!api.ready&&<>尚未配置 {name} 的 API 凭据。</>}<a href={'#connect/chat-api/'+encodeURIComponent(api.provider)}>{api.ready?'管理 API Key':'连接 API'}</a></p>}
       </div>
     </div>
     </ChatFrame>

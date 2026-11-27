@@ -13,6 +13,7 @@ from .chat_files import ChatFiles, metadata, user_content
 from .chat_context import CONTEXT_WINDOW, MAX_OUTPUT, count, status, text_tokens
 from .model_catalog import ENDPOINTS
 from .network_time import pricing_now
+from .chat_api_credentials import resolve as resolve_credential
 
 MODELS=('deepseek-flash','deepseek-v4-pro')
 API_MODELS={'deepseek':MODELS,'qwen':('qwen3.8-flash','qwen3.8-max','qwen3.8-max-0902')}
@@ -77,19 +78,16 @@ class ChatAPI:
                     turn.update(state='ORPHANED_UNKNOWN',error='服务已重启；上次请求未自动重发，费用状态待核对。',ended=time.time())
                     self._save(db,turn)
 
-    def secret(self,provider='deepseek'):
-        secret=self.s.profiles.credentials().get(provider)
-        if secret is None or provider=='qwen' and secret.billing_kind!='general_api':
-            raise ValueError('尚未配置 '+API_NAMES[provider]+' 通用 API Key。')
-        return secret
+    def secret(self,provider='deepseek',db=None):
+        return resolve_credential(self.s,provider,db)[0]
 
     def describe(self,provider='deepseek'):
-        error=None
-        try:self.secret(provider);ready=True
+        error=None; source=None
+        try: _, binding=resolve_credential(self.s,provider);ready=True;source=binding['source']
         except (OSError,ValueError):ready=False;error='请先配置 '+API_NAMES[provider]+' API 凭据。'
         models=API_MODELS[provider]
         return {'provider':provider,'name':API_NAMES[provider],'models':list(models),'default_model':models[0],
-                'ready':ready,'error':error,'agent_dispatch':False,'api_billing':True,'streaming':True,
+                'ready':ready,'key_source':source,'error':error,'agent_dispatch':False,'api_billing':True,'streaming':True,
                 'context_window':CONTEXT_WINDOWS[provider],'max_output_tokens':MAX_OUTPUT if provider=='deepseek' else 131072,
                 'context_warnings':[80,95],'search':provider=='deepseek',
                 'search_mode':'one_official_search_per_message' if provider=='deepseek' else None,
@@ -106,7 +104,7 @@ class ChatAPI:
         if row['revision']!=p.get('revision'):raise ValueError('聊天已更新，请刷新后发送。')
         if row.get('pending'):raise ValueError('上一条请求尚未结束，未重复发送。')
         if self.active()>=4:raise ValueError('已有四条 API 请求在途，请等待或停止其中一条。')
-        self.secret(provider) # Exact existing credential reference; never return it to the UI.
+        _, key_binding=resolve_credential(self.s,provider,db) # Freeze the exact version; never persist plaintext.
         content=p.get('content','')
         if not isinstance(content,str) or len(content)>6000000:raise ValueError('消息过大，请分段发送。')
         content=content.strip()
@@ -135,7 +133,7 @@ class ChatAPI:
               'config':config,'messages':messages,'stop_requested':False,'usage':None,'error':None,
               'search':search,'search_query':query if search else None,'sources':[],'search_state':'RESERVED' if search else None,
               'input_estimate':tokens,
-              'credential_revision':self.s.locations.credential_revision,'instance':self.s.instance}
+              'credential_revision':self.s.locations.credential_revision,'chat_api_key_binding':key_binding,'instance':self.s.instance}
         for f in files:f['chat_id']=row['id'];self.c.put(db,'ui_chat_attachment',f)
         row['messages'] += [{'id':uid(),'turn_id':identity,'role':'human','content':content or '请阅读附件。','state':'RESERVED',
                              'attachment_ids':[f['id'] for f in files],'attachments':[metadata(f) for f in files]},
@@ -187,9 +185,10 @@ class ChatAPI:
         provider_created=None
         try:
             with self.s.store.read() as db:turn=self.c.get(db,'ui_chat_turn',identity)
-            if turn['credential_revision']!=self.s.locations.credential_revision:raise ValueError('API凭据引用已变化，请重新发送。')
             provider=turn.get('provider','deepseek')
-            secret=self.secret(provider)
+            secret,binding=resolve_credential(self.s,provider)
+            expected=turn.get('chat_api_key_binding') or {'source':'legacy','revision':turn['credential_revision']}
+            if binding!=expected:raise ValueError('API凭据引用已变化，请重新发送。')
             def opened(abort):
                 worker['abort']=abort
                 if worker['stop'].is_set():abort()

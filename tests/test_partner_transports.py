@@ -86,6 +86,43 @@ for raw in sys.stdin:
 
 
 class Transports(unittest.TestCase):
+    def test_native_resume_and_scene_mcp_keep_exact_boundaries(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from researchos.workdesk.partners.worker import NativeRejected, PartnerWorker
+        with tempfile.TemporaryDirectory() as tmp:
+            servers=[{'name':'fixture_server','config':{'transport':'http','url':'https://example.com/mcp'}}]
+            def worker(partner):
+                state=PartnerWorker({'partner_id':partner,'route':'account','mode':'run','resume':True,
+                    'session_id':'same-session','prompt':'second turn','scene_mcp':servers},lambda e:events.append(e))
+                state.spec=SimpleNamespace(cwd=tmp,route='api',partner_id=partner)
+                state.rpc=Mock();return state
+            events=[]
+            qwen=worker('qwen')
+            qwen.rpc.request.side_effect=lambda method,*args,**kwargs:{'initialize':{'agentCapabilities':{'loadSession':True,'mcpCapabilities':{'http':True}}},
+                'session/load':{'modes':{'availableModes':[{'id':'default'}]}},'session/set_mode':{},'session/prompt':{'stopReason':'end_turn'}}[method]
+            qwen._acp()
+            self.assertEqual([c.args[0] for c in qwen.rpc.request.call_args_list],['initialize','session/load','session/set_mode','session/prompt'])
+            self.assertEqual(qwen.rpc.request.call_args_list[1].args[1],{'sessionId':'same-session','cwd':tmp,
+                'mcpServers':[{'type':'http','name':'fixture_server','url':'https://example.com/mcp','headers':[]}]})
+            self.assertEqual(next(e for e in events if e.get('kind')=='native_scene_mcp_configured')['connection_state'],'NOT_ATTESTED')
+
+            codex=worker('codex');codex.rpc.request.side_effect=[{}, {'thread':{'id':'wrong-session'}}]
+            with self.assertRaisesRegex(NativeRejected,'不同'):
+                codex._codex()
+            self.assertEqual([c.args[0] for c in codex.rpc.request.call_args_list], ['initialize','thread/resume'])
+            config=codex.rpc.request.call_args_list[-1].args[1]
+            self.assertEqual(config['threadId'],'same-session')
+            self.assertEqual(config['config'],{'mcp_servers.fixture_server':{'url':'https://example.com/mcp'}})
+
+            dsh=worker('deepseek');dsh.rpc.request.side_effect=[{}, {}, {}, {}];dsh._deepseek()
+            self.assertEqual([c.args[0] for c in dsh.rpc.request.call_args_list],['initialize','session/resume','session/query','session/wait'])
+            self.assertEqual(dsh.rpc.request.call_args_list[1].args[1],{'sessionId':'same-session'})
+            launch=build_launch({**dsh.config,'entry':[sys.executable],'home':str(Path(tmp)/'home'),'workspace':tmp})
+            patch=Path(launch.argv[-1]);self.assertEqual(patch.name,'scene-mcp.patch.yml')
+            self.assertEqual(json.loads(patch.read_text())[-1]['insert'][0]['config'],
+                {'serverName':'fixture_server','transport':'streamable-http','url':'https://example.com/mcp'})
+
     def _fake_login(self, case, mode='login'):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);fake=root/'login.py';fake.write_text(LOGIN_FAKE,encoding='utf8')

@@ -97,6 +97,18 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			}
 		}
 	}
+	if r.Method == "POST" {
+		action := map[string]string{"/api/v1/chat-api-key": "save", "/api/v1/chat-api-key/reuse": "reuse", "/api/v1/chat-api-key/select": "select"}[path]
+		if action != "" {
+			result, err := a.chatAPIKeyMutation(r.Context(), action, body)
+			if err != nil {
+				failed(w, err)
+			} else {
+				response(w, 200, result)
+			}
+			return
+		}
+	}
 	if path == "/api/v1/command" && r.Method == "POST" {
 		kind := str(body["kind"])
 		if partnerKind(kind) {

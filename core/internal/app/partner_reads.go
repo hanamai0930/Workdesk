@@ -26,6 +26,7 @@ func (a *App) decoratePartnerRuns(runs, accounts []map[string]any) error {
 		byID[str(row["run_id"])] = row["n"]
 	}
 	for _, run := range runs {
+		delete(run, "scene_mcp") // Private frozen transport configuration; expose only receipts.
 		run["model_request_intent_count"] = 0
 		if n, ok := byID[str(run["id"])]; ok {
 			run["model_request_intent_count"] = n

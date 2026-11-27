@@ -29,7 +29,14 @@
   const task=()=>v.detail?.task;
   const composerCapabilities=()=>v.formDraft.composerCapabilities||[];
   const partnerDocumentSkills=()=>!!partnerConnections()&&!task()&&!v.dialogue;
-  function checkPartnerCapabilities(){if(partnerDocumentSkills()&&composerCapabilities().some(ref=>ref.kind==='mcp'))throw Error('当前连接暂不支持本次加载 MCP，请在本次工作能力中移除 MCP 选择。');}
+  function partnerMcpUnavailable(){
+    if(!partnerDocumentSkills())return false;
+    if(v.type!=='cooperative')return !selectedPartnerConnection()?.capabilities?.per_task_mcp;
+    const {mode,assignments,expertCount}=cooperationConfig();
+    const refs=Object.entries(assignments[mode]).filter(([key])=>!key.startsWith('expert_')||Number(key.slice(7))<=expertCount).map(([,ref])=>ref);
+    return !refs.length||refs.some(ref=>!partnerConnections().connections.find(row=>row.id===ref.connection_id&&String(row.revision)===String(ref.connection_revision))?.capabilities?.per_task_mcp);
+  }
+  function checkPartnerCapabilities(){if(partnerMcpUnavailable()&&composerCapabilities().some(ref=>ref.kind==='mcp'))throw Error('所选连接暂不支持本次加载 MCP，请更换连接或移除 MCP 选择。');}
   const canPlan=()=>!v.dialogue&&(!task()||task().spec.runtime_mode==='official'&&
     !['RESERVED','RUNNING','SEND_INTENT','STOP_REQUESTED','WAITING_APPROVAL','WAITING_INPUT'].includes(task().state));
   const locked=()=>!!(v.detail?.attempts.length||v.dialogue?.pending||v.dialogue?.messages.some(m=>m.task_id));
@@ -139,7 +146,7 @@
     }
     workRecords.render();
   }
-  async function render(parts=[],connections,chatFallback,newWork=false){
+  async function render(parts=[],connections,chatEntry,newWork=false){
     const previousChat=v.activeChat;leave();const generation=v.generation;
     document.body.dataset.activePage=location.hash.slice(1).split('/')[0]||'chat';
     window.WorkdeskSupport?.renderManagementNavigation();
@@ -178,9 +185,13 @@
         }
         features.restore('chat',v.activeChat);
         if(v.activeChat&&!v.chatInput)v.chatInput=v.chats.find(c=>c.id===v.activeChat)?.prompt||'';
-        if(!v.activeChat&&!v.chatInput){
-          Object.assign(v,chatDefaults());
-          if(chatFallback&&v.chatRoute==='api')Object.assign(v,{chatRoute:'web',chatProvider:chatFallback,chatEmbedded:false});
+        if(!v.activeChat){
+          if(!v.chatInput)Object.assign(v,chatDefaults());
+          if(chatEntry?.route==='web')Object.assign(v,{chatRoute:'web',chatProvider:chatEntry.provider,chatEmbedded:false});
+          if(chatEntry?.route==='api'){
+            const apiService=features.chatPresentation().apiServices.find(row=>row.provider===chatEntry.provider);
+            if(apiService)Object.assign(v,{chatRoute:'api',chatApiProvider:apiService.provider,chatApiModel:apiService.models.includes(v.chatApiModel)?v.chatApiModel:apiService.default_model,chatEmbedded:false});
+          }
         }
         draw();features.pollChat();return;
       }
@@ -290,10 +301,10 @@
     else if(kind==='project')body=`<label class="wk-search">${icon('search')}<input id="wb-project-search" aria-label="搜索项目" placeholder="搜索项目"></label>${item('新建项目','new-project','plus')}${item('添加已有工作区','register-project','folder')}<div class="wk-menu-divider"></div><div id="wb-project-results">${projectResults()}</div><div class="wk-menu-divider"></div>${item('不在项目中工作','unfiled','close')}`;
     else if(kind==='work-tools'){
       const count=lines(v.files).length+v.attachments.length;
-      const documents=partnerDocumentSkills(),capabilityHint=documents?'随本次工作读取文档':task()||v.dialogue?'查看工作已加载的能力':'随本次工作加载';
+      const documents=partnerDocumentSkills(),noMcp=partnerMcpUnavailable(),capabilityHint=documents?'随本次工作读取文档':task()||v.dialogue?'查看工作已加载的能力':'随本次工作加载';
       body=item('文件和文件夹'+(count?' · '+count:''),'files','file')+
         item((documents?'技能文档':'Skills')+'<small>'+capabilityHint+'</small>','work-capabilities','plug','data-kind="skill"')+
-        item('MCP<small>'+(documents?'当前连接暂不支持本次加载 MCP':capabilityHint)+'</small>','work-capabilities','plug','data-kind="mcp"'+(documents?' disabled':''))+
+        item('MCP<small>'+(noMcp?'当前连接暂不支持本次加载 MCP':task()||v.dialogue?'查看已选 MCP':'随本次工作加载')+'</small>','work-capabilities','plug','data-kind="mcp"'+(noMcp?' disabled':''))+
         '<div class="wk-menu-divider"></div>'+
         item('计划模式<small>'+(v.workPlanOnly?'已开启 · 点击关闭':'先出方案，再决定是否执行')+'</small>',
           'work-plan-mode','workflow',canPlan()?'':'disabled')+
@@ -370,8 +381,8 @@
       })});
   }
   async function capabilityDialog(kind){
-    const documents=partnerDocumentSkills(),heading=kind==='skill'?(documents?'选择技能文档':'选择 Skills'):kind==='mcp'?'选择 MCP':'本次工作能力';
-    if(documents&&kind==='mcp'){modal('本次加载 MCP','<p class="wk-note">当前连接暂不支持本次加载 MCP。</p>',b('完成','close'));return;}
+    const documents=partnerDocumentSkills(),noMcp=partnerMcpUnavailable(),heading=kind==='skill'?(documents?'选择技能文档':'选择 Skills'):kind==='mcp'?'选择 MCP':'本次工作能力';
+    if(noMcp&&kind==='mcp'){modal('本次加载 MCP','<p class="wk-note">当前连接暂不支持本次加载 MCP。</p>',b('完成','close'));return;}
     if(task()||v.dialogue){
       const snapshot=task()?.spec.scene_snapshot;
       const skillNames=snapshot?.bundles.flatMap(bundle=>bundle.skills.map(skill=>skill.name))||[];
@@ -389,13 +400,13 @@
       bundle.skills.map(skill=>({kind:'skill',id:bundle.id,revision:bundle.revision,name:skill.name,description:skill.description})));
     const servers=data.extensions.filter(server=>server.enabled).map(server=>
       ({kind:'mcp',id:server.id,revision:server.revision,name:server.name,description:server.source}));
-    capabilityOptions=[...skills,...(documents?[]:servers)].filter(row=>kind==='all'||row.kind===kind);
+    capabilityOptions=[...skills,...(noMcp?[]:servers)].filter(row=>kind==='all'||row.kind===kind);
     const rows=capabilityOptions.map((row,index)=>{
       const chosen=composerCapabilities().some(ref=>ref.kind===row.kind&&ref.id===row.id&&ref.name===row.name&&ref.revision===row.revision);
       return '<label class="wk-check wd-composer-option"><input type="checkbox" name="capability" value="'+index+'" '+(chosen?'checked':'')+
         '><span><strong>'+h(row.name)+'</strong><small>'+h(row.description||'')+'</small></span></label>';
     }).join('');
-    modal(heading,(documents?'<p class="wk-note">技能文档由所选工作端的文件工具读取。当前连接暂不支持本次加载 MCP。</p>':'')+'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">暂无已启用的'+(kind==='mcp'?' MCP。':documents?'技能文档。':' Skills。')+'</p>')+'</form>',
+    modal(heading,(documents&&kind!=='mcp'?'<p class="wk-note">技能文档由所选工作端的文件工具读取。</p>':'')+'<form id="wb-composer-capabilities" data-kind="'+kind+'">'+(rows||'<p class="wk-note">暂无已启用的'+(kind==='mcp'?' MCP。':documents?'技能文档。':' Skills。')+'</p>')+'</form>',
       '<a class="wk-button" href="#settings/extensions" data-wb-close-link>管理 Skills 与 MCP</a>'+b('取消','close')+
       '<button class="wk-button primary" type="submit" form="wb-composer-capabilities">保存选择</button>');
     $('#wb-dialog').dataset.uiModule='workbench';
@@ -934,7 +945,7 @@
   },true);
   window.addEventListener('hashchange',()=>{closeMenu();if($('#wb-dialog').open)$('#wb-dialog').close();if(v.mobileSidebar){v.mobileSidebar=false;shell();}});
   window.addEventListener('resize',()=>{closeMenu();shell();});
-  window.WorkdeskWorkbench={render:async(parts=[],connections,chatFallback)=>{await render(parts,connections,chatFallback);if(location.hash==='#work'){const draft=getLocal('fork-draft','');if(draft){v.input=draft;setLocal('fork-draft','');draw();}}},leave,renderSidebar,setWorkMode:()=>{v.mode='work';shell();},load,
+  window.WorkdeskWorkbench={render:async(parts=[],connections,chatEntry)=>{await render(parts,connections,chatEntry);if(location.hash==='#work'){const draft=getLocal('fork-draft','');if(draft){v.input=draft;setLocal('fork-draft','');draw();}}},leave,renderSidebar,setWorkMode:()=>{v.mode='work';shell();},load,
     setChatDetailMode:id=>{v.mode='chat';v.activeChat=id||null;shell();},
     chatSearchQuery:text=>{v.chatSearchQuery=text;features.autosave();},
     chatFiles:async files=>{if(v.busy)return;v.busy=true;try{await features.chatFiles(files);}catch(exc){error(exc);}finally{v.busy=false;syncComposer();}},

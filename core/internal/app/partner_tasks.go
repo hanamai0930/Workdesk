@@ -17,7 +17,7 @@ func taskPartnerCommandID(action, task, attempt string) string {
 }
 
 func (a *App) partnerTaskParent(p map[string]any) (map[string]any, map[string]any, error) {
-	rows, err := a.query(`SELECT t.id,t.spec,t.spec_hash,t.project_id,t.state AS task_state,a.id AS attempt_id,a.state AS attempt_state,a.workspace,a.stop_requested,a.worker_instance FROM tasks t JOIN attempts a ON a.task_id=t.id WHERE t.id=? AND a.id=?`, p["task_id"], p["attempt_id"])
+	rows, err := a.query(`SELECT t.id,t.spec,t.spec_hash,t.project_id,t.state AS task_state,a.id AS attempt_id,a.state AS attempt_state,a.workspace,a.stop_requested,a.worker_instance,a.baseline FROM tasks t JOIN attempts a ON a.task_id=t.id WHERE t.id=? AND a.id=?`, p["task_id"], p["attempt_id"])
 	if err != nil || len(rows) != 1 {
 		return nil, nil, errors.New("原任务与尝试无法准确核对")
 	}
@@ -30,6 +30,68 @@ func (a *App) partnerTaskParent(p map[string]any) (map[string]any, map[string]an
 		return nil, nil, errors.New("原任务未冻结伙伴执行路线")
 	}
 	return parent, spec, nil
+}
+
+var partnerResumeKeys = []string{"resume_session", "resume_run_id", "resume_attempt_id"}
+
+func samePartnerResume(a, b map[string]any) bool {
+	for _, key := range partnerResumeKeys {
+		if str(a[key]) != str(b[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func reviewedPartnerContinuation(partner, version string) bool {
+	switch partner {
+	case "codex":
+		return version == "0.172.0"
+	case "deepseek":
+		return version == "0.2.2-rc.5"
+	case "qwen":
+		return version == "0.28.4"
+	}
+	return false
+}
+
+func (a *App) partnerTaskResume(p, parent, binding, connection, account map[string]any) (map[string]any, error) {
+	var baseline, resume map[string]any
+	if raw := str(parent["baseline"]); raw != "" {
+		if json.Unmarshal([]byte(raw), &baseline) != nil {
+			return nil, errors.New("本次尝试的预订记录无法核对")
+		}
+		resume, _ = baseline["partner_resume"].(map[string]any)
+	}
+	if !samePartnerResume(p, resume) {
+		return nil, errors.New("原生续跑与本次预订记录不符，未派发")
+	}
+	rows, e := a.query(`SELECT id,state,workspace,session_id,stop_requested FROM attempts WHERE task_id=? AND id<>? ORDER BY started DESC,id DESC LIMIT 1`, p["task_id"], p["attempt_id"])
+	if e != nil {
+		return nil, e
+	}
+	if len(rows) == 0 && len(resume) == 0 {
+		return nil, nil
+	}
+	if len(rows) != 1 || !reviewedPartnerContinuation(str(binding["provider"]), str(binding["version"])) {
+		return nil, errors.New("该准确原生会话的恢复尚未核实，未改为新会话")
+	}
+	prior := rows[0]
+	if str(resume["resume_run_id"]) == "" || str(resume["resume_session"]) == "" || prior["id"] != resume["resume_attempt_id"] || prior["session_id"] != resume["resume_session"] || prior["state"] != "COMPLETED" || number(prior["stop_requested"]) != 0 || !samePartnerWorkspace(prior["workspace"], parent["workspace"]) {
+		return nil, errors.New("原尝试状态、工作目录或原生会话不符，未改为新会话")
+	}
+	old, e := a.boundPartnerTaskRun(map[string]any{"task_id": p["task_id"], "attempt_id": prior["id"], "run_id": resume["resume_run_id"]})
+	if e != nil || old == nil || old["state"] != "COMPLETED" || old["local_exit_confirmed"] != true || old["session_id"] != resume["resume_session"] || old["partner_id"] != binding["provider"] || old["account_id"] != account["id"] || old["secret_version"] != account["secret_version"] || old["connection_id"] != connection["id"] || number(old["connection_revision"]) != number(connection["revision"]) || old["release_id"] != connection["release_id"] || !samePartnerWorkspace(old["workspace"], parent["workspace"]) {
+		return nil, errors.New("原已完成工作、账号、凭据、版本或目录不符，未续跑")
+	}
+	if _, e = receivedPartnerTurnResult(old); e != nil {
+		return nil, e
+	}
+	return resume, nil
+}
+
+func samePartnerWorkspace(left, right any) bool {
+	return str(left) != "" && str(right) != "" && strings.EqualFold(filepath.Clean(str(left)), filepath.Clean(str(right)))
 }
 
 func (a *App) boundPartnerTaskRun(p map[string]any) (map[string]any, error) {
@@ -47,7 +109,7 @@ func (a *App) boundPartnerTaskRun(p map[string]any) (map[string]any, error) {
 	if json.Unmarshal([]byte(str(rows[0]["data"])), &run) != nil {
 		return nil, errors.New("原伙伴运行记录无法读取")
 	}
-	if run["parent_spec_hash"] != p["spec_hash"] || (str(p["run_id"]) != "" && run["id"] != p["run_id"]) {
+	if (str(p["spec_hash"]) != "" && run["parent_spec_hash"] != p["spec_hash"]) || (str(p["run_id"]) != "" && run["id"] != p["run_id"]) {
 		return nil, errors.New("伙伴运行与原尝试身份不符")
 	}
 	return run, nil
@@ -84,7 +146,7 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 	if method == "partner.task.start" {
 		if run != nil {
 			digest := sha256.Sum256([]byte(str(p["prompt"])))
-			if run["parent_prompt_sha256"] != hex.EncodeToString(digest[:]) {
+			if run["parent_prompt_sha256"] != hex.EncodeToString(digest[:]) || !samePartnerResume(run, p) {
 				return nil, errors.New("原尝试已登记不同消息；未重发")
 			}
 			return a.partnerTaskRead(run, 0)
@@ -101,10 +163,7 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		if parent["worker_instance"] != a.Process {
 			return nil, errors.New("原尝试属于旧执行所有者；只核对原回执，不重新派发")
 		}
-		if str(p["resume_session"]) != "" {
-			return nil, errors.New("该准确原生会话的恢复尚未核实，未改为新会话")
-		}
-		if str(p["workspace"]) == "" || !strings.EqualFold(filepath.Clean(str(p["workspace"])), filepath.Clean(str(parent["workspace"]))) {
+		if !samePartnerWorkspace(p["workspace"], parent["workspace"]) {
 			return nil, errors.New("运行目录与原尝试不符")
 		}
 		binding, _ := spec["partner_connection"].(map[string]any)
@@ -156,6 +215,10 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		if str(binding["model"]) != "official-default" && binding["model"] != connection["model"] {
 			return nil, errors.New("原模型绑定与保存的连接不符")
 		}
+		resume, err := a.partnerTaskResume(p, parent, binding, connection, account)
+		if err != nil {
+			return nil, err
+		}
 		value := str(spec["access"])
 		if value == "" || value == "inherit" {
 			value = "workspace"
@@ -166,6 +229,17 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		}
 		digest := sha256.Sum256([]byte(prompt))
 		link := map[string]any{"parent_task_id": p["task_id"], "parent_attempt_id": p["attempt_id"], "parent_spec_hash": p["spec_hash"], "parent_prompt_sha256": hex.EncodeToString(digest[:]), "workspace": parent["workspace"]}
+		for key, value := range resume {
+			link[key] = value
+		}
+		if scene, _ := spec["scene_snapshot"].(map[string]any); scene != nil {
+			if servers, _ := scene["mcp"].([]any); len(servers) != 0 {
+				if !reviewedPartnerContinuation(str(binding["provider"]), str(binding["version"])) {
+					return nil, errors.New("当前官方工作端版本尚未接入每任务 MCP，未派发")
+				}
+				link["scene_mcp"] = servers
+			}
+		}
 		command := map[string]any{"id": taskPartnerCommandID("start", str(p["task_id"]), str(p["attempt_id"])), "kind": "partner.run", "payload": map[string]any{"connection_id": binding["id"], "connection_revision": connection["revision"], "project_id": parent["project_id"], "prompt": prompt, "work_access": value, "confirm_full_access": value == "full"}}
 		if _, err = a.partnerCommandWithParent(command, link); err != nil {
 			return nil, err

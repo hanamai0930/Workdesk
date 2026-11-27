@@ -294,6 +294,28 @@ func receivedPartnerTurnResult(run map[string]any) (map[string]any, error) {
 	return result, nil
 }
 
+// A login result has a different receipt contract from a model turn. It can
+// repair a falsely orphaned login only with proved ownership and exact official
+// authentication. Closing local tracking for cutover is not a user stop.
+func receivedPartnerLoginResult(run map[string]any) error {
+	state := str(run["state"])
+	closed := state == "STOPPED_RUNTIME" && run["explicit_local_tracking_closed"] == true
+	if str(run["mode"]) != "login" || run["stop_requested"] == true || (state != "ORPHANED_UNKNOWN" && state != "STOP_UNKNOWN" && !closed) {
+		return errors.New("本次运行不是可核对的原官方登录，或已有停止意图")
+	}
+	result, _ := run["result"].(map[string]any)
+	observation, _ := run["auth_observation"].(map[string]any)
+	if result["type"] != "result" || result["fact_scope"] != "OFFICIAL_ACCOUNT_RECEIPT" || result["auth_state"] != "AUTHENTICATED" ||
+		result["authenticated"] != true || result["receipt_unknown"] == true || str(run["id"]) == "" ||
+		str(result["run_id"]) != str(run["id"]) || str(result["partner_id"]) != str(run["partner_id"]) ||
+		str(run["partner_id"]) == "" || str(run["account_id"]) == "" || str(run["release_id"]) == "" ||
+		observation["auth_state"] != "AUTHENTICATED" || observation["fact_scope"] != "OFFICIAL_ACCOUNT_RECEIPT" ||
+		str(observation["run_id"]) != str(run["id"]) || str(observation["release_id"]) != str(run["release_id"]) {
+		return errors.New("没有与此登录匹配的官方认证结果，保留原状态")
+	}
+	return nil
+}
+
 // Both normal shutdown and an explicit acceptance use one transaction-bound
 // verification update. An old credential result never verifies a newer Key.
 func (a *App) completePartnerRun(s *storage.Session, run map[string]any, acceptance string) error {
@@ -939,6 +961,14 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 					for _, key := range []string{"parent_task_id", "parent_attempt_id", "parent_spec_hash", "parent_prompt_sha256", "workspace"} {
 						run[key] = parent[key]
 					}
+					if sceneMCP := parent["scene_mcp"]; sceneMCP != nil {
+						run["scene_mcp"] = sceneMCP
+					}
+					for _, key := range partnerResumeKeys {
+						if parent[key] != nil {
+							run[key] = parent[key]
+						}
+					}
 				}
 			}
 			if str(connection["route"]) == "api" {
@@ -1096,7 +1126,13 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 				if !localExit {
 					return errors.New("本地进程树退出尚未核对，保留原运行")
 				}
-				if _, e = receivedPartnerTurnResult(m); e != nil {
+				if str(m["mode"]) == "login" {
+					if e = receivedPartnerLoginResult(m); e != nil {
+						return e
+					}
+					proof["accepted_scope"] = "OFFICIAL_ACCOUNT_RECEIPT"
+					m["remote_state"] = "OFFICIAL_ACCOUNT_AUTHENTICATED"
+				} else if _, e = receivedPartnerTurnResult(m); e != nil {
 					return e
 				}
 				if e = a.completePartnerRun(s, m, "EXPLICIT_ACCEPT_RECEIVED_RESULT"); e != nil {
@@ -1350,6 +1386,12 @@ func (a *App) runPartner(run map[string]any) {
 	for _, k := range []string{"account_id", "secret_version", "connection_id", "connection_revision", "session_id"} {
 		config[k] = run[k]
 	}
+	if session := str(run["resume_session"]); session != "" {
+		config["resume"], config["session_id"] = true, session
+	}
+	if sceneMCP := run["scene_mcp"]; sceneMCP != nil {
+		config["scene_mcp"] = sceneMCP
+	}
 	if str(connection["route"]) == "account" {
 		config["auth_options"] = run["auth_options"]
 	}
@@ -1588,7 +1630,12 @@ func (a *App) partnerEvent(id string, event map[string]any) error {
 		case "auth_status":
 			observation, _ := m["auth_observation"].(map[string]any)
 			if str(observation["auth_state"]) == "AUTHENTICATED" && str(m["mode"]) == "login" {
-				m["state"] = "RUNNING"
+				// The worker can send a second positive status after its result
+				// (for example DeepSeek's commit then sign-in-success notices).
+				// Update the account fact, never discard that pending result.
+				if originalState != "RESULT_RECEIVED" {
+					m["state"] = "RUNNING"
+				}
 				for _, key := range []string{"login_url", "user_code", "instructions", "request_id"} {
 					delete(m, key)
 				}

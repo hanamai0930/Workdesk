@@ -31,13 +31,13 @@ def send(service, db, payload, *, cooperative=None):
     note=bounded_text(payload.get('goal'),'消息')
     if cooperative is not None and payload.get('task_id'):
         raise ValueError('合作单元使用独立的准确执行记录。')
-    prior=None
+    prior=None;partner_resume={}
     if payload.get('task_id'):
         task=service.store.task(payload['task_id'],db)
         if task['spec'].get('work_mode')=='cooperative':raise ValueError('合作单元须通过合作派发明确安排；不能从独立发送接续绕过累计授权。')
         if not is_official(task):raise ValueError('历史任务仍使用原来的执行流程；请新建独立Work。')
-        if partner_task.selected(task):
-            raise ValueError('此伙伴任务的准确原生会话续跑尚未核实；原会话保留，请新建工作。')
+        if partner_task.selected(task)!=partner:
+            raise ValueError('任务与原伙伴连接不一致，未续跑。')
         service.work_records.guard(db,'task',task['id'])
         attempts=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(task['id'],)).fetchone()
         prior=service.store.attempt_row(attempts) if attempts else None
@@ -46,7 +46,8 @@ def send(service, db, payload, *, cooperative=None):
         if task['state'] in ACTIVE|UNKNOWN:raise ValueError('当前回合仍在运行或状态待核对。')
         from .execution_constraints import blockers
         if prior and blockers(service,db,task,prior):raise ValueError('旧执行、远端或原生控制回执未知，或退出证据不足；先核对，不重发。')
-        if prior and not service.independent.describe(task['spec']['provider'])['native_resume']:
+        if partner and prior:partner_resume=partner_task.resume_reference(task,prior)
+        if prior and not partner and not service.independent.describe(task['spec']['provider'])['native_resume']:
             raise ValueError('此工作端的原生会话恢复尚未接通，请新建独立Work；不会悄悄丢弃历史。')
         spec=task['spec'];before=digest(spec)
         if 'plan_only' in payload:
@@ -58,7 +59,7 @@ def send(service, db, payload, *, cooperative=None):
         from .native_permissions import choice,deepseek_preset
         spec['access']=choice(payload.get('access',spec.get('access')))
         if spec['provider']=='deepseek':deepseek_preset(spec['access'])
-        spec['model_selection']=service.profiles.selection_snapshot(spec['provider'],spec['model'],spec['effort'],spec['tier'])
+        spec['model_selection']=partner_task.model_selection(binding) if partner else service.profiles.selection_snapshot(spec['provider'],spec['model'],spec['effort'],spec['tier'])
         if digest(spec)!=before:
             db.execute('UPDATE tasks SET spec=?,spec_hash=?,updated=? WHERE id=?',(canonical(spec),digest(spec),time.time(),task['id']))
             service.store.event(task['id'],None,'native_configuration_selected',{'model':spec['model'],'effort':spec['effort'],'tier':spec['tier'],'access':spec.get('access','inherit'),'effect':'NEXT_NATIVE_TURN','source':'HUMAN_UI'},db)
@@ -131,15 +132,15 @@ def send(service, db, payload, *, cooperative=None):
     project=db.execute('SELECT * FROM projects WHERE id=?',(task['project_id'],)).fetchone()
     root=Path(project['root'])
     if not root.is_dir():raise ValueError('工作区目录不存在。')
-    if prior and task['spec'].get('qwen_runtime')=='daemon' and root.resolve()!=Path(prior['workspace']).resolve():
-        raise ValueError('Qwen Daemon 原会话的项目目录已变化；请在原目录继续或新建工作。')
+    if prior and (partner or task['spec'].get('qwen_runtime')=='daemon') and root.resolve()!=Path(prior['workspace']).resolve():
+        raise ValueError('原会话的项目目录已变化；请在原目录继续或新建工作。')
     identity,owner=uid(),uid();now=time.time()
     fork=task['spec'].get('native_fork') if not prior else None
     session=prior['session_id'] if prior else fork['session_id'] if fork else uid()
     db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-               (identity,task['id'],uid(),owner,'RESERVED',now,0,str(root),session,None,0,None,None,canonical({'runtime_mode':'official'}),None,service.instance))
+               (identity,task['id'],uid(),owner,'RESERVED',now,0,str(root),session,None,0,None,None,canonical({'runtime_mode':'official',**({'partner_resume':partner_resume} if partner_resume else {})}),None,service.instance))
     db.execute("UPDATE tasks SET state='RESERVED',updated=? WHERE id=?",(now,task['id']))
-    service.store.event(task['id'],identity,'execution_reserved',{'owner':owner,'runtime_mode':'official','human_note':note if prior or fork else '',
+    service.store.event(task['id'],identity,'execution_reserved',{'owner':owner,'runtime_mode':'official','human_note':note if prior or fork else '',**({'partner_resume':partner_resume} if partner_resume else {}),
         'implementation_revision':service.implementation,'resume_mode':'native' if prior else 'native_fork' if fork else None,
         'configuration_snapshot':{**{k:task['spec'][k] for k in ('provider','model','effort','tier')},'access':task['spec'].get('access','inherit'),'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS',
                                   **({'qwen_runtime':task['spec'].get('qwen_runtime','query')} if task['spec']['provider']=='qwen' else {})},

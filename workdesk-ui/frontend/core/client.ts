@@ -51,11 +51,18 @@ function updatePending(command: CommandContext, retain: boolean, scope: string) 
   } catch { /* An old instance response must never change the newly selected library. */ }
 }
 
+const protectedCommands: Readonly<Record<string,string>> = {
+  'v1/chat-api-key': 'chat.api-key.save',
+  'v1/chat-api-key/reuse': 'chat.api-key.reuse',
+  'v1/chat-api-key/select': 'chat.api-key.select',
+};
+
 function commandContext(route: string, options?: RequestInit): CommandContext | undefined {
-  if (route !== 'v1/command' || typeof options?.body !== 'string') return;
+  if ((route !== 'v1/command' && !protectedCommands[route]) || typeof options?.body !== 'string') return;
   try {
     const value = JSON.parse(options.body);
-    if (typeof value.id === 'string' && typeof value.kind === 'string') return {id: value.id, kind: value.kind};
+    const kind = protectedCommands[route] || value.kind;
+    if (typeof value.id === 'string' && typeof kind === 'string') return {id: value.id, kind};
   } catch { /* Invalid bodies are rejected by the service. */ }
 }
 
@@ -87,7 +94,8 @@ async function request<T = any>(route: string, options?: RequestInit): Promise<T
     throw error;
   }
   if (!res.ok) {
-    const unknown = !!command && (data.state === 'UNKNOWN' || data.no_resend === true);
+    const unknown = !!command && (data.state === 'UNKNOWN' || data.no_resend === true ||
+      (!!protectedCommands[route] && res.status >= 500 && data.explicit_rejection !== true));
     if (command) updatePending(command, unknown, scope);
     throw new CoreRequestError(data.error || '记录读取失败，当前状态未知。', res.status, command?.id, unknown);
   }

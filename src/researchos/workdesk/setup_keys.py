@@ -49,9 +49,10 @@ def status(service):
             pass
     codex_available = bool(executable and locations.user)
     chat = chat_connections(locations)
-    return {'ready': any(connected.values()) or any(chat.values()), 'account_available': codex_available,
+    chat_api = {p: service.ui_features.chats.api.describe(p)['ready'] for p in _PROVIDERS}
+    return {'ready': any(connected.values()) or any(chat.values()) or any(chat_api.values()), 'account_available': codex_available,
             'connections': connected, 'work_accounts': work, 'chat_accounts': chat,
-            'api_connections': api,
+            'api_connections': api, 'chat_api_connections': chat_api,
             'work_login': work_login_options(locations, codex_available)}
 
 

@@ -15,7 +15,7 @@ def selected(task):
     return snapshot
 
 
-def prompt(task,text,resume=False):
+def prompt(task,text,resume=False,*,mcp_label='已加载的 MCP'):
     data=selected(task)
     if task['spec'].get('plan_only'):
         text='【计划模式】本回合只分析与形成方案。请勿修改项目、运行会改变状态的操作或开始实施。\n\n'+text
@@ -25,7 +25,7 @@ def prompt(task,text,resume=False):
     if choices:
         text += '\n本次选用：'+'、'.join(ref['kind']+' '+ref['name'] for ref in choices)
         if any(ref['kind']=='mcp' for ref in choices):
-            text += '\n已加载的 MCP：'+'、'.join(item['label']+'（'+item['name']+'）' for item in data['mcp'])
+            text += '\n'+mcp_label+'：'+'、'.join(item['label']+'（'+item['name']+'）' for item in data['mcp'])
     return text
 
 

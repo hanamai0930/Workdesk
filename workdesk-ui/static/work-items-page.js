@@ -776,7 +776,7 @@
     const {route,capability,native_version:observed,delegation=[],lifecycle=[],command_catalog:commands}=evidence;
     const catalogSources={QWEN_QUERY_INIT:'Qwen Query 初始化回执',NATIVE_COMMAND_REGISTRY:'DeepSeek 原生命令注册表'};
     const packages=Object.entries(route?.local_packages||{}).map(([name,version])=>name+' '+version);
-    const loads={FROZEN:'已冻结预设，待原生回执',NATIVE_INPUT_ACCEPTED:'工作端已接收带预设的原生输入',
+    const loads={FROZEN:'已冻结预设，待原生回执',CONFIGURED:'已提交给官方工作端，未核实服务连通',NATIVE_INPUT_ACCEPTED:'工作端已接收带预设的原生输入',
       NATIVE_OBSERVED:'已收到原生目录回执',FAILED:'加载或执行失败',UNKNOWN:'回执状态待核对',UNRECORDED:'此尝试无可匹配的加载回执'};
     const components={INPUT_ACCEPTED:'工作端已接收明确的 Skill 输入',CONFIG_SUBMITTED:'已提交原生线程配置',
       NAME_IN_CATALOG:'原生 Skill 目录报告同名项',NAME_IN_COMMAND_CATALOG:'原生命令目录报告同名项',

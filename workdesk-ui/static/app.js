@@ -87,15 +87,17 @@ function updateSidebar(){
   if(window.WorkdeskWorkbench){window.WorkdeskWorkbench.renderSidebar();return;}
   if(state.data)legacyUpdateSidebar();
 }
-let routeRequest=0, connectionReturn='';
-const chatAccount=status=>['codex','deepseek','qwen'].find(id=>status.chat_accounts?.[id]);
-const chatApi=status=>status.api_connections?.deepseek??status.connections.deepseek;
+let routeRequest=0, connectionReturn='', chatEntry=null;
+const isConnect=target=>/^connect(?:\/|$)/.test(target);
+const chatAccount=status=>Object.keys(status?.chat_accounts||{}).find(id=>status.chat_accounts[id]);
+const chatApi=status=>Object.values(status?.chat_api_connections??status?.api_connections??{}).some(Boolean);
 async function route(){
   const request=++routeRequest;
   const originalRequest=location.hash.slice(1)||'chat';
   const requested=originalRequest.replace(/^settings\/partners(?=\/|$)/,'settings/accounts');
   if(requested!==originalRequest)history.replaceState(history.state,'','#'+requested);
   const localResources=/^resources(?:\/|$)/.test(requested);
+  if(requested!=='chat')chatEntry=null;
   let current=requested,connectionStatus=null,connectionRequired=false;
   if(window.WorkdeskReact?.connectionSetup){
     try{connectionStatus=await api('v1/connection-setup');}catch{/* Render the setup retry page. */}
@@ -105,14 +107,15 @@ async function route(){
     // without importing a daily login. Dispatch still validates real credentials.
     const developmentLocal=document.documentElement.dataset.workdeskChannel==='development'&&!!connectionStatus;
     const partnerAccess=/^settings\/accounts(?:\/|$)|^work\/partners(?:\/|$)/.test(requested);
-    if(connectionRequired&&!localResources&&!developmentLocal&&!partnerAccess){
+    if(connectionRequired&&!localResources&&!developmentLocal&&!partnerAccess&&!isConnect(requested)){
       document.body.dataset.connectionRequired='true';
-      if(requested!=='connect')connectionReturn=requested;
+      connectionReturn=requested;
       current='connect';
       history.replaceState(history.state,'','#connect');
     }else{
-      delete document.body.dataset.connectionRequired;
-      if(requested==='connect'&&state.route&&state.route!=='connect')connectionReturn=state.route;
+      if(connectionRequired&&!developmentLocal&&isConnect(requested))document.body.dataset.connectionRequired='true';
+      else delete document.body.dataset.connectionRequired;
+      if(isConnect(requested)&&state.route&&!isConnect(state.route))connectionReturn=state.route;
       if(!localResources&&!location.hash&&!chatApi(connectionStatus)&&!chatAccount(connectionStatus)){
         current='work';
         history.replaceState(history.state,'','#work');
@@ -141,11 +144,13 @@ async function route(){
     state.route='connect';state.generation++;
     window.WorkdeskWorkbench?.leave();
     window.WorkdeskControl?.leave();window.WorkdeskCollaboration?.leave();
-    window.WorkdeskReact.connectionSetup($('#main'),{routeKey:request,initialStatus:connectionStatus,onEnter:status=>{
-      let next=connectionReturn;
+    const initialMode=parts[1]==='chat-api'?'chat-api':parts[1]==='work-api'?'api':parts[1]==='web'?'chat':undefined;
+    window.WorkdeskReact.connectionSetup($('#main'),{routeKey:request,initialStatus:connectionStatus,initialMode,initialChatApi:parts[2],onEnter:(status,target)=>{
+      let next=target?'chat':connectionReturn;
+      chatEntry=target||null;
       connectionReturn='';
       const canChat=chatApi(status)||chatAccount(status);
-      if(!next||next==='connect'||(connectionRequired&&!canChat&&['home','chat'].includes(next))||
+      if(!next||isConnect(next)||(!target&&connectionRequired&&!canChat&&['home','chat'].includes(next))||
           (connectionRequired&&next==='work'&&!Object.values(status.connections).some(Boolean)&&canChat)){
         next=canChat?'chat':'work';
       }
@@ -156,8 +161,8 @@ async function route(){
   if(['chat','work','home','drafts','archives','schedules'].includes(parts[0])){
     state.route=current;state.generation++;
     window.WorkdeskControl?.leave();window.WorkdeskCollaboration?.leave();
-    await window.WorkdeskWorkbench.render(parts[0]==='home'?[]:parts.slice(1), connectionStatus?.connections,
-      connectionStatus&&!chatApi(connectionStatus)?chatAccount(connectionStatus):undefined);return;
+    const target=parts[0]==='chat'&&!parts[1]?chatEntry:null;chatEntry=null;
+    await window.WorkdeskWorkbench.render(parts[0]==='home'?[]:parts.slice(1),connectionStatus?.connections,target);return;
   }
   window.WorkdeskWorkbench?.leave();
   if(parts[0]==='settings')window.WorkdeskWorkbench?.renderSidebar();

@@ -6,7 +6,7 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
-from . import workspace
+from . import partner_task, workspace
 from .contracts import bounded_text,integer
 from .store import ACTIVE,UNKNOWN,digest,uid
 
@@ -51,18 +51,23 @@ class Planning:
             partners=projection(db)
             profiles=self.s.profiles.list(db)
             legacy={p['id'] for p in profiles}
-            tasks=[{'id':r['id'],'title':r['title'],'state':r['state'],
-                    'can_schedule':self.s.store.task(r['id'],db)['spec'].get('execution')!='partner_native',
-                    'reason':PARTNER_CONTINUATION_REASON if self.s.store.task(r['id'],db)['spec'].get('execution')=='partner_native' else ''}
-                   for r in self.s.work_records.catalog(db,True)['records'] if r['kind']=='task' and r['state']=='COMPLETED'
-                   and self.s.store.task(r['id'],db)['spec'].get('runtime_mode')=='official']
+            tasks=[]
+            for record in self.s.work_records.catalog(db,True)['records']:
+                if record['kind']!='task' or record['state']!='COMPLETED':continue
+                task=self.s.store.task(record['id'],db)
+                if task['spec'].get('runtime_mode')!='official' or task['spec'].get('work_mode')=='cooperative':continue
+                reason=''
+                try:self.eligible(db,task['id'])
+                except (ValueError,LookupError,OSError) as exc:reason=str(exc)
+                tasks.append({**{k:record[k] for k in ('id','title','state')},'can_schedule':not reason,'reason':reason})
             return {**self.cooperative.catalog(db),'schedules':self.c.all(db,'scheduled_job'),'goals':self.c.all(db,'goal_job'),'legacy':self.c.all(db,'ui_schedule'),
                     'fixed_schedules':self.s.work_flows.schedule_catalog(db),
                     'projects':self.s.work_records.projects(db),'tasks':tasks,
                     'providers':[{**p,'legacy_auto_goal_supported':p['id'] in legacy,'legacy_available':p['id'] in legacy,
-                                  'auto_goal_supported':False,'reason':PARTNER_CONTINUATION_REASON} for p in partners['partners']],
-                    'partner_connections':[{**c,'auto_continue_supported':False,'auto_goal_supported':False,
-                                            'continuation_reason':PARTNER_CONTINUATION_REASON,'reason':c.get('reason') or PARTNER_CONTINUATION_REASON}
+                                  'auto_goal_supported':any(c['provider']==p['id'] and c['available'] and partner_task.native_continuation(c) for c in partners['connections'])} for p in partners['partners']],
+                    'partner_connections':[{**c,'auto_continue_supported':c['available'] and partner_task.native_continuation(c),
+                                            'auto_goal_supported':c['available'] and partner_task.native_continuation(c),
+                                            'continuation_reason':'' if partner_task.native_continuation(c) else PARTNER_CONTINUATION_REASON}
                                            for c in partners['connections']],
                     'service_required':True,'wake_when_closed':False,'missed_policy':'SKIP_NO_CATCHUP','no_dispatch':True}
 
@@ -76,12 +81,30 @@ class Planning:
     def eligible(self,db,identity):
         t=self.s.store.task(identity,db);self.s.work_records.guard(db,'task',identity);self.s.monitor.guard(db,{'task_id':identity})
         if t['spec'].get('runtime_mode')!='official':raise ValueError('本页自动接续只用于官方独立工作；有限任务沿用原计划机制。')
-        if t['spec'].get('execution')=='partner_native':raise ValueError(PARTNER_CONTINUATION_REASON)
-        if not self.s.independent.describe(t['spec']['provider'])['native_resume']:raise ValueError('此工作端不支持当前原生接续。')
+        if t['spec'].get('work_mode')=='cooperative':raise ValueError('合作工作使用独立的合作重复计划。')
+        partner=partner_task.selected(t)
+        if partner and not partner_task.native_continuation(t['spec'].get('partner_connection') or {}):raise ValueError(PARTNER_CONTINUATION_REASON)
+        if not partner and not self.s.independent.describe(t['spec']['provider'])['native_resume']:raise ValueError('此工作端不支持当前原生接续。')
         a=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(identity,)).fetchone()
         a=self.s.store.attempt_row(a) if a else None
         if not a or a['state']!='COMPLETED' or not self.s.operations.exit_proved(a):raise ValueError('请先完成并核对工作回合。')
+        if partner:
+            self.s.resources.task_context(t,db)
+            partner_task.resume_reference(t,a)
         return t,a
+
+    def job_credential(self,db,row):
+        binding=row.get('partner_connection')
+        if not binding:return self.s.locations.credential_revision
+        from .partner_connections import check_frozen
+        current=check_frozen(db,binding)
+        if not partner_task.native_continuation(current):raise ValueError(PARTNER_CONTINUATION_REASON)
+        if row.get('task_id'):
+            task=self.s.store.task(row['task_id'],db)
+            attached=task['spec'].get('partner_connection') or {}
+            if any(attached.get(k)!=binding.get(k) for k in ('id','revision','account_id','auth_generation','secret_version','release_id','route','api_provider','model')):
+                raise ValueError('原任务的伙伴绑定已变化，计划未自动改用。')
+        return self.s.resources.context(current).credential_revision
 
     def schedule_save(self,db,p):
         if p.get('confirm') is not True:raise ValueError('请确认计划将自动发送工作消息。')
@@ -97,18 +120,27 @@ class Planning:
         if type(due) not in (int,float) or not now+2<=due<=now+366*86400:raise ValueError('首次执行须在未来一年内。')
         row={'id':uid(),'revision':uid(),'task_id':t['id'],'title':t['title'],'binding':t['spec_hash'],'attempt_id':a['id'],
              'frequency':frequency,'timezone':timezone,'wall_time':datetime.fromtimestamp(due,zone(self.s.locations,timezone)).strftime('%H:%M:%S'),'due':due,'max_runs':integer(p.get('max_runs',30),1,1000,'最多执行次数'),
-             'content':bounded_text(p.get('content'),'计划消息',4000),'credential_revision':self.s.locations.credential_revision,'state':'RUNNING','reason':'','runs':[],'created':now}
+             'content':bounded_text(p.get('content'),'计划消息',4000),'state':'RUNNING','reason':'','runs':[],'created':now}
+        if partner_task.selected(t):row['partner_connection']=t['spec']['partner_connection']
+        row['credential_revision']=self.job_credential(db,row)
         self.c.put(db,'scheduled_job',row);return {'job':row,'no_dispatch':True,'service_must_be_running':True}
 
     def goal_save(self,db,p):
         if p.get('confirm') is not True:raise ValueError('请确认目标会连续调用所选官方工作端。')
-        if any(k in p for k in ('connection_id','connection_revision','partner_connection','resource_selection','parser_reference')):
+        if any(k in p for k in ('partner_connection','resource_selection','parser_reference')) or bool(p.get('connection_id'))!=bool(p.get('connection_revision')):
             raise ValueError(PARTNER_CONTINUATION_REASON)
         project=p.get('project_id');self.s.file_inspector.project(db,project)
         provider=p.get('provider','codex')
         from .independent import SERVICES
-        if provider not in SERVICES:raise ValueError(PARTNER_CONTINUATION_REASON)
-        defaults=self.s.profiles.defaults(provider)
+        binding=None
+        if p.get('connection_id'):
+            from .partner_connections import selected
+            binding=selected(db,p['connection_id'],p['connection_revision'])
+            if binding['provider']!=provider or not partner_task.native_continuation(binding):raise ValueError(PARTNER_CONTINUATION_REASON)
+            defaults={'model':binding['model'],'effort':'default','tier':'standard'}
+        else:
+            if provider not in SERVICES:raise ValueError(PARTNER_CONTINUATION_REASON)
+            defaults=self.s.profiles.defaults(provider)
         from .native_permissions import choice
         access=choice(p.get('access'));checks=p.get('checks',[])
         if not isinstance(checks,list) or len(checks)>20:raise ValueError('完成文件检查最多20项。')
@@ -119,7 +151,9 @@ class Planning:
         row={'id':uid(),'revision':uid(),'title':bounded_text(p.get('title'),'目标名称',160),'goal':bounded_text(p.get('goal'),'目标',12000),
              'criteria':bounded_text(p.get('criteria'),'完成标准',8000),'project_id':project,'provider':provider,'config':defaults,'access':access,
              'max_rounds':integer(p.get('max_rounds',20),0,1000,'最多自动回合'),'checks':checks,'state':'PAUSED','reason':'尚未启动',
-             'credential_revision':self.s.locations.credential_revision,'rounds':[],'task_id':None,'created':time.time()}
+             'rounds':[],'task_id':None,'created':time.time()}
+        if binding:row['partner_connection']=binding
+        row['credential_revision']=self.job_credential(db,row)
         self.c.put(db,'goal_job',row);return {'job':row,'no_dispatch':True}
 
     def state(self,db,p):
@@ -127,16 +161,12 @@ class Planning:
         if state not in {'RUNNING','PAUSED','CANCELLED'} or row['state'] in {'COMPLETE','MODEL_COMPLETE_REVIEW','CANCELLED'}:raise ValueError('此状态不能继续操作。')
         if state=='RUNNING':
             if p.get('confirm') is not True:raise ValueError('请明确确认自动运行。')
-            if row.get('partner_connection') or row.get('connection_id'):
-                raise ValueError(PARTNER_CONTINUATION_REASON)
             if row.get('task_id'):
-                if self.s.store.task(row['task_id'],db)['spec'].get('execution')=='partner_native':
-                    raise ValueError(PARTNER_CONTINUATION_REASON)
                 self.s.monitor.guard(db,{'task_id':row['task_id']});self.s.work_records.guard(db,'task',row['task_id'])
             if kind=='scheduled_job' and row['due']<=time.time():
                 if row['frequency']=='once':raise ValueError('一次计划已错过，请新建执行时间，不补发。')
                 row['due']=next_due(self.s.locations,row,time.time())
-        if state=='RUNNING':row['credential_revision']=self.s.locations.credential_revision
+        if state=='RUNNING':row['credential_revision']=self.job_credential(db,row)
         row.update(state=state,revision=uid(),reason='' if state=='RUNNING' else '仅暂停后续派发；已运行回合请在运行监控中停止。')
         self.c.put(db,kind,row);return {'job':row,'no_dispatch':True}
 
@@ -146,9 +176,7 @@ class Planning:
     def advance(self,db,p):
         kind,row=self.checked(db,p)
         if row['state']!='RUNNING':return {'no_dispatch':True}
-        if row.get('partner_connection') or row.get('connection_id'):
-            raise ValueError(PARTNER_CONTINUATION_REASON)
-        if row.get('credential_revision')!=self.s.locations.credential_revision:raise ValueError('账号引用已变化，请核对后重新确认自动计划。')
+        if row.get('credential_revision')!=self.job_credential(db,row):raise ValueError('账号引用已变化，请核对后重新确认自动计划。')
         if kind=='scheduled_job' and row['due']>time.time():return {'no_dispatch':True}
         if kind=='scheduled_job' and time.time()-row['due']>300:
             row.setdefault('skipped',[]).append(row['due'])
@@ -158,7 +186,6 @@ class Planning:
         scope=None
         if row.get('task_id'):
             task=self.s.store.task(row['task_id'],db);self.s.monitor.guard(db,{'task_id':task['id']});self.s.work_records.guard(db,'task',task['id'])
-            if task['spec'].get('execution')=='partner_native':raise ValueError(PARTNER_CONTINUATION_REASON)
             a=db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started DESC LIMIT 1',(task['id'],)).fetchone();a=self.s.store.attempt_row(a)
             worker=self.s.workers.get(a['id'])
             if a['state'] in ACTIVE or worker and worker['thread'].is_alive():return {'no_dispatch':True}
@@ -184,7 +211,10 @@ class Planning:
         if kind=='goal_job' and row['max_rounds'] and len(row['rounds'])>=row['max_rounds']:raise ValueError('已达到目标任务的自动回合上限，未继续派发。')
         if kind=='scheduled_job':payload={**scope,'goal':row['content']}
         elif scope:payload={**scope,'goal':self.prompt(row)}
-        else:payload={'project_id':row['project_id'],'provider':row['provider'],**row['config'],'access':row['access'],'goal':self.prompt(row)}
+        else:
+            payload={'project_id':row['project_id'],'provider':row['provider'],**row['config'],'access':row['access'],'goal':self.prompt(row)}
+            if row.get('partner_connection'):
+                binding=row['partner_connection'];payload.update(connection_id=binding['id'],connection_revision=binding['revision'])
         launch=self.s.file_inspector.send(db,payload)
         if kind=='goal_job' and not scope:db.execute('UPDATE tasks SET title=? WHERE id=?',(row['title'],launch['task_id']))
         row.update(task_id=launch['task_id'],attempt_id=launch['launch_attempt'],binding=launch['spec_hash'],revision=uid(),reason='')

@@ -559,6 +559,8 @@ export function SettingsPage(props: SettingsProps) {
               unavailableLabel="原官网当前不可用，请重新选择"
               onChange={provider=>void save('chatDefaults',{...chat,provider})} disabled={blocked || !preferences.chatWebProviders?.length}/>}
           </> : <Row label="启动默认渠道"><span>DeepSeek API</span></Row>}
+          <Row label="API Chat Key"><LinkButton href={'#connect/chat-api/'+encodeURIComponent(apiProvider)}>管理 API Key</LinkButton></Row>
+          <Row label="官网登录"><LinkButton href="#connect/web">管理官网 Chat</LinkButton></Row>
           <Row label="打开聊天"><LinkButton href="#chat">打开 Chat</LinkButton></Row>
         </Group>
         <Group title="聊天记录"><Row label="历史与归档"><LinkButton href="#records">查看记录</LinkButton></Row></Group>

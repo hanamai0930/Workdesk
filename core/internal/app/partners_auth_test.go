@@ -128,6 +128,72 @@ func TestPartnerLoginProgressPreservesStopAndAuthentication(t *testing.T) {
 	}
 }
 
+// Pin the actual DeepSeek sequence: committing yields the result first; a
+// second official success notification arrives before the worker has exited.
+func TestPartnerLoginFinalAuthNotificationPreservesResult(t *testing.T) {
+	a, _, run := officialLoginFixture(t, "RUNNING")
+	rid := str(run["id"])
+	for _, event := range []map[string]any{
+		{"type": "result", "verification": "OFFICIAL_DSH_PROFILE_READY"},
+		{"type": "auth_status", "verification": "OFFICIAL_DSH_SIGN_IN_SUCCEEDED"},
+	} {
+		event["run_id"], event["partner_id"] = rid, run["partner_id"]
+		event["auth_state"], event["authenticated"], event["fact_scope"] = "AUTHENTICATED", true, "OFFICIAL_ACCOUNT_RECEIPT"
+		if err := a.partnerEvent(rid, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := readPartnerObject(t, a, "run", rid)
+	if m["state"] != "RESULT_RECEIVED" || m["result"].(map[string]any)["verification"] != "OFFICIAL_DSH_PROFILE_READY" ||
+		m["auth_observation"].(map[string]any)["verification"] != "OFFICIAL_DSH_SIGN_IN_SUCCEEDED" {
+		t.Fatal("the final auth notification discarded the already received result")
+	}
+}
+
+func TestPartnerReconcileUsesOnlyExactOfficialLoginEvidence(t *testing.T) {
+	for _, scenario := range []string{"orphaned", "local_tracking_closed", "stopped", "unproved_exit", "different_result", "different_release"} {
+		t.Run(scenario, func(t *testing.T) {
+			a, accountID, run := officialLoginFixture(t, "RUNNING")
+			rid := str(run["id"])
+			if err := a.partnerEvent(rid, map[string]any{"type": "result", "run_id": rid, "partner_id": run["partner_id"],
+				"auth_state": "AUTHENTICATED", "authenticated": true, "fact_scope": "OFFICIAL_ACCOUNT_RECEIPT"}); err != nil {
+				t.Fatal(err)
+			}
+			run = readPartnerObject(t, a, "run", rid)
+			run["state"] = "ORPHANED_UNKNOWN"
+			run["owned_process"] = map[string]any{"exit_confirmed": true}
+			switch scenario {
+			case "local_tracking_closed":
+				run["state"], run["explicit_local_tracking_closed"] = "STOPPED_RUNTIME", true
+			case "stopped":
+				run["stop_requested"] = true
+			case "unproved_exit":
+				run["owned_process"] = map[string]any{"exit_confirmed": false}
+			case "different_result":
+				run["result"].(map[string]any)["run_id"] = "other-run"
+			case "different_release":
+				run["auth_observation"].(map[string]any)["release_id"] = "other-release"
+			}
+			putPartnerFixture(t, a, "run", run)
+			value, err := a.partnerCommand(map[string]any{"id": ID(), "kind": "partner.reconcile", "payload": map[string]any{"run_id": rid, "resolution": "accept_received_result"}})
+			accepted := scenario == "orphaned" || scenario == "local_tracking_closed"
+			if accepted {
+				if err != nil || value.(map[string]any)["receipt"].(map[string]any)["state"] != "COMPLETED" || a.partnerBusy() {
+					t.Fatalf("exact login outcome not closed: %v %v", value, err)
+				}
+				if readPartnerObject(t, a, "account", accountID)["auth_state"] != "AUTHENTICATED" {
+					t.Fatal("closing tracking changed existing authentication")
+				}
+			} else if err == nil || readPartnerObject(t, a, "run", rid)["state"] != "ORPHANED_UNKNOWN" {
+				t.Fatal("unsupported recovery changed original state")
+			}
+			if len(a.partnerProcesses) != 0 {
+				t.Fatal("a recorded result must not replay login")
+			}
+		})
+	}
+}
+
 func TestPartnerLoginInputDoesNotPersistOrReplaySecret(t *testing.T) {
 	a, _, run := officialLoginFixture(t, "WAITING_INPUT")
 	rid, requestID := str(run["id"]), "login-code-exact"

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import uuid
 
 from .providers import validate_binding
@@ -66,6 +67,25 @@ def _file_uri(path: Path):
 
 def _module_uri(name: str):
     return _file_uri(Path(__file__).with_name(name))
+
+
+def scene_mcp(config, cwd):
+    from ..capabilities import mcp_config
+    rows = config.get('scene_mcp') or []
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise ValueError('冻结 MCP 清单不可用，未派发。')
+    values = {}
+    if rows and config['partner_id'] not in {'codex', 'deepseek', 'qwen'}:
+        raise ValueError('当前官方工作端未接入每任务 MCP。')
+    for row in rows:
+        name = row['name']
+        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', name) or name in values:
+            raise ValueError('冻结 MCP 名称无效或重复，未派发。')
+        entry = mcp_config(row['config'])
+        if config['partner_id'] == 'qwen' and entry['transport'] == 'stdio' and Path(entry['cwd']).resolve() != Path(cwd).resolve():
+            raise ValueError('Qwen 本机 MCP 的工作目录与该项目不同，未派发。')
+        values[name] = entry
+    return values
 
 
 def _deepseek_web_observer(home: Path):
@@ -321,5 +341,15 @@ def build_launch(config: dict) -> LaunchSpec:
                                    {"id": "approval", "config": {"policy": native["approval"]}},
                                    {"id": "permission", "config": {"defaultPreset": native["preset"]}}]))
         argv += ["--patch", str(overlay)]
+        servers = scene_mcp(config, workspace)
+        if servers:
+            entries = []
+            for name, cfg in servers.items():
+                native_cfg = {'serverName': name, **cfg}
+                if native_cfg['transport'] == 'http':native_cfg['transport'] = 'streamable-http'
+                entries.append({'id': 'workdesk-' + name, 'name': '@deepseek-ai/dsh-mcp-client', 'config': native_cfg})
+            overlay = home / '.dsh/.workdesk/scene-mcp.patch.yml'
+            _write(overlay, json.dumps([{'insert': entries}], ensure_ascii=False))
+            argv += ['--patch', str(overlay)]
     return LaunchSpec(argv, env, str(workspace), protocol, partner, route, mode,
                       "OFFICIAL_NATIVE_RUNTIME", limitations)

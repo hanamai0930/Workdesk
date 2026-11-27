@@ -19,7 +19,7 @@ import time
 import uuid
 
 from .gateway import RunGateway
-from .launch import build_launch
+from .launch import build_launch, scene_mcp
 from .permissions import checked as checked_permission, apply_acp, validate_codex_receipt
 from .auth import LoginOutput, redact_login_chunk
 from .providers import validate_binding
@@ -410,11 +410,22 @@ class PartnerWorker:
             self.completed = True
             self.done.set()
             return
+        servers = scene_mcp(self.config, self.spec.cwd)
+        mcp_servers = [({'type': 'http', 'name': name, 'url': cfg['url'], 'headers': []}
+                        if cfg['transport'] == 'http' else {'name': name, 'command': cfg['command'], 'args': cfg['args'], 'env': []})
+                       for name, cfg in servers.items()]
+        if mcp_servers and any(server.get('type') == 'http' for server in mcp_servers) and not (initialized.get('agentCapabilities') or {}).get('mcpCapabilities', {}).get('http'):
+            raise NativeRejected('官方 ACP 未声明 HTTP MCP 支持；未发送消息')
         if self.config.get("resume"):
-            result = self.rpc.request("session/load", {"sessionId": self.session_id, "cwd": self.spec.cwd, "mcpServers": []})
+            if not (initialized.get("agentCapabilities") or {}).get("loadSession"):
+                raise NativeRejected("官方工作端未声明原生会话加载能力；未新建会话或发送消息")
+            result = self.rpc.request("session/load", {"sessionId": self.session_id, "cwd": self.spec.cwd, "mcpServers": mcp_servers})
+            if result.get("sessionId", self.session_id) != self.session_id:
+                raise NativeRejected("官方 ACP 返回不同会话；未发送消息")
         else:
-            result = self.rpc.request("session/new", {"cwd": self.spec.cwd, "mcpServers": []})
+            result = self.rpc.request("session/new", {"cwd": self.spec.cwd, "mcpServers": mcp_servers})
             self.session_id = result["sessionId"]
+        self._mcp_configured(servers, 'OFFICIAL_ACP_SESSION_CONFIGURATION')
         permission = self.permission or checked_permission(self.config)
         if permission["native"]["transport"] == "acp":
             receipt = apply_acp(self.rpc, result, self.session_id, permission)
@@ -479,14 +490,21 @@ class PartnerWorker:
         for key in ("serviceTier", "personality"):
             if key in options:
                 params[key] = options[key]
+        servers = scene_mcp(self.config, self.spec.cwd)
+        if servers:
+            params['config'] = {'mcp_servers.'+name:({'url':cfg['url']} if cfg['transport']=='http' else {k:cfg[k] for k in ('command','args','cwd')})
+                                for name,cfg in servers.items()}
         permission = self.permission or checked_permission(self.config)
         params.update(permission["native"]["thread"])
         if self.config.get("resume"):
             params["threadId"] = self.session_id
         result = self.rpc.request("thread/resume" if self.config.get("resume") else "thread/start", params)
         validate_codex_receipt(result, permission)
+        if self.config.get("resume") and result["thread"]["id"] != self.session_id:
+            raise NativeRejected("Codex 恢复回执与原线程不同；未发送消息")
         self.emit(type="event", kind="native_permission_applied", resolved_permission=permission, source="OFFICIAL_THREAD_CONFIGURATION_RECEIPT")
         self.thread_id = self.session_id = result["thread"]["id"]
+        self._mcp_configured(servers, 'OFFICIAL_CODEX_THREAD_CONFIGURATION')
         self.emit(type="event", kind="native_session_bound", native=result)
         result = self.rpc.request("turn/start", {"threadId": self.thread_id,
             "input": [{"type": "text", "text": self.config.get("prompt", "")}], "model": self.config.get("model")})
@@ -550,7 +568,10 @@ class PartnerWorker:
             self.done.set()
             return
         if self.config.get("resume"):
-            self.rpc.request("session/resume", {"sessionId": self.session_id})
+            restored = self.rpc.request("session/resume", {"sessionId": self.session_id})
+            if restored.get("sessionId", self.session_id) != self.session_id:
+                raise NativeRejected("DeepSeek 恢复回执与原会话不同；未发送消息")
+        self._mcp_configured(scene_mcp(self.config, self.spec.cwd), 'OFFICIAL_DEEPSEEK_SDK_PROFILE_PATCH')
         query = self.rpc.request("session/query", {"sessionId": self.session_id,
             "contentBlocks": [{"type": "text", "text": self.config.get("prompt", "")}]}, timeout=86400)
         self.emit(type="event", kind="native_prompt_receipt", native=query)
@@ -585,6 +606,10 @@ class PartnerWorker:
         self.rpc.request("session/subscribe", {"sessionId": self.session_id, "deliveryKind": "desktop-continuous", "includeSnapshot": False})
         self.rpc.request("session/send", {"sessionId": self.session_id, "content": self.config.get("prompt", ""), "inputId": str(uuid.uuid4())})
         self.done.wait()
+
+    def _mcp_configured(self, servers, source):
+        if servers:
+            self.emit(type='event', kind='native_scene_mcp_configured', source=source, servers=list(servers), connection_state='NOT_ATTESTED')
 
     def _finish(self, **extra):
         if self.stop_requested.is_set() or self.completed:

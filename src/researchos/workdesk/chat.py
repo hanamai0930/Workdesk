@@ -81,7 +81,7 @@ class ChatService:
         route=p.get('route','web')
         from .chat_api import API_MODELS
         if route not in {'web','api'} or route=='api' and provider not in API_MODELS:raise ValueError('当前仅接入 DeepSeek 和 Qwen API 聊天。')
-        if route=='api' and provider=='qwen':self.api.secret(provider)
+        if route=='api' and provider=='qwen':self.api.secret(provider,db)
         row=self.new_record(provider,route,bounded_text(p.get('title') or '新聊天','名称',160))
         self.c.put(db,'ui_chat',row)
         return {'chat':row,'no_dispatch':True,'api_billing':False}

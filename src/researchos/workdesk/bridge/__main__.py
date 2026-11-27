@@ -183,7 +183,34 @@ class Legacy:
             if type(pid) is not int or pid <= 0:
                 raise ValueError('进程核对需要准确PID。')
             return process_identity(pid)
-        if method in {'partner.secret.store', 'partner.secret.read'}:
+        if method in {'partner.secret.same', 'partner.secret.valid-chat', 'partner.secret.legacy-ready'}:
+            import hmac
+            from ..chat_api_credentials import read_key
+            from ..paths import legacy
+            provider = params.get('provider')
+            if provider not in ('deepseek','qwen'):
+                raise ValueError('所选普通 Chat API 厂商无效。')
+            if method == 'partner.secret.legacy-ready':
+                secret = self.service.profiles.credentials().get(provider)
+                return {'available': bool(secret and (provider != 'qwen' or secret.billing_kind == 'general_api'))}
+            raw = read_key(self.service.locations, params['account_id'], params['version'])
+            if method == 'partner.secret.same':
+                source = read_key(self.service.locations, params['source_account_id'], params['source_version'])
+                return {'matches': hmac.compare_digest(raw, source)}
+            key = raw.decode('utf-8')
+            reader = legacy(self.service.locations, 'provider-harness', 'credentials')
+            secret = reader.credential(provider, reader.KEY_NAMES[provider][0], key)
+            return {'available': bool(key and not any(c.isspace() for c in key) and (provider != 'qwen' or secret.billing_kind == 'general_api'))}
+        if method == 'partner.secret.reuse-legacy':
+            provider = params.get('provider')
+            if provider not in ('deepseek','qwen'):
+                raise ValueError('所选普通 Chat API 厂商无效。')
+            secret = self.service.profiles.credentials().get(provider)
+            if secret is None or (provider == 'qwen' and secret.billing_kind != 'general_api'):
+                raise ValueError('尚未配置此厂商普通 Chat API Key。')
+            return self.dispatch('partner.secret.store', {'account_id':params['account_id'], 'version':params['version'],
+                                                           'key':secret.reveal_for_provider()})
+        if method in {'partner.secret.store', 'partner.secret.read', 'partner.secret.matches', 'partner.secret.reuse'}:
             import uuid
             from ..credential_vault import encode, decode
             from ..paths import atomic_bytes
@@ -193,7 +220,28 @@ class Legacy:
             secret_root.mkdir(parents=True, exist_ok=True)
             path = secret_root / (identity + '-' + version + '.vault')
             from ..workspace import plain
-            plain(path, self.service.locations.user, missing=method == 'partner.secret.store')
+            plain(path, self.service.locations.user, missing=method in {'partner.secret.store', 'partner.secret.reuse'})
+            if method == 'partner.secret.reuse':
+                import hmac
+                source_id = str(uuid.UUID(params['source_account_id']))
+                source_version = str(uuid.UUID(params['source_version']))
+                source = secret_root / (source_id + '-' + source_version + '.vault')
+                plain(source, self.service.locations.user)
+                sealed = source.read_bytes()
+                # Copy the protected envelope directly; no cleartext crosses
+                # the bridge and changing an alias cannot replace another key.
+                if path.exists():
+                    if not hmac.compare_digest(decode(path.read_bytes()), decode(sealed)):
+                        raise ValueError('凭据引用已存在，保留原版本。')
+                else:
+                    atomic_bytes(path, sealed)
+                return {'stored': True, 'version': version}
+            if method == 'partner.secret.matches':
+                import hmac
+                key = params.get('key')
+                if not isinstance(key,str) or len(key) > 8192:
+                    raise ValueError('请输入有效 API Key。')
+                return {'matches': hmac.compare_digest(decode(path.read_bytes()), key.strip().encode('utf-8'))}
             if method == 'partner.secret.store':
                 key = params.get('key')
                 if not isinstance(key, str) or not key.strip() or len(key) > 8192 or any(c in key for c in '\r\n\0'):

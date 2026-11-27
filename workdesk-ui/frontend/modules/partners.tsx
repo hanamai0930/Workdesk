@@ -56,14 +56,17 @@ function OfficialLoginLink({provider,identity,url}:{provider:string;identity:str
  </div>;
 }
 
-export function SettingsPartners({initialPartner,mode='all',onReady,refreshRevision=0}:{initialPartner?:string;mode?:'all'|'work'|'api';onReady?:(ready:boolean)=>void;refreshRevision?:number}){
+export function SettingsPartners({initialPartner,mode='all',onReady,refreshRevision=0,chatApiConnections,onApiChange}:{initialPartner?:string;mode?:'all'|'work'|'api';onReady?:(ready:boolean)=>void;refreshRevision?:number;chatApiConnections?:Partial<Record<string,boolean>>;onApiChange?:()=>void}){
  const [data,setData]=useState<PartnersSnapshot>(empty),[partnerId,setPartnerId]=useState(initialPartner||'codex'),[accountId,setAccountId]=useState(''),[releaseId,setReleaseId]=useState('');
  const [apiProviderId,setApiProviderId]=useState('deepseek');
+ const [localChatApi,setLocalChatApi]=useState<Partial<Record<string,boolean>>>({});
+ useEffect(()=>{if(mode==='work'||chatApiConnections)return;const controller=new AbortController();void coreClient.request('v1/connection-setup',{signal:controller.signal}).then(value=>{if(!controller.signal.aborted)setLocalChatApi(value.chat_api_connections||{});}).catch(()=>{});return()=>controller.abort();},[mode,chatApiConnections,refreshRevision]);
  const [newLabel,setNewLabel]=useState(''),[apiKey,setApiKey]=useState(''),[site,setSite]=useState(''),[reply,setReply]=useState<Record<string,string>>({});
  const [busy,setBusy]=useState(false),[loaded,setLoaded]=useState(false),[notice,setNotice]=useState(''),[error,setError]=useState(''),[remove,setRemove]=useState<PartnerRelease|null>(null);
  const [installRequest,setInstallRequest]=useState<string|null>(null);
  const [closingLogin,setClosingLogin]=useState<string|null>(null);
- const [startingLogin,setStartingLogin]=useState(false);const loginSequence=useRef(false);
+ const [startingLogin,setStartingLogin]=useState(false),[savingApi,setSavingApi]=useState(false);
+ const loginSequence=useRef(false),apiSequence=useRef(false);
  const [uncertain,setUncertain]=useState(()=>coreClient.uncertainCommands());const mounted=useRef(false),lock=useRef(false),reads=useRef(coreClient.createReadScope());
  const refresh=useCallback(async()=>{const read=reads.current.begin();try{const value=await coreClient.request<PartnersSnapshot>('v2/partners',{signal:read.signal});if(mounted.current&&read.isCurrent()){setData(value);setLoaded(true);}}catch(e){if(mounted.current&&read.isCurrent())setError(e instanceof Error?e.message:'暂时无法读取账号状态。');}},[]);
  useEffect(()=>{let active=true;mounted.current=true;void(async()=>{try{await coreClient.loadIdentity();if(active){setUncertain(coreClient.uncertainCommands());await refresh();}}catch(e){if(active)setError(e instanceof Error?e.message:'暂时无法连接本地服务。');}})();return()=>{active=false;mounted.current=false;reads.current.cancel();};},[refresh]);
@@ -74,6 +77,7 @@ export function SettingsPartners({initialPartner,mode='all',onReady,refreshRevis
  const partner=data.partners.find(p=>p.id===partnerId)||data.partners[0],id=partner?.id||partnerId;
  const apiProviders=data.api_providers||[],apiProvider=apiProviders.find(provider=>provider.id===apiProviderId)||apiProviders.find(provider=>provider.id==='deepseek')||apiProviders[0];
  const selectedApiProvider=apiProvider?.id||'',compatibility=apiProvider?.compatibility[id],apiSupported=compatibility?.state==='supported';
+ const readyChatKey=(chatApiConnections||localChatApi)[selectedApiProvider]===true;
  const official=data.accounts.filter(a=>a.partner_id===id&&a.kind==='official_login'),api=data.accounts.find(a=>a.partner_id===id&&['api','deepseek_api'].includes(a.kind)&&(a.api_provider||(a.kind==='deepseek_api'?'deepseek':''))===selectedApiProvider);
  const account=official.find(a=>a.id===accountId)||official[0],releases=data.components.filter(r=>(r.partner_id||r.component_id)===id),ready=releases.filter(usable);
  const connections=data.connections.filter(c=>c.partner_id===id),bound=connections.filter(c=>c.route==='account'&&c.account_id===account?.id).map(c=>c.release_id);
@@ -98,7 +102,27 @@ export function SettingsPartners({initialPartner,mode='all',onReady,refreshRevis
   try{let target:string|undefined=account?.id;if(!target){const value=await perform('account.create',{partner_id:id,label:`${partner?.name} 账号`,kind:'official_login',auth_options:authOptions},'账号已添加。');target=value?.account_id;if(!target)return;setAccountId(target);}const current=connections.find(c=>c.account_id===target&&c.route==='account');if(!current||current.release_id!==release.id||current.state==='DISABLED'){if(!await saveConnection(target,'account',release))return;}await perform('account.login',{account_id:target,release_id:release.id,auth_options:authOptions},'正在准备官方登录页面，请留意下方进度。');}
   finally{loginSequence.current=false;if(mounted.current)setStartingLogin(false);}
  }
- async function saveKey(){const key=apiKey.trim();if(!key||blocked||!apiProvider||!apiSupported)return;setApiKey('');let target:string|undefined=api?.id;if(!target){const value=await perform('account.create',{partner_id:id,label:`${partner?.name} · ${apiProvider.name}`,kind:'api',api_provider:selectedApiProvider},'API 已添加。');target=value?.account_id;if(!target)return;}if(!await perform('account.set-key',{account_id:target,key},'API Key 已保存。'))return;const current=connections.find(c=>c.account_id===target&&c.route==='api');if(release&&(!current||current.release_id!==release.id||current.state==='DISABLED'))await saveConnection(target,'api',release);}
+ async function saveKey(reuseChat=false){
+  const key=apiKey.trim();if((reuseChat?(!readyChatKey||api?.key_ready===true):!key)||blocked||apiSequence.current||!apiProvider||!apiSupported)return;
+  apiSequence.current=true;setSavingApi(true);setApiKey('');
+  try{
+   let target:string|undefined=api?.id;
+   if(!target){const value=await perform('account.create',{partner_id:id,label:`${partner?.name} · ${apiProvider.name}`,kind:'api',api_provider:selectedApiProvider},'API 已添加。');target=value?.account_id;if(!target)return;}
+   if(reuseChat){
+    setError('');setNotice('');
+    try{
+     const result=await coreClient.request<{provider:string;ready:boolean}>('v1/chat-api-key/reuse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:crypto.randomUUID(),provider:selectedApiProvider,account_id:target})});
+     if(!mounted.current)return;
+     if(result.provider!==selectedApiProvider||result.ready!==true){setError('未确认已共用 Key，请刷新核对。');return;}
+     setNotice('已共用同厂商的 Chat API Key。');await refresh();
+    }catch(e){if(mounted.current)setError(e instanceof Error?e.message:'无法共用 Key，请核对状态。');return;}
+    finally{if(mounted.current)setUncertain(coreClient.uncertainCommands());}
+   }else if(!await perform('account.set-key',{account_id:target,key},'API Key 已保存。'))return;
+   const current=connections.find(c=>c.account_id===target&&c.route==='api');
+   if(release&&(!current||current.state==='DISABLED'))await saveConnection(target,'api',release);
+   if(mounted.current)onApiChange?.();
+  }finally{apiSequence.current=false;if(mounted.current)setSavingApi(false);}
+ }
  async function removeRelease(target:PartnerRelease){if(removalBlocked||blocked)return;for(const current of connections.filter(c=>c.release_id===target.id&&c.state!=='DISABLED'))if(!await perform('connection.disable',{connection_id:current.id},'正在停用此版本的连接。'))return;if(await perform('component.remove',{release_id:target.id,allow_restore_download:true},'已提交卸载。'))setRemove(null);}
  useEffect(()=>{if(!installRequest||busy||!loaded||uncertain.length)return;const operation=data.operations.find(op=>op.id===installRequest&&op.partner_id===id);if(operation?.state==='COMPLETED'&&operation.result?.id){const target=ready.find(r=>r.id===operation.result?.id);if(target){setInstallRequest(null);void useRelease(target);}}else if(operation&&terminal(operation.state))setInstallRequest(null);},[installRequest,data,busy,loaded,uncertain.length,id]);
  const canContinueLogin=active&&loginState!=='STOP_REQUESTED';
@@ -125,18 +149,20 @@ export function SettingsPartners({initialPartner,mode='all',onReady,refreshRevis
     {!active&&!unsupported(partner.account_support)&&<details className="wd-partners-secondary"><summary>添加账号</summary><form className="wd-partners-add-account" onSubmit={event=>{event.preventDefault();if(newLabel.trim())void perform('account.create',{partner_id:id,label:newLabel.trim(),kind:'official_login',auth_options:authOptions},'账号已添加。').then(value=>{if(value?.account_id){setAccountId(value.account_id);setNewLabel('');}});}}><label>账号名称<Input aria-label="新账号名称" value={newLabel} onChange={event=>setNewLabel(event.currentTarget.value)} disabled={blocked}/></label><Button type="submit" variant="outline" disabled={blocked||!newLabel.trim()}>添加</Button></form></details>}
    </Panel>);
  return <div className={mode==='all'?'wd-partners':'wd-connect-form wd-partners-embedded'} data-partners-panel>
-  <div className="wd-settings-section-header wd-partners-toolbar"><label className="wd-partners-endpoint">{mode==='all'?'官方工作端':'工作端'}<NativeSelect aria-label={mode==='all'?'官方工作端':'工作端'} value={id} disabled={busy||!loaded} onChange={event=>setPartnerId(event.currentTarget.value)}>{data.partners.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</NativeSelect></label>{mode==='all'&&<Button variant="outline" className="wd-settings-button" disabled={busy} onClick={()=>void refresh()}><RefreshCw size={14}/>刷新状态</Button>}</div>
+  <div className="wd-settings-section-header wd-partners-toolbar"><label className="wd-partners-endpoint">{mode==='all'?'官方工作端':'工作端'}<NativeSelect aria-label={mode==='all'?'官方工作端':'工作端'} value={id} disabled={busy||savingApi||!loaded} onChange={event=>setPartnerId(event.currentTarget.value)}>{data.partners.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</NativeSelect></label>{mode==='all'&&<Button variant="outline" className="wd-settings-button" disabled={busy} onClick={()=>void refresh()}><RefreshCw size={14}/>刷新状态</Button>}</div>
   {notice&&<p role="status" className="wd-partners-feedback">{notice}</p>}{error&&<p role="alert" className="wd-partners-error">{error}</p>}
   {uncertain.length>0&&<div className="wd-partners-uncertain" role="alert"><p>有操作回执待核对。</p>{uncertain.map(item=><Button key={item.id} variant="outline" disabled={busy} onClick={()=>void receipt(item.id)}>核对原操作 · {item.id.slice(0,8)}</Button>)}</div>}
   {!loaded&&<p role="status">正在读取账号…</p>}
   {partner&&<>
    {mode!=='api'&&officialPanel()}
-   {mode!=='work'&&<Panel title="API" plain={mode!=='all'}>
+   {mode!=='work'&&<Panel title="Work API" plain={mode!=='all'}>
     <form className="wd-partners-api-form" onSubmit={event=>{event.preventDefault();void saveKey();}}>
-     <label>大模型 API<NativeSelect aria-label="大模型 API" value={selectedApiProvider} disabled={blocked||!apiProviders.length} onChange={event=>{setApiKey('');setApiProviderId(event.currentTarget.value);}}>{!apiProviders.length&&<option value="">API 列表暂不可用</option>}{apiProviders.map(provider=><option key={provider.id} value={provider.id}>{provider.name}</option>)}</NativeSelect></label>
+     <label>大模型 API<NativeSelect aria-label="大模型 API" value={selectedApiProvider} disabled={blocked||savingApi||!apiProviders.length} onChange={event=>{setApiKey('');setApiProviderId(event.currentTarget.value);}}>{!apiProviders.length&&<option value="">API 列表暂不可用</option>}{apiProviders.map(provider=><option key={provider.id} value={provider.id}>{provider.name}</option>)}</NativeSelect></label>
      {!apiSupported&&<p className="wd-partners-note">{compatibility?.reason||'此 API 暂不支持当前工作端。'}</p>}
-     <label>API Key<Input aria-label="API Key" type="password" autoComplete="off" spellCheck={false} value={apiKey} disabled={blocked||!apiSupported} onChange={event=>setApiKey(event.currentTarget.value)}/></label>
-     <div className="wd-partners-api-footer"><Status state={apiConnection?.state==='VERIFIED'?'VERIFIED':api?.key_ready?'SAVED_UNVERIFIED':'UNKNOWN'} text={apiConnection?.state==='VERIFIED'?'已连接':api?.key_ready?'Key 已保存':'未设置 Key'}/><Button type="submit" disabled={blocked||!apiKey.trim()||!apiSupported}>保存</Button></div>
+     <label>API Key<Input aria-label="API Key" type="password" autoComplete="off" spellCheck={false} value={apiKey} disabled={blocked||savingApi||!apiSupported} onChange={event=>setApiKey(event.currentTarget.value)}/></label>
+     <div className="wd-partners-api-footer"><Status state={apiConnection?.state==='VERIFIED'?'VERIFIED':api?.key_ready?'SAVED_UNVERIFIED':'UNKNOWN'} text={apiConnection?.state==='VERIFIED'?'已连接':api?.key_ready?'Key 已保存':'未设置 Key'}/><Button type="submit" disabled={blocked||savingApi||!apiKey.trim()||!apiSupported}>保存</Button></div>
+     {apiSupported&&readyChatKey&&api?.key_ready!==true&&<Button type="button" variant="outline" disabled={blocked||savingApi} onClick={()=>void saveKey(true)}>使用 Chat 的 Key</Button>}
+     {apiSupported&&api?.key_ready===true&&release&&(!apiConnection||apiConnection.state==='DISABLED')&&!savingApi&&<Button type="button" variant="outline" disabled={blocked} onClick={()=>void saveConnection(api.id,'api',release).then(saved=>{if(saved)onApiChange?.();})}>启用此 Work 连接</Button>}
     </form>
    </Panel>}
    {mode==='all'&&<details className="wd-partners-management"><summary>工作端管理</summary><div className="wd-partners-management-body">

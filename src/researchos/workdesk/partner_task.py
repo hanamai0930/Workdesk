@@ -10,6 +10,33 @@ import time
 from .store import ACTIVE, UNKNOWN
 
 
+REVIEWED_NATIVE_CONTINUATION = {'codex': '0.172.0', 'deepseek': '0.2.2-rc.5', 'qwen': '0.28.4'}
+
+
+def native_continuation(binding):
+    expected = REVIEWED_NATIVE_CONTINUATION.get(binding.get('provider'))
+    return expected is not None and binding.get('version') == expected
+
+
+def resume_reference(task, prior):
+    """Require the prior turn's original result, not a provisional session ID."""
+    if not native_continuation(task['spec'].get('partner_connection') or {}):
+        raise ValueError('此工作端版本的准确原生会话续跑尚未核实；原会话保留。')
+    result = prior.get('result') or {}
+    receipt = result.get('native_result') or {}
+    run_id, session_id = result.get('partner_run_id'), prior.get('session_id')
+    if (prior.get('task_id') != task['id'] or prior.get('state') != 'COMPLETED' or prior.get('stop_requested')
+            or result.get('state') != 'COMPLETED' or result.get('known_tools_exited') is not True
+            or (result.get('owned_job') or {}).get('active_processes') != 0
+            or result.get('stop_requested') is True or not run_id or not session_id
+            or receipt.get('type') != 'result' or receipt.get('receipt_unknown') is True
+            or receipt.get('completion_scope') != 'OFFICIAL_NATIVE_TURN'
+            or (receipt.get('run_id'), receipt.get('session_id'), receipt.get('partner_id'))
+               != (run_id, session_id, task['spec']['provider'])):
+        raise ValueError('原回合没有已完成的原生会话及退出证据，未重新派发。')
+    return {'resume_session': session_id, 'resume_run_id': run_id, 'resume_attempt_id': prior['id']}
+
+
 def is_binding(value):
     return isinstance(value, dict) and value.get('execution') == 'partner_native'
 
@@ -26,7 +53,7 @@ def descriptor(binding):
         raise ValueError('所选伙伴未登记，未启动。')
     from .native_permissions import catalog as permissions
     return {'provider': partner['id'], 'name': partner['name'], 'harness': partner['name'] + ' 官方工作端',
-            'execution': 'partner_native', 'native_resume': False, 'context_resume': False,
+            'execution': 'partner_native', 'native_resume': native_continuation(binding), 'context_resume': False,
             'native_tools': True, 'origin': 'MODEL_VENDOR_OFFICIAL', 'agent_loop': 'VENDOR_RUNTIME',
             'third_party_client': False, 'configuration': 'FROZEN_PARTNER_CONNECTION',
             'scope': 'INDEPENDENT_WORK', 'access_modes': permissions(partner['id']),
@@ -44,11 +71,8 @@ def model_selection(binding):
 
 
 def prompt_for(task, note='', resume=False):
-    from .scene_runtime import prompt, selected as scene_selected, skills
-    data = scene_selected(task)
-    if data and data.get('mcp'):
-        raise ValueError('此场景使用 MCP；本次伙伴连接尚未接入每任务 MCP 配置，请选择不含 MCP 的场景。')
-    text = prompt(task, note if resume else task['spec']['goal'], resume)
+    from .scene_runtime import prompt, skills
+    text = prompt(task, note if resume else task['spec']['goal'], resume, mcp_label='本次选用的 MCP')
     material = task['spec'].get('materials') or {}
     if material:
         text += '\n\n本次已选择的项目材料（由官方工作端的文件工具读取）：\n' + '\n'.join(material)
@@ -57,6 +81,21 @@ def prompt_for(task, note='', resume=False):
         text += '\n\n本次选用的技能文档，请用官方文件工具读取并按文档处理；这些路径未另作原生技能注册：\n'
         text += '\n'.join(item['name'] + ': ' + item['path'] for item in references)
     return text
+
+
+def checked_scene_mcp(task, workdir):
+    from .capabilities import mcp_config
+    from .scene_runtime import selected
+    scene = selected(task) or {}
+    servers = scene.get('mcp', [])
+    if servers and not native_continuation(task['spec'].get('partner_connection') or {}):
+        raise ValueError('此场景使用 MCP；当前连接版本尚未接入每任务 MCP，请选择不含 MCP 的场景。')
+    for server in servers:
+        config = mcp_config(server['config'])
+        if (task['spec']['provider'] == 'qwen' and config['transport'] == 'stdio'
+                and Path(config['cwd']).resolve() != Path(workdir).resolve()):
+            raise ValueError('Qwen 的 ACP 本机 MCP 须使用本次项目目录；不同目录未发送。')
+    return servers
 
 
 def _validate_run(run, task, attempt, binding, run_id=None):
@@ -181,15 +220,27 @@ def _observe(service, task, attempt, run, *, initial=False):
             service.store.event(task['id'], attempt['id'], 'partner_run_bound' if initial else 'partner_run_observed', value, db)
 
 
+def record_mcp_configuration(service, task, attempt, run, response):
+    from .scene_runtime import receipt
+    for row in response.get('events', []):
+        event = row.get('event') or {}
+        if (event.get('kind') == 'native_scene_mcp_configured' and event.get('run_id') == run['id']
+                and event.get('partner_id') == run['partner_id'] and event.get('session_id') == run.get('session_id')):
+            receipt(service.store, task, attempt, 'CONFIGURED',
+                    {k: event[k] for k in ('source', 'servers', 'session_id', 'connection_state') if k in event})
+
+
 def run(service, task, attempt, stop, resume=None, note='', *, rpc=None, poll_interval=.25):
     from .bridge import call
     rpc = rpc or call
     binding = task['spec'].get('partner_connection')
     if not is_binding(binding):
         raise ValueError('任务缺少已冻结伙伴连接，未启动。')
-    if resume:
-        raise ValueError('此伙伴任务的准确原生会话续跑尚未核实；原会话保留，不用新会话代替。')
-    text = prompt_for(task, note)
+    previous = resume_reference(task, resume) if resume else {}
+    if previous != (attempt.get('baseline') or {}).get('partner_resume', {}):
+        raise ValueError('原生续跑与本次预订记录不符，未派发。')
+    checked_scene_mcp(task, attempt['workspace'])
+    text = prompt_for(task, note, bool(resume))
     identity = {'task_id': task['id'], 'attempt_id': attempt['id'], 'spec_hash': task['spec_hash']}
     if stop.is_set() or attempt.get('stop_requested'):
         return {'state': 'FAILED_NO_SEND', 'answer': '', 'known_tools_exited': True,
@@ -210,11 +261,12 @@ def run(service, task, attempt, stop, resume=None, note='', *, rpc=None, poll_in
             service.store.event(task['id'],attempt['id'],'partner_dispatch_intent',
                                 {**identity,'connection_id':binding['id'],'connection_revision':binding['revision'],'no_retry_on_unknown':True},db)
         started = True
-        response = rpc('partner.task.start', {**identity, 'connection_id': binding['id'],
+        response = rpc('partner.task.start', {**identity, **previous, 'connection_id': binding['id'],
             'connection_revision': binding['revision'], 'workspace': str(Path(attempt['workspace'])), 'prompt': text})
         current = _validate_run(response['run'], task, attempt, binding)
         run_id = current['id']
         _observe(service, task, attempt, current, initial=True)
+        record_mcp_configuration(service, task, attempt, current, response)
         cursor = response.get('cursor', 0)
         stop_sent = False
         while True:
@@ -233,6 +285,7 @@ def run(service, task, attempt, stop, resume=None, note='', *, rpc=None, poll_in
             current = _validate_run(response['run'], task, attempt, binding, run_id)
             cursor = response.get('cursor', cursor)
             _observe(service, task, attempt, current)
+            record_mcp_configuration(service, task, attempt, current, response)
     except Exception as exc:
         stopped = stop.is_set() or attempt.get('stop_requested')
         return {'state': 'STOP_UNKNOWN' if stopped and started else 'SEND_UNKNOWN' if started else 'FAILED_NO_SEND',
