@@ -4,6 +4,7 @@
   "instance_schema": 1,
   "storage_schema": 3,
   "legacy_bridge_protocol": 1,
+  "foundation_discovery":"/api/v2/foundation-contract",
   "command": {"fields": ["id", "kind", "payload"], "receipt_lookup": "/api/v1/receipt?id={id}", "unknown_no_resend": true},
   "read_models": ["/api/v2/projects", "/api/v2/records", "/api/v2/records/{kind}/{id}", "/api/v2/events", "/api/v2/runtime", "/api/v2/components"],
   "professional_tool": {"command": "tool.run", "cancel": "tool.cancel", "tool": "material-summary/1", "model_requests": 0, "log_segment_bytes": 4194304, "log_read_default_bytes": 65536, "log_route": "/api/v2/jobs/{id}/log"},
@@ -37,6 +38,24 @@
     "run_binding":"authorization_id with matching selection","receipt":"run_id",
     "detail":"/api/v1/extensions?run_id={run_id}","history":"/api/v1/extensions?task_id={task_id}",
     "unknown_receipt":"/api/v1/receipt?id={command_id}"
+  },
+  "project_materials": {
+    "versions":"/api/v2/projects/{project_id}/materials",
+    "compare":"/api/v2/projects/{project_id}/compare?left={version_json}&right={version_json}",
+    "archive_commands":["project.archive.preview","project.archive.export","project.archive.confirm","project.archive.reopen"],
+    "archive_preview_payload":["project_id","versions"],"archive_decision_payload":["project_id","archive_id","revision","confirm"],
+    "archives":"/api/v2/projects/{project_id}/archives",
+    "download":"/api/v2/projects/{project_id}/archive-download?archive_id={archive_id}"
+  },
+  "knowledge":{
+    "scope":"/api/v1/knowledge/scope","scope_command":"knowledge.scope-save","index_command":"knowledge.reindex",
+    "search":"/api/v1/knowledge/search","search_command":"knowledge.search","methods":["keyword","semantic"],
+    "engine":"corpus-lsa/1","verify":"/api/v1/knowledge/verify","index_version":"resource-passages/1"
+  },
+  "memory_and_handoff":{
+    "list":"/api/v2/memories?scope={scope}&project_id={project_id}","handoffs":"/api/v2/project-handoffs?scope=project&project_id={project_id}",
+    "personal_scope":"personal without project_id","project_scope":"project with project_id",
+    "commands":["memory.save","memory.archive","memory.delete","memory.merge","project.handoff-create"]
   },
   "ownership": {"lock": "backend.lock", "byte_offset": 0, "byte_length": 1, "writer": "go-core", "stale_epoch_rejected": true}
 }

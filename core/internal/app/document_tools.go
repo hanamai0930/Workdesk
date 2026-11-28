@@ -424,5 +424,5 @@ func (a *App) documentCatalog() map[string]any {
 		docs["probe_state"] = "CHECKED"
 	}
 	summary := map[string]any{"tool_version": "material-summary/1", "worker_present": exists(filepath.Join(root, "summary.py")) && exists(a.Profile.PythonExecutable), "model_requests": 0}
-	return map[string]any{"extension_catalog": "/api/v1/extensions", "partner_catalog": "/api/v2/partners", "tools": []any{summary, docs, map[string]any{"tool_version": computerVersion, "actions": computerActions, "worker_present": exists(filepath.Join(root, "computer.py")) && exists(a.Profile.PythonExecutable), "scope": "HUMAN_EXPLICIT_PROJECT_OR_WINDOW", "execution_isolation": "NOT_ESTABLISHED_BY_PROJECT", "model_requests": 0}}}
+	return map[string]any{"foundation_contract": "/api/v2/foundation-contract", "extension_catalog": "/api/v1/extensions", "partner_catalog": "/api/v2/partners", "tools": []any{summary, docs, map[string]any{"tool_version": computerVersion, "actions": computerActions, "worker_present": exists(filepath.Join(root, "computer.py")) && exists(a.Profile.PythonExecutable), "scope": "HUMAN_EXPLICIT_PROJECT_OR_WINDOW", "execution_isolation": "NOT_ESTABLISHED_BY_PROJECT", "model_requests": 0}}}
 }

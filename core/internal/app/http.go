@@ -125,7 +125,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
 			return
 		}
-		if kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
+		if strings.HasPrefix(kind, "project.archive.") || strings.HasPrefix(kind, "memory.") || kind == "project.handoff-create" || kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
 			result, e := a.toolCommand(body)
 			if e != nil {
 				failed(w, e)
@@ -182,8 +182,29 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, error) {
 	q := r.URL.Query()
+	if path == "/api/v2/memories" || path == "/api/v2/project-handoffs" {
+		return a.readProjectMemory(path, q)
+	}
+	if strings.HasPrefix(path, "/api/v2/projects/") && (strings.HasSuffix(path, "/archives") || strings.HasSuffix(path, "/archive-download")) {
+		return a.archiveRead(w, r, path)
+	}
+	if strings.HasPrefix(path, "/api/v2/projects/") && strings.HasSuffix(path, "/compare") {
+		project := strings.TrimSuffix(strings.TrimPrefix(path, "/api/v2/projects/"), "/compare")
+		return a.compareProjectVersions(project, q)
+	}
 	if strings.HasPrefix(path, "/api/v2/projects/") && (strings.HasSuffix(path, "/materials") || strings.HasSuffix(path, "/export")) {
 		return a.projectMaterials(w, r, path)
+	}
+	if path == "/api/v2/foundation-contract" {
+		var contract map[string]any
+		data, err := os.ReadFile(filepath.Join(a.Profile.DataRoot, "implementations", a.Implementation, "contracts", "core-v2.json"))
+		if err != nil {
+			return nil, errors.New("当前实例的能力契约不可读")
+		}
+		if err = Decode(data, &contract); err != nil {
+			return nil, err
+		}
+		return map[string]any{"implementation_revision": a.Implementation, "contract": contract}, nil
 	}
 	if path == "/api/v2/tools" {
 		return a.documentCatalog(), nil

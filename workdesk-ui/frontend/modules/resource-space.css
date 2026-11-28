@@ -1,4 +1,15 @@
 @scope ([data-ui-module="resources"]) {
+  .wd-resource-knowledge { display:grid;gap:12px;margin:0 0 24px;padding:18px;border:1px solid var(--rs-line);border-radius:12px; }
+  .wd-resource-knowledge h2,.wd-resource-knowledge p { margin:0; }
+  .wd-resource-knowledge h2 { font-size:18px; }
+  .wd-resource-knowledge fieldset { display:flex;gap:6px 16px;flex-wrap:wrap; }
+  .wd-resource-knowledge fieldset label { display:inline-flex;align-items:center;gap:6px; }
+  .wd-resource-knowledge .wd-knowledge-controls { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+  .wd-resource-knowledge form input { flex:1 1 160px; }
+  .wd-resource-knowledge select { padding:6px;border:1px solid var(--rs-line);border-radius:6px;background:var(--wk-bg); }
+  .wd-resource-knowledge ol { display:grid;gap:12px;margin:0;padding-inline-start:22px; }
+  .wd-resource-knowledge li p { margin:4px 0;color:var(--rs-muted);white-space:pre-wrap;overflow-wrap:anywhere; }
+  .wd-resource-knowledge a { text-decoration:underline; }
   .wd-resource-space {
     --rs-accent:var(--wk-work-accent,#2d6755);
     --rs-soft:color-mix(in srgb,var(--rs-accent) 8%,var(--wk-bg));

@@ -3,7 +3,7 @@
   'use strict';
   const definitions=Object.freeze({
     connect:{routes:['connect'],scripts:[],styles:['../frontend/modules/connection-setup.css'],sources:['../frontend/modules/connection-setup.tsx']},
-    resources:{routes:['resources'],scripts:[],styles:['../frontend/modules/resource-space.css'],sources:['../frontend/modules/resource-space.tsx']},
+    resources:{routes:['resources'],scripts:[],styles:['../frontend/modules/resource-space.css'],sources:['../frontend/modules/resource-space.tsx','../frontend/modules/resource-knowledge.tsx','../frontend/modules/project-memory.tsx']},
     workitems:{routes:['work-items'],scripts:['work-items-page.js','cooperation-toolbar.js'],styles:['work-items-page.css','cooperation-toolbar.css','conversation-detail.css'],sources:['../frontend/modules/work-item-file-preview.tsx','conversation-detail.js','chat-detail-data.js','work-detail-data.js']},
     files:{routes:['files'],scripts:['files-page.js'],styles:['files-page.css']},
     records:{routes:['records'],scripts:['records-page.js'],styles:['records-page.css']},
@@ -21,7 +21,7 @@
     workbench:{routes:['','home','chat','work','drafts','archives','schedules'],scripts:['workbench.js','workbench-features.js','independent-work.js','work-records.js','chat.js','chat-api.js','chat-records.js'],styles:['../frontend/modules/native-work.css','../frontend/modules/work-files.css','../frontend/modules/work-projects.css','../frontend/modules/work-records.css','../frontend/modules/conversation.css','../frontend/modules/independent-work.css','../frontend/modules/chat.css','../frontend/modules/api-chat.css','../frontend/modules/chat-records.css'],sources:['../frontend/modules/native-events.ts','../frontend/modules/native-work.tsx','../frontend/modules/work-records.tsx','../frontend/modules/conversation.tsx','../frontend/modules/independent-work.tsx','../frontend/modules/chat.tsx','../frontend/modules/desktop-chat.ts','../frontend/modules/api-chat.tsx','../frontend/modules/chat-records.tsx']},
     history:{routes:['tasks','task','providers','history'],scripts:['app.js'],styles:[]}
   });
-  definitions.projects.sources=['../frontend/core/computer-tools.tsx','../frontend/core/document-tools.tsx','../frontend/core/document-form.tsx'];
+  definitions.projects.sources=['../frontend/core/project-archive.tsx','../frontend/core/computer-tools.tsx','../frontend/core/document-tools.tsx','../frontend/core/document-form.tsx'];
   definitions.projects.styles.push('../frontend/core/document-tools.css');
   definitions.settings.sources.push('../frontend/modules/settings-token-usage.tsx');
   definitions.settings.styles.push('../frontend/modules/settings-token-usage.css');

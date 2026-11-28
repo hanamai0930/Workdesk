@@ -1,5 +1,10 @@
 """Check Stage 3 B/C/D against an independently identified development library."""
 import argparse
+from hashlib import sha256
+from io import BytesIO
+import sqlite3
+from urllib.parse import urlencode
+from zipfile import ZipFile
 from contextlib import contextmanager
 import json
 import subprocess
@@ -8,14 +13,23 @@ from uuid import uuid4
 from pathlib import Path
 from check_stage3_extension_job import seed_extension_task, check_extension_chain
 from check_stage3_browser_job import check_browser_job
-from check_core_chain import BASE, Chain, core_runtime, require
+from check_core_chain import BASE, Chain, core_runtime, request, require
 
 
 @contextmanager
 def fixture(executable, batch):
     chain = Chain(executable, evidence_stage='stage3/batch-'+batch.lower())
     chain.seed()
-    if 'B' in batch: seed_extension_task(chain)
+    if 'B' in batch or 'C' in batch: seed_extension_task(chain)
+    if 'C' in batch:
+        # Historical reply-only result, created in the pre-existing data format.
+        scope=chain.extension_scope
+        chain.old_reply='第一版项目说明\n'
+        chain.reply_id='result:'+sha256(scope['task_id'].encode()).hexdigest()
+        saved={'id':chain.reply_id,'task_id':scope['task_id'],'attempt_id':scope['attempt_id'],
+               'created':time.time(),'snapshot':{'answer':chain.old_reply,'manifest':{}}}
+        with sqlite3.connect(chain.data/'tasks.sqlite3') as db:
+            db.execute('INSERT INTO collaboration VALUES(?,?,?,?)',('work_result',chain.reply_id,json.dumps(saved),time.time()))
     chain.manifest = core_runtime.freeze(BASE, chain.data, chain.executable)
     core_runtime.prepare_migration(chain.profile, chain.executable, fixture=True)
     subprocess.run([str(chain.executable), '--config', chain.profile['config_path'], '--base', str(BASE),
@@ -82,18 +96,48 @@ def check_b(chain):
                 extension=check_extension_chain(chain),outside_rejected=True,browser=check_browser_job(chain,submit,await_job),real_model_requests=0)
 
 
+def check_c(chain):
+    from check_stage3_archive import check_archive
+    from check_stage3_knowledge import check_knowledge
+    from check_stage3_memory import check_memory
+    base='/api/v2/projects/'+chain.project_id
+    reply=next(row for row in chain.api(base+'/materials')['materials'] if row['kind']=='reply')
+    version=json.dumps(reply['version'])
+    expected=chain.old_reply.encode('utf8')
+    require(reply['sha256']==sha256(expected).hexdigest(),'历史回复版本摘要不符')
+    comparison=chain.api(base+'/compare?'+urlencode({'left':version,'right':version}))
+    require(comparison['identical'] and comparison['mode']=='text','项目回复比较失败')
+    exported=request(chain.origin,base+'/export?'+urlencode({'version':version}),token=chain.backend['viewer'],raw=True)
+    with ZipFile(BytesIO(exported)) as package:
+        file=json.loads(package.read('manifest.json'))['versions'][0]
+        require(file['attempt_id']==chain.extension_scope['attempt_id'] and package.read(file['archive_path'])==expected,
+                '归档回复与原任务的 UTF-8 字节不符')
+    knowledge=check_knowledge(chain)
+    memory=check_memory(chain)
+    sources=[{'kind':'knowledge','citation':knowledge['current_reference']},
+             {'kind':'material','version':reply['version']}]
+    bridge=chain.command('project.handoff-create',
+        {'scope':'project','project_id':chain.project_id,'sources':sources})['receipt']
+    require(bool(bridge['handoff_id']),'知识和历史回复未形成项目接续')
+    contract=chain.api('/api/v2/foundation-contract')
+    require(contract['implementation_revision']==chain.manifest['implementation_revision']
+            and contract['contract']['knowledge']['search_command']=='knowledge.search','运行契约版本不符')
+    return {'legacy_reply_sha256':reply['sha256'],'knowledge':knowledge,'memory_and_handoff':memory,
+            'knowledge_to_handoff':bridge['handoff_id'],'archive':check_archive(chain)}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable',required=True,type=Path)
-    parser.add_argument('--batch',choices=('B',),required=True)
+    parser.add_argument('--batch',choices=('B','C'),required=True)
     args=parser.parse_args()
     with fixture(args.executable,args.batch) as chain:
         evidence={'implementation':chain.manifest['implementation_revision'],'checks':{},'fixture':True}
         for batch in args.batch:
-            evidence['checks'][batch]={'B':check_b}[batch](chain)
-        if 'B' in args.batch:
-            subprocess.run(['node',str(BASE/'tools/check_stage3_ui.cjs'),str(chain.root)],check=True,timeout=65)
-            evidence['checks']['B']['ui_read_result']=True
+            evidence['checks'][batch]={'B':check_b,'C':check_c}[batch](chain)
+            if batch in ('B','C'):
+                subprocess.run(['node',str(BASE/'tools/check_stage3_ui.cjs'),str(chain.root),batch],check=True,timeout=85)
+                evidence['checks'][batch]['browser_entry_verified']=True
         output=chain.root/'foundation-check.json'
         output.write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf8')
         print(output)

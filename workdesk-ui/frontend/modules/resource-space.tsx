@@ -8,6 +8,8 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { Template } from '../components/template';
+import { ProjectMemory } from './project-memory';
+import { ResourceKnowledge } from './resource-knowledge';
 import './resource-space.css';
 
 type Category = 'page' | 'presentation' | 'spreadsheet' | 'image' | 'link' | 'file';
@@ -42,6 +44,7 @@ const destinations = [
   { route: '', label: '全部资料', Icon: Library },
   { route: 'library', label: '资料库', Icon: FolderOpen },
   { route: 'knowledge', label: '知识库', Icon: BookOpen },
+  { route: 'memory', label: '记忆与项目接续', Icon: BookOpen },
   { route: 'recent', label: '最近', Icon: Clock3 },
   { route: 'trash', label: '回收站', Icon: Trash2 },
 ];
@@ -303,6 +306,12 @@ function FilePreview({ item }: { item: Item }) {
 }
 
 export function ResourceSpace({ routeKey, onNewPresentation }: { routeKey?: string; onNewPresentation?: () => void }) {
+  const route = routeKey || location.hash;
+  if (/^#?resources\/memory(?:[?/#]|$)/.test(route)) return <ProjectMemory key={route} route={route}/>;
+  return <ResourceCatalog routeKey={routeKey} onNewPresentation={onNewPresentation}/>;
+}
+
+function ResourceCatalog({ routeKey, onNewPresentation }: { routeKey?: string; onNewPresentation?: () => void }) {
   const rawRoute = routeKey || location.hash;
   const [path, rawParams = ''] = rawRoute.split('?');
   const params = new URLSearchParams(rawParams);
@@ -494,6 +503,7 @@ export function ResourceSpace({ routeKey, onNewPresentation }: { routeKey?: stri
         {item.kind === 'link' && <section className="wd-resource-detail-card wd-resource-link"><Visual category="link"/>{link ? <a href={link.href} target="_blank" rel="noopener noreferrer">{link.href}<ArrowUpRight size={15}/></a> : <p>网址不可用。</p>}</section>}
       </div>}
 
+      {loadedFor === listingKey && showingCollections && <ResourceKnowledge collections={catalog.collections}/>}
       {loadedFor === listingKey && !showingItem && showingCollections && (collectionRows.length ? <div className="wd-resource-grid">
         {collectionRows.map(row => <article key={row.id} className="wd-resource-card"><a href={href('knowledge', row.id)}><Visual category="page"/><strong>{row.title}</strong><small>{row.description || '知识库'}</small></a></article>)}
       </div> : !busy && !error && <Empty icon={<BookOpen size={26}/>} title={query.trim() ? '没有匹配的知识库' : '还没有知识库'}>{query.trim() ? <Button type="button" variant="outline" onClick={() => filter('', '')}>清除筛选</Button> : <Button type="button" variant="outline" onClick={() => begin('collection')}><Plus size={15}/>新建知识库</Button>}</Empty>)}

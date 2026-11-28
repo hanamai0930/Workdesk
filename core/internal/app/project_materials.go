@@ -18,7 +18,10 @@ import (
 
 // The identity includes the source record, so identical bytes in different
 // tasks remain separately attributable. Never resolve a path supplied by a URL.
-const projectMaterialRows = `WITH versions AS (
+const projectMaterialRows = `WITH native_results AS (
+ SELECT c.id,c.data,t.id AS task_id,c.updated FROM collaboration c JOIN tasks t ON t.id=json_extract(c.data,'$.task_id')
+ WHERE c.kind='work_result' AND t.project_id=?
+), versions AS (
  SELECT 'selection' AS kind,c.id AS source,f.key AS entry,json_extract(f.value,'$.file') AS name,
  json_extract(f.value,'$.sha256') AS sha256,json_extract(f.value,'$.bytes') AS bytes,
  json_extract(f.value,'$.file') AS relative_path,'' AS task_id,'' AS attempt_id,c.updated AS at
@@ -30,9 +33,12 @@ const projectMaterialRows = `WITH versions AS (
  json_extract(j.data,'$.attempt_id'),j.updated FROM core_tool_jobs j,json_each(j.data,'$.input_versions') f WHERE j.project_id=?
  UNION ALL
  SELECT 'result',c.id,f.key,f.key,json_extract(f.value,'$.sha256'),json_extract(f.value,'$.bytes'),
- 'results/'||substr(c.id,8)||'/files/'||f.key,t.id,json_extract(c.data,'$.attempt_id'),c.updated
- FROM collaboration c JOIN tasks t ON t.id=json_extract(c.data,'$.task_id'), json_each(c.data,'$.snapshot.manifest') f
- WHERE c.kind='work_result' AND t.project_id=?
+ 'results/'||substr(c.id,8)||'/files/'||f.key,c.task_id,json_extract(c.data,'$.attempt_id'),c.updated
+ FROM native_results c, json_each(c.data,'$.snapshot.manifest') f
+ UNION ALL
+ SELECT 'reply',c.id,'answer','回复.txt','',length(CAST(json_extract(c.data,'$.snapshot.answer') AS BLOB)),
+ '回复.txt',c.task_id,json_extract(c.data,'$.attempt_id'),c.updated FROM native_results c
+ WHERE typeof(json_extract(c.data,'$.snapshot.answer'))='text' AND length(json_extract(c.data,'$.snapshot.answer'))>0
  UNION ALL
  SELECT 'job',j.id,f.key,json_extract(f.value,'$.relative_path'),json_extract(f.value,'$.sha256'),
  json_extract(f.value,'$.bytes'),json_extract(f.value,'$.relative_path'),
@@ -84,6 +90,13 @@ func (a *App) projectMaterials(w http.ResponseWriter, r *http.Request, path stri
 			rows = rows[:limit]
 		}
 		for _, row := range rows {
+			if row["kind"] == "reply" {
+				content, err := a.projectReply(project, str(row["source"]), number(row["bytes"]))
+				if err != nil {
+					return nil, err
+				}
+				row["sha256"] = fmt.Sprintf("%x", sha256.Sum256(content))
+			}
 			row["version"] = materialRef(row)
 			if row["kind"] == "job" {
 				row["name"] = filepath.Base(str(row["name"]))
@@ -101,74 +114,112 @@ func (a *App) exportProjectMaterials(w http.ResponseWriter, refs []string, proje
 	if len(refs) == 0 || len(refs) > 32 {
 		return errors.New("每次请选择 1 至 32 个明确版本")
 	}
-	const maximum = int64(64 << 20)
-	total := int64(0)
-	manifest := []map[string]any{}
-	seen := map[projectVersion]bool{}
-	var buffer bytes.Buffer
-	archive := zip.NewWriter(&buffer)
-	for _, rawRef := range refs {
+	versions := make([]projectVersion, 0, len(refs))
+	for _, raw := range refs {
 		var v projectVersion
-		if json.Unmarshal([]byte(rawRef), &v) != nil || len(v.SHA256) != 64 || seen[v] {
-			return errors.New("导出版本无效或重复")
+		if json.Unmarshal([]byte(raw), &v) != nil {
+			return errors.New("导出版本无效")
 		}
-		seen[v] = true
-		rows, err := a.query(projectMaterialRows+" WHERE kind=? AND source=? AND CAST(entry AS TEXT)=? AND sha256=?", project, project, project, project, v.Kind, v.Source, v.Entry, v.SHA256)
-		if err != nil {
-			return err
-		}
-		if len(rows) != 1 {
-			return errors.New("该版本不在当前项目的清单中")
-		}
-		row := rows[0]
-		root := projectRoot
-		if v.Kind != "selection" && v.Kind != "input" {
-			root = a.Profile.DataRoot
-		}
-		rel := filepath.FromSlash(str(row["relative_path"]))
-		if !filepath.IsLocal(rel) || !inside(filepath.Join(root, rel), root) {
-			return errors.New("材料引用已失效")
-		}
-		if v.Kind != "selection" && v.Kind != "input" && !inside(filepath.Join(root, rel), filepath.Join(root, "results")) {
-			return errors.New("成果位置不属于活动库")
-		}
-		size := number(row["bytes"])
-		if size < 0 || size > maximum-total {
-			return errors.New("所选版本合计超过单次导出 64 MiB 上限")
-		}
-		raw, err := readProjectVersion(root, rel, size, v.SHA256)
-		if err != nil {
-			return err
-		}
-		name := fmt.Sprintf("files/%02d/%s", len(manifest)+1, filepath.Base(rel))
-		file, err := archive.Create(name)
-		if err != nil {
-			return err
-		}
-		if _, err = file.Write(raw); err != nil {
-			return err
-		}
-		total += size
-		delete(row, "relative_path")
-		row["archive_path"] = name
-		manifest = append(manifest, row)
+		versions = append(versions, v)
 	}
-	index, err := archive.Create("manifest.json")
-	if err != nil {
-		return err
-	}
-	if err = json.NewEncoder(index).Encode(map[string]any{"schema": 1, "project_id": project, "versions": manifest}); err != nil {
-		return err
-	}
-	if err = archive.Close(); err != nil {
+	var buffer bytes.Buffer
+	if _, err := a.projectPackage(project, projectRoot, versions, &buffer); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Disposition", `attachment; filename="workdesk-project-files.zip"`)
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, err = w.Write(buffer.Bytes())
+	_, err := w.Write(buffer.Bytes())
 	return err
+}
+
+// Resolve an exact version under its recorded project, read its bytes once and
+// verify the recorded digest. Callers never provide filesystem locations.
+func (a *App) projectVersionBytes(project, projectRoot string, v projectVersion, remaining int64) (map[string]any, []byte, error) {
+	if v.Kind == "reply" {
+		return a.projectReplyBytes(project, v, remaining)
+	}
+	if len(v.SHA256) != 64 {
+		return nil, nil, errors.New("版本摘要无效")
+	}
+	rows, err := a.query(projectMaterialRows+" WHERE kind=? AND source=? AND CAST(entry AS TEXT)=? AND sha256=?", project, project, project, project, v.Kind, v.Source, v.Entry, v.SHA256)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rows) != 1 {
+		return nil, nil, errors.New("该版本不在当前项目清单中")
+	}
+	row := rows[0]
+	root := projectRoot
+	if v.Kind != "selection" && v.Kind != "input" {
+		root = a.Profile.DataRoot
+	}
+	rel := filepath.FromSlash(str(row["relative_path"]))
+	if !filepath.IsLocal(rel) || !inside(filepath.Join(root, rel), root) {
+		return nil, nil, errors.New("材料引用已失效")
+	}
+	if v.Kind != "selection" && v.Kind != "input" && !inside(filepath.Join(root, rel), filepath.Join(root, "results")) {
+		return nil, nil, errors.New("成果位置不属于活动库")
+	}
+	size := number(row["bytes"])
+	if size < 0 || size > remaining {
+		return nil, nil, errors.New("所选版本超出大小上限")
+	}
+	raw, err := readProjectVersion(root, rel, size, v.SHA256)
+	return row, raw, err
+}
+
+// With no writer, produce the same manifest and verify the same source bytes
+// without creating an archive. This is the preview used for confirmation.
+func (a *App) projectPackage(project, root string, refs []projectVersion, dest io.Writer) ([]map[string]any, error) {
+	if len(refs) == 0 || len(refs) > 32 {
+		return nil, errors.New("每次请选择 1 至 32 个明确版本")
+	}
+	var zipper *zip.Writer
+	if dest != nil {
+		zipper = zip.NewWriter(dest)
+	}
+	seen := map[projectVersion]bool{}
+	manifest := make([]map[string]any, 0, len(refs))
+	remaining := int64(64 << 20)
+	for _, v := range refs {
+		if seen[v] {
+			return nil, errors.New("选择了重复版本")
+		}
+		seen[v] = true
+		row, raw, err := a.projectVersionBytes(project, root, v, remaining)
+		if err != nil {
+			return nil, err
+		}
+		remaining -= int64(len(raw))
+		name := fmt.Sprintf("files/%02d/%s", len(manifest)+1, filepath.Base(filepath.FromSlash(str(row["relative_path"]))))
+		delete(row, "relative_path")
+		row["archive_path"] = name
+		manifest = append(manifest, row)
+		if zipper != nil {
+			entry, err := zipper.Create(name)
+			if err != nil {
+				return nil, err
+			}
+			if _, err = entry.Write(raw); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if zipper != nil {
+		index, err := zipper.Create("manifest.json")
+		if err != nil {
+			return nil, err
+		}
+		if err = json.NewEncoder(index).Encode(map[string]any{"schema": 1, "project_id": project, "versions": manifest}); err != nil {
+			return nil, err
+		}
+		if err = zipper.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return manifest, nil
 }
 
 func readProjectVersion(root, rel string, size int64, want string) ([]byte, error) {

@@ -32,6 +32,16 @@ def _required_assets(db, *, catalog=None):
     for row in db.execute("SELECT data FROM collaboration WHERE kind IN ('capability','capability_version')"):bundle(json.loads(row[0]))
     for row in db.execute('SELECT spec FROM tasks'):
         for b in (json.loads(row[0]).get('scene_snapshot') or {}).get('bundles',[]):bundle(b)
+    for row in db.execute("SELECT data FROM collaboration WHERE kind='project_archive'"):
+        archive = json.loads(row[0])
+        if archive.get('state') == 'PREVIEW' and not archive.get('package_sha256'):
+            continue
+        fingerprint = archive.get('package_sha256', '')
+        size = archive.get('package_bytes')
+        if (not re.fullmatch(r'[a-f0-9]{64}', fingerprint)
+                or type(size) is not int or not 0 < size <= 66 * 1024 * 1024):
+            raise ValueError('项目归档包摘要或大小无效。')
+        required['results/project-archives/' + fingerprint + '.zip'] = {'bytes': size, 'sha256': fingerprint}
     for row in db.execute("SELECT data FROM collaboration WHERE kind='work_result'"):
         r=json.loads(row[0]);version=r['id'].split(':')[-1]
         if not re.fullmatch('[a-f0-9]{64}',version):raise ValueError('成果指纹无效。')

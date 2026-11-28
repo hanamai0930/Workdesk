@@ -22,7 +22,7 @@
       </section>`:''}
     </section>`;
   }
-  const versionLabels={selection:'选定材料',input:'工具输入',previous_result:'修订所用成果',result:'任务成果',job:'工具成果'};
+  const versionLabels={reply:'任务回复',selection:'选定材料',input:'工具输入',previous_result:'修订所用成果',result:'任务成果',job:'工具成果'};
   async function projectVersions(panel,project,more){
     const query=new URLSearchParams({limit:'30'});
     if(more)query.set('cursor',panel.dataset.cursor||'0');
@@ -44,8 +44,28 @@
     panel.dataset.cursor=value.cursor;
     const actions=document.createElement('div');actions.dataset.versionActions='';
     actions.innerHTML=(value.has_more?S.button('查看更多',`data-project="versions-more" data-id="${h(project)}"`):'')+
+      S.button('比较两个版本',`data-project="versions-compare" data-id="${h(project)}"`)+
       S.button('导出选定版本',`data-project="versions-export" data-id="${h(project)}"`);
     panel.append(actions);
+  }
+  async function compareVersions(panel,project){
+    const refs=[...panel.querySelectorAll('[data-version]:checked')];
+    if(refs.length!==2)throw Error('请选择要比较的两个版本。');
+    const q=new URLSearchParams({left:refs[0].dataset.version,right:refs[1].dataset.version});
+    const response=await fetch('api/v2/projects/'+encodeURIComponent(project)+'/compare?'+q,{cache:'no-store'});
+    const d=await response.json();if(!response.ok)throw Error(d.error||'版本比较失败');
+    if(!panel.isConnected)return;
+    panel.querySelector('[data-comparison]')?.remove();
+    const box=document.createElement('section');box.dataset.comparison='';
+    const h=document.createElement('h4');h.textContent=d.identical?'文件内容一致':'文件内容有变化';box.append(h);
+    d.versions.forEach((v,i)=>{
+      const p=document.createElement('p');p.textContent=(i?'第二个版本':'第一个版本')+' · '+v.name+' · '+v.bytes+' 字节 · '+v.version.sha256;box.append(p);
+      if(!d.identical&&d.mode==='text'){
+        const n=i?d.right_lines:d.left_lines;
+        const pre=document.createElement('pre');pre.textContent='从第 '+d.start_line+' 行起，变化范围 '+n+' 行'+(n>80?'（显示前 80 行）':'')+'\n'+(i?d.right_excerpt:d.left_excerpt).join('\n');box.append(pre);
+      }
+    });
+    panel.append(box);
   }
   async function exportVersions(panel,project){
     const refs=[...panel.querySelectorAll('[data-version]:checked')];
@@ -65,6 +85,7 @@
       ${document.documentElement.dataset.workdeskChannel?`<div class="sp-actions">
         ${S.button('电脑与开发工具',`data-project="computer-tools" data-id="${h(p.id)}"`)}
         ${S.button('文档工具',`data-project="document-tools" data-id="${h(p.id)}"`)}
+        ${S.button('项目版本归档',`data-project="project-archive" data-id="${h(p.id)}"`)}
         ${S.button('材料与成果版本',`data-project="versions" data-id="${h(p.id)}"`)}
       </div><section aria-label="项目版本清单" aria-live="polite" data-project-versions></section>`:''}
       <form data-project-edit="${h(p.id)}">
@@ -102,10 +123,10 @@
   document.addEventListener('input',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='name')v.name=e.target.value;});
   document.addEventListener('change',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='scene')v.scene=e.target.value;});
   document.addEventListener('click',async e=>{const el=e.target.closest('[data-project]');if(!active()||!el||el.disabled||v.busy)return;v.busy=true;try{const a=el.dataset.project,p=v.data.projects.find(p=>p.id===el.dataset.id);
-    if(a==='document-tools'||a==='computer-tools')window.dispatchEvent(new CustomEvent('workdesk-'+a,{detail:{project_id:p.id,project_root:p.root}}));
-    if(a==='versions'||a==='versions-more'||a==='versions-export'){
+    if(['document-tools','computer-tools','project-archive'].includes(a))window.dispatchEvent(new CustomEvent('workdesk-'+a,{detail:{project_id:p.id,project_root:p.root}}));
+    if(a==='versions'||a==='versions-more'||a==='versions-export'||a==='versions-compare'){
       const panel=el.closest('[data-project-card]').querySelector('[data-project-versions]');
-      try{if(a==='versions-export')await exportVersions(panel,p.id);else await projectVersions(panel,p.id,a==='versions-more');}
+      try{if(a==='versions-compare')await compareVersions(panel,p.id);else if(a==='versions-export')await exportVersions(panel,p.id);else await projectVersions(panel,p.id,a==='versions-more');}
       catch(error){let message=panel.querySelector('[role="alert"]');if(!message){message=document.createElement('p');message.setAttribute('role','alert');panel.append(message);}message.textContent=error.message;}
     }
     if(a==='pick'){const path=await S.directory();if(path){v.folder=path;if(!v.name)v.name=path.split(/[\\/]/).at(-1);draw();}}

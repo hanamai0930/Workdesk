@@ -90,6 +90,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path=='/api/v1/record-catalog':
                 from .record_catalog import catalog
                 value=catalog(self.server.service,query=args.get('q',[''])[0],mode=args.get('mode',['all'])[0],archive=args.get('archive',['all'])[0],cursor=args.get('cursor',[''])[0],limit=args.get('limit',[40])[0],scope=args.get('scope',['ordinary'])[0],project=args.get('project',[None])[0])
+            elif parsed.path.startswith('/api/v1/knowledge/'):
+                from .knowledge import read as read_knowledge
+                value=read_knowledge(self.server.service.store,parsed.path.rsplit('/',1)[1],args)
             elif parsed.path=='/api/v1/resource-space':
                 value=self.server.service.resource_space.catalog(args.get('q',[''])[0],
                     args.get('collection_id',[None])[0],args.get('view',['active'])[0])

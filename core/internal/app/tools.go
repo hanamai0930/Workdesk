@@ -93,6 +93,16 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			return json.Unmarshal([]byte(str(row[2])), &receipt)
 		}
 		switch kind {
+		case "memory.save", "memory.archive", "memory.delete", "memory.merge", "project.handoff-create":
+			receipt, e = applyMemory(s, id, kind, p)
+			if e != nil {
+				return e
+			}
+		case "project.archive.preview", "project.archive.confirm", "project.archive.export", "project.archive.reopen":
+			receipt, e = a.archiveMutation(s, id, kind, p)
+			if e != nil {
+				return e
+			}
 		case "tool.authorize":
 			receipt, e = a.createToolGrant(s, id, p)
 			if e != nil {

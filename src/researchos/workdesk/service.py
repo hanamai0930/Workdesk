@@ -256,7 +256,7 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
         handlers.update(self.extensions.handlers())
         handlers.update(self.capabilities.handlers());handlers.update(self.scenes.handlers())
         handlers.update(self.file_inspector.handlers());handlers.update(self.results.handlers());handlers.update(self.monitor.handlers())
-        handlers.update(self.resource_space.handlers())
+        handlers.update(self.resource_space.handlers(command_id))
         handlers.update(self.ui_features.handlers())
         handlers.update(self.management.handlers())
         handlers.update(self.work_items.handlers())

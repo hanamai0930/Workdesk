@@ -152,8 +152,10 @@ class ResourceSpace:
     def __init__(self, store):
         self.store = store
 
-    def handlers(self):
-        return {'resource-space.collection-create': self.collection_create, 'resource-space.create': self.create,
+    def handlers(self, command_id):
+        from .knowledge import save_scope, reindex, search
+        return {'knowledge.scope-save': lambda db,p: save_scope(db,p,command_id), 'knowledge.reindex': reindex, 'knowledge.search': search,
+                'resource-space.collection-create': self.collection_create, 'resource-space.create': self.create,
                 'resource-space.update': self.update, 'resource-space.trash': self.trash}
 
     def collection(self, db, identity):
@@ -214,7 +216,7 @@ class ResourceSpace:
                'description': checked_text(payload.get('description', ''), '收藏夹说明', 1000),
                'revision': 1, 'created': now, 'updated': now}
         db.execute('INSERT INTO resource_space_collections(id,title,description,revision,created,updated) '
-                   'VALUES (:id,:title,:description,:revision,:created,:updated)', row)
+                   'VALUES (?,?,?,?,?,?)', tuple(row[k] for k in ('id','title','description','revision','created','updated')))
         return {'collection': row, 'no_dispatch': True}
 
     def fields(self, db, payload):
@@ -252,12 +254,13 @@ class ResourceSpace:
         row['search_text'] = item_index(row, file['filename'] if file else None)
         row['tags'] = canonical(row['tags'])
         db.execute('''INSERT INTO resource_space_items(id,kind,category,title,note,tags,collection_id,body,url,
-            search_text,revision,created,updated) VALUES (:id,:kind,:category,:title,:note,:tags,:collection_id,:body,:url,
-            :search_text,:revision,:created,:updated)''', row)
+            search_text,revision,created,updated) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                   tuple(row[k] for k in ('id','kind','category','title','note','tags','collection_id','body','url',
+                                          'search_text','revision','created','updated')))
         if file:
             db.execute('''INSERT INTO resource_space_files(item_id,filename,mime,preview,sha256,bytes,content,search_text)
-                VALUES (:item_id,:filename,:mime,:preview,:sha256,:bytes,:content,:search_text)''',
-                       {'item_id': row['id'], **file})
+                VALUES (?,?,?,?,?,?,?,?)''',
+                       (row['id'], *(file[k] for k in ('filename','mime','preview','sha256','bytes','content','search_text'))))
         return {'item': self.read_item(db, row['id']), 'no_dispatch': True}
 
     def checked_item(self, db, payload):
