@@ -84,6 +84,28 @@ func TestPartnerTaskResumeRequiresExactCompletedOriginal(t *testing.T) {
 		}
 		change.row[change.key] = old
 	}
+	// A different connection can start fresh only on an explicitly reserved handoff.
+	for _, key := range partnerResumeKeys {
+		delete(p, key)
+	}
+	handoff := map[string]any{"prior_attempt_id": prior["parent_attempt_id"], "prior_session_id": prior["session_id"], "prior_run_id": prior["id"], "connection_id": "next", "connection_revision": "1"}
+	baseline, _ = json.Marshal(map[string]any{"partner_handoff": handoff})
+	parent["baseline"] = string(baseline)
+	binding["id"], binding["revision"] = "next", "1"
+	if r, e := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); e != nil || len(r) != 0 {
+		t.Fatalf("fresh session handoff: %v", e)
+	}
+	handoff["prior_run_id"] = "wrong"
+	baseline, _ = json.Marshal(map[string]any{"partner_handoff": handoff})
+	parent["baseline"] = string(baseline)
+	if _, e := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); e == nil {
+		t.Fatal("accepted wrong handoff run")
+	}
+	baseline, _ = json.Marshal(map[string]any{"partner_resume": resume})
+	parent["baseline"] = string(baseline)
+	for k, v := range resume {
+		p[k] = v
+	}
 	prior["state"], prior["local_exit_confirmed"] = "STOP_UNKNOWN", false
 	putPartnerFixture(t, a, "run", prior)
 	if _, err := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); err == nil {

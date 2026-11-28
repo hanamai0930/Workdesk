@@ -20,6 +20,10 @@ def resume_reference(task, prior):
     """Require the prior turn's original result, not a provisional session ID."""
     if not native_continuation(task['spec'].get('partner_connection') or {}, access=task['spec'].get('access', 'workspace')):
         raise ValueError('此工作端版本的准确原生会话续跑尚未核实；原会话保留。')
+    return completed_reference(task, prior)
+
+
+def completed_reference(task, prior):
     result = prior.get('result') or {}
     receipt = result.get('native_result') or {}
     run_id, session_id = result.get('partner_run_id'), prior.get('session_id')
@@ -68,9 +72,9 @@ def model_selection(binding):
             'secret_version': binding.get('secret_version'), 'release_id': binding.get('release_id')}
 
 
-def prompt_for(task, note='', resume=False):
+def prompt_for(task, note='', resume=False, handoff=False):
     from .scene_runtime import prompt, skills
-    text = prompt(task, note if resume else task['spec']['goal'], resume, mcp_label='本次选用的 MCP')
+    text = prompt(task, note if resume or handoff else task['spec']['goal'], resume, mcp_label='本次选用的 MCP')
     material = task['spec'].get('materials') or {}
     if material:
         text += '\n\n本次已选择的项目材料（由官方工作端的文件工具读取）：\n' + '\n'.join(material)
@@ -247,7 +251,23 @@ def run(service, task, attempt, stop, resume=None, note='', *, rpc=None, poll_in
     if previous != (attempt.get('baseline') or {}).get('partner_resume', {}):
         raise ValueError('原生续跑与本次预订记录不符，未派发。')
     checked_scene_mcp(task, attempt['workspace'])
-    text = prompt_for(task, note, bool(resume))
+    handoff = (attempt.get('baseline') or {}).get('partner_handoff')
+    if handoff:
+        from .result_records import delivered_answer
+        with service.store.read() as db:
+            messages = []
+            rows = db.execute('SELECT * FROM attempts WHERE task_id=? AND started<? ORDER BY started DESC LIMIT 8',
+                              (task['id'], attempt['started'])).fetchall()
+            for row in reversed(rows):
+                turn = service.store.attempt_row(row)
+                user = db.execute("SELECT COALESCE(json_extract(payload,'$.user_message'),json_extract(payload,'$.human_note')) FROM events WHERE attempt_id=? AND kind IN ('execution_reserved','single_task_continued') ORDER BY seq DESC LIMIT 1",(turn['id'],)).fetchone()
+                if user and user[0]:
+                    messages.append('用户：'+user[0][:4000])
+                answer = delivered_answer(db, turn)
+                if answer:
+                    messages.append('助手：'+answer[:8000])
+        note = ('原任务目标：'+task['spec']['goal']+'\n\n近期对话摘录（此前回合）：\n'+'\n'.join(messages)+'\n\n本轮用户要求：'+note)
+    text = prompt_for(task, note, bool(resume), bool(handoff))
     identity = {'task_id': task['id'], 'attempt_id': attempt['id'], 'spec_hash': task['spec_hash']}
     if stop.is_set() or attempt.get('stop_requested'):
         return {'state': 'FAILED_NO_SEND', 'answer': '', 'known_tools_exited': True,

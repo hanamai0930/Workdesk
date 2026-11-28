@@ -449,7 +449,11 @@ class ExecutionResources:
             for key in ('provider','model','effort','tier'):
                 if p.get(key)!=selection['member'][key]:raise ValueError('草稿模型配置与所选成员不一致，请重新准备。')
         if kind=='independent.send':
-            if p.get('task_id'):
+            if p.get('task_id') and p.get('connection_id'):
+                from .partner_connections import selected
+                if not p.get('connection_revision'):raise ValueError('请选择有准确版本的模型连接。')
+                c=selected(db,p.pop('connection_id'),p.pop('connection_revision'))
+            elif p.get('task_id'):
                 c=self.task_connection(self.s.store.task(p['task_id'],db),db)
             elif p.get('connection_id'):
                 from .partner_connections import selected

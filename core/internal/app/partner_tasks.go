@@ -61,6 +61,17 @@ func (a *App) partnerTaskResume(p, parent, binding, connection, account map[stri
 	if len(rows) == 0 && len(resume) == 0 {
 		return nil, nil
 	}
+	if handoff, ok := baseline["partner_handoff"].(map[string]any); ok {
+		if len(resume) != 0 || len(rows) != 1 || rows[0]["id"] != handoff["prior_attempt_id"] || rows[0]["session_id"] != handoff["prior_session_id"] || rows[0]["state"] != "COMPLETED" || number(rows[0]["stop_requested"]) != 0 || !samePartnerWorkspace(rows[0]["workspace"], parent["workspace"]) || binding["id"] != handoff["connection_id"] || fmt.Sprint(binding["revision"]) != fmt.Sprint(handoff["connection_revision"]) {
+			return nil, errors.New("新模型接续记录与原尝试或所选连接不符")
+		}
+		old, err := a.boundPartnerTaskRun(map[string]any{"task_id": p["task_id"], "attempt_id": rows[0]["id"], "run_id": handoff["prior_run_id"]})
+		if err != nil || old == nil || old["id"] != handoff["prior_run_id"] || old["session_id"] != rows[0]["session_id"] || old["state"] != "COMPLETED" || old["local_exit_confirmed"] != true || !samePartnerWorkspace(old["workspace"], parent["workspace"]) || (old["connection_id"] == binding["id"] && fmt.Sprint(old["connection_revision"]) == fmt.Sprint(binding["revision"])) {
+			return nil, errors.New("原模型的完成回执与切换记录不符")
+		}
+		_, err = receivedPartnerTurnResult(old)
+		return nil, err
+	}
 	release, e := a.partnerNativeRelease(binding)
 	if e != nil {
 		return nil, e

@@ -20,32 +20,99 @@
     .wd-task-layout[data-expanded=true]>.wd-task-side:not([hidden]) {height:100%}
   }
   .wd-task-layout:has(>.wd-task-side:not([hidden])) {flex-wrap:wrap}
-  .wd-task-chat>header {display:flex; gap:14px; align-items:center; border-bottom:1px solid var(--wk-line); padding:10px 18px}
-  .wd-task-chat>header strong {font-size:14px; font-weight:550; overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
-  .wd-task-chat button:not(.wk-send),.wd-close-detail {font:inherit; font-size:13px; border:1px solid var(--wk-line); border-radius:8px; background:var(--wk-bg); color:inherit; padding:4px 9px; cursor:pointer}
-  .wd-task-chat button:disabled {opacity:.48;cursor:default}
-  .wd-task-chat header button {display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-  .wd-task-chat .wd-task-side-toggle {margin-inline-start:auto;flex:none}
-  .wd-talk-scroll {flex:1; overflow:auto;min-height:0}
-  .wd-talk-column,.wd-talk-compose {width:min(760px,calc(100% - 40px));margin:0 auto;min-width:0}
-  .wd-talk-column {display:flex; flex-direction:column;gap:22px;padding:24px 0}
-  .wd-talk-user,.wd-talk-answer {display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0}
+  .wd-task-chat {
+    --talk-blue:light-dark(#1964bf,#8cbfff);
+    --talk-bubble:light-dark(#e8f2ff,#24384d);
+    --talk-quiet:color-mix(in srgb,var(--wk-text) 66%,var(--wk-bg));
+    background:var(--wk-bg);
+    color:var(--wk-text);
+    container:work-chat / inline-size;
+  }
+  .wd-task-chat>header {
+    display:flex; flex:none; align-items:center; gap:8px; min-height:50px;
+    padding:6px 18px; border-bottom:1px solid color-mix(in srgb,var(--wk-line) 65%,transparent);
+  }
+  .wd-task-chat>header strong {min-width:0;font-size:14px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .wd-task-chat button,.wd-close-detail {cursor:pointer}
+  .wd-task-chat button:disabled {opacity:.5;cursor:default}
+  .wd-task-chat>header button {
+    display:inline-grid; place-items:center; flex:none; width:32px; height:32px; padding:0;
+    color:var(--talk-quiet); background:transparent; border:0; border-radius:8px;
+  }
+  .wd-task-chat>header button:hover,.wd-task-chat>header button[aria-expanded=true] {color:var(--wk-text);background:var(--wk-soft)}
+  .wd-task-chat .wd-task-side-toggle {margin-inline-start:auto}
+  .wd-talk-scroll {flex:1;overflow:auto;min-height:0;overscroll-behavior:contain}
+  .wd-talk-column,.wd-talk-compose {width:min(800px,calc(100% - 48px));margin:0 auto;min-width:0}
+  .wd-talk-column {display:flex;flex-direction:column;gap:26px;padding:28px 0 24px}
+  .wd-talk-user,.wd-talk-answer {display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+  .wd-task-chat .wk-byline {margin:0;color:var(--talk-quiet);font-size:12px;line-height:1.4;font-weight:550}
   .wd-talk-user {align-items:flex-end}
-  .wd-talk-user .wd-talk-body {background:var(--wk-soft); border-radius:17px 17px 5px 17px; padding:9px 15px; max-width:86%}
-  .wd-talk-body {max-width:100%; font-size:14px;line-height:1.65; overflow-wrap:anywhere}
-  .wd-talk-body p {margin:0 0 4px}
-  .wd-talk-body pre,.wd-task-dialog pre {white-space:pre-wrap; overflow-wrap:anywhere}
-  .wd-talk-body button,.wd-talk-body a {margin:4px 6px 0 0}
-  .wd-talk-artifact {display:flex; align-items:center; flex-wrap:wrap; gap:8px}
-  .wd-task-chat .wd-talk-file-link:not(.wk-send) {display:inline;max-width:100%;font:inherit;font-weight:550;color:var(--wk-good);border:0;border-radius:3px;background:transparent;margin:0;padding:0;text-align:start}
+  .wd-talk-user .wd-talk-body {background:var(--talk-bubble);border-radius:19px;padding:12px 17px;max-width:86%}
+  .wd-talk-body {max-width:100%;font-size:15px;line-height:1.75;overflow-wrap:anywhere}
+  .wd-talk-body .wd-safe-markdown {font:inherit}
+  .wd-talk-body p {margin:0 0 .6em}
+  .wd-talk-body p:last-child {margin-bottom:0}
+  .wd-talk-body details,.wd-talk-delivery details {margin-top:5px}
+  .wd-talk-body summary,.wd-talk-delivery summary {cursor:pointer;color:var(--talk-quiet);font-size:12px}
+  .wd-talk-body pre,.wd-task-dialog pre {white-space:pre-wrap;overflow-wrap:anywhere}
+  .wd-talk-body>button,.wd-talk-compose>p button,.wd-close-detail {
+    font:inherit;font-size:13px;border:1px solid var(--wk-line);border-radius:8px;
+    background:var(--wk-bg);color:inherit;padding:5px 10px;margin:5px 5px 0 0;
+  }
+  .wd-task-chat .wd-talk-file-link {
+    display:inline;max-width:100%;font:inherit;font-weight:550;color:var(--talk-blue);
+    border:0;border-radius:3px;background:transparent;margin:0;padding:0;text-align:start;
+  }
   .wd-task-chat .wd-talk-file-link:hover {text-decoration:underline}
-  .wd-talk-file-link svg {display:inline;vertical-align:text-bottom;margin-inline-end:5px}
-  .wd-talk-artifact small,.wd-talk-body small {color:var(--wk-muted)}
-  .wd-talk-compose {padding:8px 0 16px}
-  .wd-talk-compose form {padding:10px 13px;border:1px solid var(--wk-line);border-radius:18px;background:var(--wk-bg)}
-  .wd-talk-compose textarea {display:block;width:100%;resize:vertical;font:inherit;color:inherit;background:transparent;border:0;outline:0}
-  .wd-talk-actions {display:flex; justify-content:flex-end;gap:10px}
-  .wd-talk-compose .wk-send {display:inline-flex;justify-content:center;align-items:center;border-radius:50%}
+  .wd-talk-delivery {
+    width:fit-content;max-width:100%;align-self:flex-start;padding:10px 14px;
+    border:1px solid var(--wk-line);background:var(--wk-bg);border-radius:14px;
+    font-size:13px;line-height:1.55;
+  }
+  .wd-talk-answer+.wd-talk-delivery,.wd-talk-delivery+.wd-talk-delivery {margin-top:-16px}
+  .wd-talk-artifact {display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px}
+  .wd-talk-artifact .wd-talk-file-link {display:inline-flex;align-items:center;gap:8px;color:var(--wk-text);font-size:14px}
+  .wd-talk-artifact .wd-talk-file-link svg {flex:none;color:light-dark(#30774a,#90c9a3)}
+  .wd-talk-artifact .wd-talk-file-link span {overflow-wrap:anywhere}
+  .wd-talk-artifact small,.wd-talk-body small,.wd-talk-delivery p {color:var(--talk-quiet);font-size:12px}
+  .wd-talk-delivery p {margin:5px 0 0}
+  .wd-talk-delivery>button {
+    background:transparent;border:0;color:var(--talk-quiet);font:inherit;font-size:12px;
+    border-radius:5px;padding:4px 6px;margin:5px 4px -3px -3px;
+  }
+  .wd-talk-delivery>button:hover {background:var(--wk-soft);color:var(--wk-text)}
+  .wd-talk-model-change {display:flex;align-items:center;justify-content:center;gap:10px;color:var(--talk-quiet);font-size:12px;line-height:1.5;text-align:center}
+  .wd-talk-model-change::before,.wd-talk-model-change::after {content:"";flex:1;min-width:12px;height:1px;background:var(--wk-line)}
+  .wd-talk-compose {padding:8px 0 14px;flex:none}
+  .wd-task-chat .wd-talk-compose form.wk-composer {
+    padding:12px 12px 9px;border:1px solid var(--wk-line);border-radius:21px;background:var(--wk-bg);
+    box-shadow:0 3px 16px var(--wk-shadow);
+  }
+  .wd-task-chat .wd-talk-compose form:focus-within {outline:0;border-color:color-mix(in srgb,var(--talk-blue) 37%,var(--wk-line))}
+  .wd-task-chat .wd-talk-compose textarea {
+    display:block;width:100%;padding:2px 4px 6px;resize:none;min-height:44px;
+    height:auto;field-sizing:content;max-height:min(200px,26vh);overflow:auto;font:inherit;font-size:15px;
+    line-height:1.55;color:inherit;background:transparent;border:0;outline:0;
+  }
+  .wd-talk-actions {display:flex;align-items:center;justify-content:flex-end;gap:8px}
+  .wd-talk-actions .wd-talk-model-trigger {
+    display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:70%;padding:5px 8px;
+    border:0;border-radius:8px;background:transparent;color:var(--wk-text);font:inherit;font-size:13px;
+  }
+  .wd-talk-actions .wd-talk-model-trigger:hover {background:var(--wk-soft)}
+  .wd-talk-model-scope {color:var(--talk-quiet);font-size:12px;margin:4px 3px 7px}
+  .wd-task-chat .wd-talk-actions .wk-send {
+    margin:0;display:inline-grid;place-items:center;width:33px;height:33px;min-width:33px;min-height:33px;padding:0;
+    border:0;border-radius:50%;background:var(--talk-blue);color:var(--wk-bg);
+  }
+  .wd-task-chat .wd-talk-actions .wk-send:disabled {background:var(--wk-soft);color:var(--talk-quiet);opacity:.8}
+  .wd-task-chat button:focus-visible,.wd-talk-body summary:focus-visible {outline:2px solid var(--talk-blue);outline-offset:2px}
+  @container work-chat (max-width:540px) {
+    .wd-talk-column,.wd-talk-compose {width:calc(100% - 24px)}
+    .wd-task-chat>header {padding-inline:9px}
+    .wd-talk-column {padding-top:17px}
+    .wd-talk-user .wd-talk-body {max-width:94%;padding:9px 13px}
+  }
   .wd-task-dialog {margin:auto;width:min(850px,94vw);max-height:86dvh;overflow:auto;background:var(--wk-bg);color:var(--wk-text);border:1px solid var(--wk-line);border-radius:14px;padding:20px}
   .wd-task-dialog::backdrop {background:rgb(0 0 0 / 24%)}
   .wd-close-detail {display:block;margin:0 0 12px auto}

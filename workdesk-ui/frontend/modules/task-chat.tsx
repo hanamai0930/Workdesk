@@ -1,11 +1,12 @@
 import {Fragment,useEffect,useRef,useState,type ReactNode} from 'react';
-import {ArrowUp,FileText,PanelLeft,PanelRight} from 'lucide-react';
+import {ArrowRightLeft,ArrowUp,FileSpreadsheet,FileText,PanelLeft,PanelRight} from 'lucide-react';
 import {coreClient as core} from '../core/client';
 import {partnerRunning,partnerStateLabel,type PartnerRun} from '../core/partner-runtime';
 import {Template} from '../components/template';
 import {SafeMarkdown} from '../components/safe-markdown';
 import {QuickWorkspace,useQuickWorkspaceView} from './quick-workspace';
 import {TaskFilePreview,type ResultFile} from './task-file-preview';
+import {TurnModelPicker,partnerName,turnModelName,type TurnConnection} from './task-model-picker';
 import type {TaskDetail,Job,Decision,Version,ToolRequest,Delivery} from './task-delivery';
 import './task-chat.css';
 
@@ -57,6 +58,7 @@ export function TaskChat(p:Props){
   const [text,setText]=useState(''),[target,setTarget]=useState(''),[askTarget,setAskTarget]=useState(false);
   const [snapshots,setSnapshots]=useState<Snapshot[]>([]),[snapshotError,setSnapshotError]=useState('');
   const [reply,setReply]=useState<Record<string,string>>({});
+  const [nextConnection,setNextConnection]=useState<TurnConnection|null>(null);
   const [preview,setPreview]=useState<ResultFile>();
   const workspaceKey='work:'+task.id+':project:'+task.project_id;
   const workspace=useQuickWorkspaceView(true,workspaceKey);
@@ -121,6 +123,7 @@ export function TaskChat(p:Props){
         }
         if(!live.current)return;
         await p.command('independent.send',{task_id:task.id,attempt_id:latest.id,owner:latest.owner,goal:content,...feedback,
+          ...(nextConnection?{provider:nextConnection.partner_id,connection_id:nextConnection.id,connection_revision:nextConnection.revision}:{}),
           ...(guidance?.note?{guidance_command_id:guidance.command_id}:{})});
         if(live.current)location.reload();
       }
@@ -137,9 +140,11 @@ export function TaskChat(p:Props){
   const state=run.state==='STOP_REQUESTED'?'正在停止这项工作。':run.state.includes('UNKNOWN')?'上次运行的结果还没有确认。':
     run.state==='WAITING_APPROVAL'?'正在等你确认本次操作。':run.state==='WAITING_INPUT'?'需要你补充信息。':active?'正在处理你的要求…':
     ended?(info?.state==='COMPLETED'?'任务已完成。':items.length?'本轮已结束，成果可查看。':'本轮已结束。'):'本次工作已暂停。';
+  const missingFile=detail.events?.some(e=>e.kind==='work_result_capture_pending'&&e.attempt_id===latest.id);
+  const shortTitle=task.title.split(/[。！？\n]/u).find(part=>part.trim())||task.title;
   return <div className="wd-task-layout" data-expanded={workspace.open&&workspace.expanded}>
     <section className="wd-task-chat" aria-label="工作对话" data-partner-work>
-    <header><button type="button" onClick={p.onDetails}><PanelLeft size={15}/>任务详情</button><strong>{task.title}</strong>
+    <header><button type="button" aria-label="任务详情" title="任务详情" onClick={p.onDetails}><PanelLeft size={17}/></button><strong title={task.title}>{shortTitle}</strong>
       <button ref={workspace.toggleRef} className="wd-task-side-toggle" aria-label="工作侧栏" title="工作侧栏" aria-expanded={workspace.open}
         aria-controls="wd-task-side" onClick={workspace.toggle}><PanelRight size={16}/></button></header>
     <div ref={log} className="wd-talk-scroll" onScroll={e=>{const el=e.currentTarget;stick.current=el.scrollHeight-el.scrollTop-el.clientHeight<64;}}>
@@ -152,6 +157,10 @@ export function TaskChat(p:Props){
       const user=continuation?.user_message??(priorDecision?priorDecision.note:recorded);
       const isLatest=a.id===latest.id,answer=a.result?.answer||a.result?.native_result?.text||(isLatest?(run.output||run.result?.text):'');
       const versions=outputs(a.id);
+      const configuration=a.model_configuration, previous=attempts[n-1]?.model_configuration;
+      const before=turnModelName(previous?.provider,previous?.model);
+      const after=turnModelName(configuration?.provider,configuration?.model);
+      const author=partnerName(configuration?.provider||a.result?.partner_id)||(isLatest?p.speaker:'助手');
       const filesByVersion=versions.map(v=>resultFiles(v,n+1));
       const links=new Map<string,()=>void>(), seen=new Set<string>();
       for(const file of filesByVersion.flat()){
@@ -159,8 +168,9 @@ export function TaskChat(p:Props){
         else {seen.add(file.name);links.set(file.name,()=>openFile(file));}
       }
       return <Fragment key={a.id}>
+        {before&&after&&before!==after&&<div className="wd-talk-model-change"><ArrowRightLeft size={13} aria-hidden="true"/><span>模型已从 {before} 更改为 {after}</span></div>}
         {user&&<Message name={nickname} user><Text value={user}/></Message>}
-        {answer&&<Message name={p.speaker}><Answer value={answer} files={links}/></Message>}
+        {answer&&<Message name={author}><Answer value={answer} files={links}/></Message>}
         {versions.map((i,index)=>{
           const accepted=i.decision?.decision==='accept'||i.snapshot?.decision?.value==='accept';
           const returned=i.decision?.decision==='revise'||i.snapshot?.decision?.value==='return';
@@ -168,15 +178,15 @@ export function TaskChat(p:Props){
           const expected=i.job&&p.requests.find(r=>r.invocation_id===i.job!.id)?.parameters.expected;
           const checkedValues=i.job?.checks?.some(c=>c.kind==='关键值'&&c.state==='PASSED'&&c.sha256===i.file?.sha256)&&expected&&typeof expected==='object'
             ?Object.entries(expected).slice(0,4).map(([cell,v])=>cell+' = '+String(v)).join('，'):'';
-          return <Message key={i.key} name="Workdesk"><div className="wd-talk-artifact">
+          return <article key={i.key} className="wd-talk-delivery" aria-label="本轮成果"><div className="wd-talk-artifact">
             {filesByVersion[index].length?filesByVersion[index].map(file=><button type="button" key={file.route} className="wd-talk-file-link"
-              data-preview-file={file.name} title={'预览 '+file.path} onClick={()=>openFile(file)}><FileText size={16}/>{file.name}</button>):<strong>{i.label}</strong>}
+              data-preview-file={file.name} title={'预览 '+file.path} onClick={()=>openFile(file)}>{/\.(xlsx|csv)$/i.test(file.name)?<FileSpreadsheet size={18}/>:<FileText size={18}/>}<span>{file.name}</span></button>):<strong>{i.label}</strong>}
             <small>第 {n+1} 轮 · {accepted?'已验收':returned?'已退回':'待验收'}</small></div>
             {checkedValues&&<p>文件已核对：{checkedValues}。</p>}
             {snapshot&&!Object.keys(snapshot.snapshot.manifest).length&&!answer&&<details><summary>查看回复</summary><Text value={String((snapshot.snapshot as {answer?:string}).answer||'已保存回复记录。')}/></details>}
             {isLatest&&ended&&<><button disabled={p.blocked} onClick={()=>{setTarget(i.key);setAskTarget(false);input.current?.focus();}}>修改此版</button>
               {!accepted&&<button disabled={p.blocked} onClick={()=>accept(i)}>验收此版</button>}</>}
-          </Message>;
+          </article>;
         })}
       </Fragment>;
     })}
@@ -189,16 +199,18 @@ export function TaskChat(p:Props){
         <button disabled={p.blocked||!reply[r.id]?.trim()} onClick={()=>void p.act(async()=>{await currentCommand('partner.input',{run_id:run.id,request_id:r.id,text:reply[r.id].trim()});if(live.current)setReply(v=>({...v,[r.id]:''}));})}>回答</button></>}
     </Message>)}
     {guidance?.note&&<Message name={nickname} user><p>{guidance.note}</p><small>已留给下一回合</small><button disabled={p.blocked} onClick={()=>void p.act(()=>currentCommand('work.guidance',{...scope,previous:guidance.command_id,note:''}))}>撤回</button></Message>}
-    <Message name="Workdesk"><p role="status">{state}</p>{run.error&&<details><summary>查看中断说明</summary>{run.error}</details>}
+    {(!ended||run.error||missingFile||(!items.length&&!run.output&&!latest.result?.answer))&&<Message name="Workdesk"><p role="status">{state}</p>{run.error&&<details><summary>查看中断说明</summary>{run.error}</details>}
       {run.state.includes('UNKNOWN')&&<button disabled={p.busy} onClick={()=>void p.act(()=>currentCommand('partner.reconcile',{run_id:run.id}),true)}>核对运行状态</button>}
-      {detail.events?.some(e=>e.kind==='work_result_capture_pending'&&e.attempt_id===latest.id)&&<p>有一份交付文件还没取到。<a href={'#results/'+enc(task.id)}>查看已保存成果</a></p>}
-    </Message></div></div>
+      {missingFile&&<p>有一份交付文件还没取到。<a href={'#results/'+enc(task.id)}>查看已保存成果</a></p>}
+    </Message>}</div></div>
     <div className="wd-talk-compose">{p.pending.length>0&&<p>有操作尚待确认。{p.pending.map(c=><button key={c.id} disabled={p.busy} onClick={()=>void p.act(async()=>{const v=await core.receipt(c.id);if(v.state!=='RECORDED')throw Error('上次操作的结果仍未确认。');await p.onRunChange();if(live.current&&c.kind==='independent.send')location.reload();},true)}>核对原操作</button>)}</p>}
       {(p.error||snapshotError)&&<p role="alert">{p.error||snapshotError} <button onClick={p.onRefresh}>刷新</button></p>}
       {askTarget&&<label>请选择对应的成果：<select value={target} onChange={e=>{setTarget(e.target.value);setAskTarget(false);input.current?.focus();}}><option value="">选择文件</option>{items.map(i=><option key={i.key} value={i.key}>{i.label}</option>)}</select></label>}
       {selected&&<div>正在修改 {selected.label} <button onClick={()=>setTarget('')}>取消选择</button></div>}
       <form className="wk-composer" onSubmit={e=>{e.preventDefault();send();}}><textarea ref={input} rows={2} aria-label="工作消息" placeholder="继续对话…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send();}}}/>
         <div className="wd-talk-actions">{active&&<button type="button" disabled={p.blocked||run.state==='STOP_REQUESTED'} onClick={()=>void p.act(()=>currentCommand('task.stop',{task_id:task.id,attempt_id:latest.id,owner:latest.owner}))}>停止</button>}
+        {nextConnection&&<small className="wd-talk-model-scope" title="发送后，新连接将收到接续所需的对话和材料">下一条使用{nextConnection.source_label}{nextConnection.route==='api'?' · 按用量计费':''}</small>}
+        <TurnModelPicker run={run} choice={nextConnection} onChoose={setNextConnection} disabled={p.blocked||!ended}/>
         <button className="wk-send" aria-label="发送工作消息" disabled={p.blocked||!text.trim()||(!active&&!ended)||run.state==='STOP_REQUESTED'}><ArrowUp size={18}/></button></div>
       </form>
     </div>

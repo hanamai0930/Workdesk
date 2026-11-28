@@ -40,7 +40,7 @@ def send(service, db, payload, *, cooperative=None):
     note=bounded_text(payload.get('goal'),'消息')
     if cooperative is not None and payload.get('task_id'):
         raise ValueError('合作单元使用独立的准确执行记录。')
-    prior=None;partner_resume={}
+    prior=None;partner_resume={};handoff={}
     if payload.get('task_id'):
         task=service.store.task(payload['task_id'],db)
         if task['spec'].get('work_mode')=='cooperative':raise ValueError('合作单元须通过合作派发明确安排；不能从独立发送接续绕过累计授权。')
@@ -55,13 +55,31 @@ def send(service, db, payload, *, cooperative=None):
         if task['state'] in ACTIVE|UNKNOWN:raise ValueError('当前回合仍在运行或状态待核对。')
         from .execution_constraints import blockers
         if prior and blockers(service,db,task,prior):raise ValueError('旧执行、远端或原生控制回执未知，或退出证据不足；先核对，不重发。')
-        if partner and prior:partner_resume=partner_task.resume_reference(task,prior)
+        if partner and prior:
+            previous=task['spec']['partner_connection']
+            if (previous['id'],previous['revision']) != (binding['id'],binding['revision']):
+                reference=partner_task.completed_reference(task,prior)
+                handoff={'prior_attempt_id':prior['id'],'prior_run_id':reference['resume_run_id'],
+                         'prior_session_id':reference['resume_session'],'connection_id':binding['id'],
+                         'connection_revision':binding['revision']}
+            else:
+                from .partner_connections import check_frozen
+                check_frozen(db, previous)
+                partner_resume=partner_task.resume_reference(task,prior)
         if prior and not partner and not service.independent.describe(task['spec']['provider'])['native_resume']:
             raise ValueError('此工作端的原生会话恢复尚未接通，请新建独立Work；不会悄悄丢弃历史。')
         spec=task['spec'];before=digest(spec)
         if 'plan_only' in payload:
             if payload['plan_only']:spec['plan_only']=True
             else:spec.pop('plan_only',None)
+        if handoff:
+            from .native_permissions import choice
+            access=choice(payload.get('access',spec.get('access')))
+            if not any(m['id']==access and m['supported'] for m in binding.get('permission_modes',[])):
+                raise ValueError('所选模型不支持当前会话的权限设置。')
+            spec.update(provider=binding['provider'],partner_connection=dict(binding),independent_service=partner_task.descriptor(binding))
+            spec.pop('execution_resource',None)
+            partner_task.checked_scene_mcp(task,prior['workspace'])
         spec['execution_connection']=payload['_connection_binding']
         for key in ('model','effort','tier'):
             if key in payload:spec[key]=payload[key]
@@ -148,19 +166,20 @@ def send(service, db, payload, *, cooperative=None):
         raise ValueError('原会话的项目目录已变化；请在原目录继续或新建工作。')
     identity,owner=uid(),uid();now=time.time()
     fork=task['spec'].get('native_fork') if not prior else None
-    session=prior['session_id'] if prior else fork['session_id'] if fork else uid()
+    session=prior['session_id'] if prior and not handoff else fork['session_id'] if fork else uid()
+    resume_mode='handoff' if handoff else 'native' if prior else 'native_fork' if fork else None
     from .project_usage import check_native_budget
     check_native_budget(db, task)
     db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-               (identity,task['id'],uid(),owner,'RESERVED',now,0,str(root),session,None,0,None,None,canonical({'runtime_mode':'official',**({'partner_resume':partner_resume} if partner_resume else {})}),None,service.instance))
+               (identity,task['id'],uid(),owner,'RESERVED',now,0,str(root),session,None,0,None,None,canonical({'runtime_mode':'official',**({'partner_handoff':handoff} if handoff else {}),**({'partner_resume':partner_resume} if partner_resume else {})}),None,service.instance))
     db.execute("UPDATE tasks SET state='RESERVED',updated=? WHERE id=?",(now,task['id']))
     service.store.event(task['id'],identity,'execution_reserved',{'owner':owner,'runtime_mode':'official','human_note':note if prior or fork else '',**({'partner_resume':partner_resume} if partner_resume else {}),
-        'implementation_revision':service.implementation,'resume_mode':'native' if prior else 'native_fork' if fork else None,
+        'implementation_revision':service.implementation,'resume_mode':resume_mode,
         'configuration_snapshot':{**{k:task['spec'][k] for k in ('provider','model','effort','tier')},'access':task['spec'].get('access','inherit'),'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS',
                                   **({'qwen_runtime':task['spec'].get('qwen_runtime','query')} if task['spec']['provider']=='qwen' else {})},
         'credential_selection_revision':(binding.get('account_revision') if partner else service.resources.context(task['spec']['execution_connection']).credential_revision),
         'execution_connection':task['spec']['execution_connection'],'extra_task_limits':False},db)
-    return {'task_id':task['id'],'spec_hash':task['spec_hash'],'launch_attempt':identity,'resume_mode':'native' if prior else 'native_fork' if fork else None,'note':note if prior or fork else '','state':'RESERVED'}
+    return {'task_id':task['id'],'spec_hash':task['spec_hash'],'launch_attempt':identity,'resume_mode':resume_mode,'note':note if prior or fork else '','state':'RESERVED'}
 
 
 def recover(service,db,payload):

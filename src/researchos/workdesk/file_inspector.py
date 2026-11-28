@@ -110,6 +110,8 @@ class FileInspector:
                 raise ValueError('原任务、退修决定或快照已变化，请重新核对。')
             source={'feedback_snapshot':{**{k:result[k] for k in ('id','revision','snapshot_hash')},'decision_command_id':decision.get('command_id')}}
             payload['goal']=payload.get('goal','')+'\n退修原成果 '+result['id']+'，版本 '+result['snapshot_hash']+'：'+(decision.get('note') or '请复核并修订所交成果。')
+            if result['snapshot']['manifest']:
+                payload['goal']+='\n对应的项目文件：'+json.dumps(list(result['snapshot']['manifest']),ensure_ascii=False)
         if feedback or guidance:
             task_id,attempt_id=payload.get('task_id'),payload.get('attempt_id')
             if not task_id or not attempt_id:
