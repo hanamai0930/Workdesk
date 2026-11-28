@@ -36,22 +36,27 @@ export function TurnModelPicker({run,choice,onChoose,disabled}:{
   const current=run.connection_snapshot;
   const label=choice?turnModelName(choice.partner_id,choice.model):turnModelName(run.partner_id,current?.model || run.model);
   const isOriginal=(r:TurnConnection)=>r.id===run.connection_id && String(r.revision)===String(current?.revision);
+  const isSelected=(row:TurnConnection)=>choice ? choice.id===row.id && choice.revision===row.revision : isOriginal(row);
+  const choices=rows?.filter(row=>row.available || isSelected(row)).sort((a,b)=>
+    Number(isSelected(b))-Number(isSelected(a)) || Number(b.partner_id===run.partner_id)-Number(a.partner_id===run.partner_id)
+    || a.partner_id.localeCompare(b.partner_id) || a.model.localeCompare(b.model));
   return <Popover.Root open={open&&!disabled} onOpenChange={setOpen}>
     <Popover.Trigger asChild><button type="button" role="combobox" aria-haspopup="listbox" aria-expanded={open&&!disabled}
       aria-label="选择下一条消息的模型" className="wd-talk-model-trigger" disabled={disabled}
       title={disabled?'回合结束后可切换模型':'选择下一条消息的模型'}>{label||'当前模型'}<ChevronDown size={14}/></button></Popover.Trigger>
-    <Popover.Portal><Popover.Content className="wk-model-picker" data-ui-module="workbench" side="top" align="end" sideOffset={8} collisionPadding={8}>
+    <Popover.Portal><Popover.Content className="wk-model-picker wd-turn-model-menu" data-ui-module="workbench" side="top" align="end" sideOffset={8} collisionPadding={8}>
       <div role="listbox" aria-label="可用模型和连接" className="wk-model-picker-list">
-        {rows?.map(row=>{
-          const selected=choice ? choice.id===row.id && choice.revision===row.revision : isOriginal(row);
-          return <button key={row.id} type="button" role="option" aria-selected={selected} disabled={!row.available}
+        {choices?.map(row=>{
+          const selected=isSelected(row);
+          const multipleAccounts=choices.some(other=>other.id!==row.id && other.partner_id===row.partner_id && other.route===row.route && other.model===row.model && other.source_label===row.source_label);
+          return <button key={row.id} type="button" role="option" aria-selected={selected} disabled={!row.available} title={row.account_label}
             onClick={()=>{onChoose(isOriginal(row)?null:row);setOpen(false);}}>
-            <span>{turnModelName(row.partner_id,row.model)}<small>{row.source_label} · {row.account_label}{row.available ? row.route==='api'?' · 按 API 用量计费':'' : ' · '+row.reason}</small></span>
+            <span>{turnModelName(row.partner_id,row.model)}<small>{row.source_label}{multipleAccounts?' · '+row.account_label:''}{row.available ? row.route==='api'?' · 按用量计费':'' : ' · '+row.reason}</small></span>
             {selected&&<Check size={14}/>}
           </button>;
         })}
       </div>
-      {(!rows||!rows.length)&&<p className="wk-model-picker-note" role="status">{error || (rows?'暂无已保存的模型连接。':'正在读取模型…')}</p>}
+      {!choices?.length&&<p className="wk-model-picker-note" role="status">{error || (rows?'暂无可用的模型连接。':'正在读取模型…')}</p>}
       <p className="wk-model-picker-note"><a href="#settings/accounts">管理模型连接</a></p>
     </Popover.Content></Popover.Portal>
   </Popover.Root>;

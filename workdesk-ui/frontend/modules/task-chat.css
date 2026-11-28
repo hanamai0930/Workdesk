@@ -81,6 +81,11 @@
     border-radius:5px;padding:4px 6px;margin:5px 4px -3px -3px;
   }
   .wd-talk-delivery>button:hover {background:var(--wk-soft);color:var(--wk-text)}
+  .wd-talk-delivery>button+button {margin-inline-start:9px}
+  :scope.wd-turn-model-menu .wk-model-picker-list {max-height:min(370px,55vh);scrollbar-width:thin}
+  :scope.wd-turn-model-menu .wk-model-picker-list button {padding:8px 10px;font-size:14px;line-height:1.45}
+  :scope.wd-turn-model-menu .wk-model-picker-list button[aria-selected=true] {background:var(--wk-soft)}
+  :scope.wd-turn-model-menu .wk-model-picker-note {border-top:1px solid var(--wk-line);margin-top:6px;padding-top:7px}
   .wd-talk-model-change {display:flex;align-items:center;justify-content:center;gap:10px;color:var(--talk-quiet);font-size:12px;line-height:1.5;text-align:center}
   .wd-talk-model-change::before,.wd-talk-model-change::after {content:"";flex:1;min-width:12px;height:1px;background:var(--wk-line)}
   .wd-talk-compose {padding:8px 0 14px;flex:none}
