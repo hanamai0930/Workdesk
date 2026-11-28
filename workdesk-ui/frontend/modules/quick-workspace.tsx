@@ -111,6 +111,7 @@ export function useQuickWorkspaceView(enabled = true, stateKey?: string) {
     toggleRef.current?.focus();
   }
   function toggle() { interacted.current = true; if (open) close(); else setOpen(true); }
+  function reveal() { interacted.current = true; setOpen(true); }
   function toggleExpanded() { interacted.current = true; if (open) setExpanded(!expanded); }
   function openTool(tool: QuickTool, file?: string) {
     interacted.current = true;
@@ -137,10 +138,10 @@ export function useQuickWorkspaceView(enabled = true, stateKey?: string) {
     document.addEventListener('keydown', shortcut);
     return () => document.removeEventListener('keydown', shortcut);
   });
-  return { open, expanded, requestedTool, toggleRef, panelRef, close, toggle, toggleExpanded, openTool };
+  return { open, expanded, requestedTool, toggleRef, panelRef, close, toggle, toggleExpanded, openTool, reveal };
 }
 
-export function QuickWorkspace({ projectId, records = [], currentChat, children, onClose, expanded = false, onToggleExpanded, requestedTool, stateKey }: {
+export function QuickWorkspace({ projectId, records = [], currentChat, children, onClose, expanded = false, onToggleExpanded, requestedTool, stateKey, preview }: {
   projectId?: string | null;
   records?: RecordLink[];
   currentChat?: string;
@@ -149,6 +150,7 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
   expanded?: boolean;
   onToggleExpanded?: () => void;
   requestedTool?: QuickToolRequest;
+  preview?: { request: object; name: string; body: ReactNode; onClose: () => void };
   stateKey?: string;
 }) {
   const callerKey = stateKey;
@@ -156,6 +158,11 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
   // Restoring a layout must not reopen an external conversation or replay a file request.
   function savedTabs() { return (readWorkspace(stateKey).tabs || []).filter((tab): tab is QuickTool => Object.hasOwn(tools, tab) && tab !== 'chat'); }
   const [current, setCurrent] = useState<Tool>(() => { const saved = readWorkspace(stateKey).current; return saved && savedTabs().includes(saved as QuickTool) ? saved : 'start'; });
+  const [showPreview, setShowPreview] = useState(false);
+  const viewingFile = !!preview && showPreview;
+  useLayoutEffect(() => {
+    setShowPreview(!!preview);
+  }, [preview?.request]);
   const [tabs, setTabs] = useState<QuickTool[]>(savedTabs);
   const [query, setQuery] = useState('');
   const [fileQuery, setFileQuery] = useState('');
@@ -177,7 +184,7 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
   useEffect(() => {
     const active = workspaceRef.current?.querySelector('.wd-quick-tab[aria-current="page"]');
     (active?.closest('.wd-quick-tab-group') || active)?.scrollIntoView({ block:'nearest', inline:'nearest' });
-  }, [current, tabs]);
+  }, [current, tabs, viewingFile, preview?.request]);
   const text = query.trim();
   const address = webAddress(text);
   const localLink = /^#(?:chat|work\/(?:task|dialogue)|work-items\/conversation)\/[a-z\d_%-]+$/i.test(text);
@@ -187,6 +194,7 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
 
   function open(tool: Exclude<Tool, 'start'>) {
     interacted.current = true;
+    setShowPreview(false);
     setTabs(previous => previous.includes(tool) ? previous : [...previous, tool]);
     setCurrent(tool);
   }
@@ -244,11 +252,17 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
   }}>
     <header className="wd-quick-header">
       <nav className="wd-quick-tabs" aria-label="右侧工具页签">
-        <button type="button" className="wd-quick-tab wd-quick-home-tab" aria-current={current === 'start' ? 'page' : undefined}
-          aria-label="快捷工作区" title="快捷工作区" onClick={() => { setCurrent('start'); requestAnimationFrame(() => queryInput.current?.focus()); }}><Plus aria-hidden="true"/><span>快捷工作区</span></button>
-        {tabs.map(tab => { const Icon = tools[tab].Icon; return <span key={tab} className="wd-quick-tab-group" data-selected={current === tab}>
-          <button type="button" className="wd-quick-tab" aria-current={current === tab ? 'page' : undefined}
-            aria-label={tools[tab].tab} title={tools[tab].tab} onClick={() => setCurrent(tab)}><Icon aria-hidden="true"/><span>{tools[tab].tab}</span></button>
+        {preview && <span className="wd-quick-tab-group wd-quick-preview-tab" data-selected={viewingFile}>
+          <button type="button" className="wd-quick-tab" aria-current={viewingFile ? 'page' : undefined} title={preview.name}
+            onClick={() => setShowPreview(true)}><FileText/><span>{preview.name}</span></button>
+          <button type="button" className="wd-quick-icon wd-quick-tab-close" aria-label="关闭文件预览" title="关闭文件预览"
+            onClick={() => { preview.onClose(); if (!tabs.length) onClose(); }}><X/></button>
+        </span>}
+        <button type="button" className="wd-quick-tab wd-quick-home-tab" aria-current={!viewingFile && current === 'start' ? 'page' : undefined}
+          aria-label="快捷工作区" title="快捷工作区" onClick={() => { setShowPreview(false); setCurrent('start'); requestAnimationFrame(() => queryInput.current?.focus()); }}><Plus aria-hidden="true"/><span>快捷工作区</span></button>
+        {tabs.map(tab => { const Icon = tools[tab].Icon; return <span key={tab} className="wd-quick-tab-group" data-selected={!viewingFile && current === tab}>
+          <button type="button" className="wd-quick-tab" aria-current={!viewingFile && current === tab ? 'page' : undefined}
+            aria-label={tools[tab].tab} title={tools[tab].tab} onClick={() => { setShowPreview(false); setCurrent(tab); }}><Icon aria-hidden="true"/><span>{tools[tab].tab}</span></button>
           <button type="button" className="wd-quick-icon wd-quick-tab-close" title={'关闭'+tools[tab].tab+'页签'} aria-label={'关闭'+tools[tab].tab+'页签'} onClick={() => close(tab)}><X/></button>
         </span>; })}
       </nav>
@@ -257,7 +271,8 @@ export function QuickWorkspace({ projectId, records = [], currentChat, children,
         <button type="button" className="wd-quick-icon wd-quick-close" onClick={onClose} title="收起侧栏，保留工具页签" aria-label="收起快捷工作区"><PanelRightClose/></button>
       </div>
     </header>
-    <div className="wd-quick-scroll">
+    {preview && <div className="wd-quick-scroll" hidden={!viewingFile}>{preview.body}</div>}
+    <div className="wd-quick-scroll" hidden={viewingFile}>
       {current === 'start' && <div className="wd-quick-launcher">
         <form className="wd-quick-search" onSubmit={search}>
           <Search aria-hidden="true"/>

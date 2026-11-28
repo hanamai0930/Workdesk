@@ -1,0 +1,19 @@
+@scope ([data-ui-module="workbench"]) {
+  .wd-sheet-preview { display:flex; flex-direction:column; height:100%; min-height:0; color:var(--text); background:var(--panel); }
+  .wd-sheet-formula { display:flex; align-items:center; gap:10px; padding:6px 10px; font-size:13px; border-bottom:1px solid var(--line); }
+  .wd-sheet-formula span { min-width:54px; border-right:1px solid var(--line); }
+  .wd-sheet-formula i { color:var(--muted); }
+  .wd-sheet-formula output { white-space:pre; overflow:auto; }
+  .wd-sheet-scroll { overflow:auto; flex:1; min-height:0; overscroll-behavior:contain; }
+  .wd-sheet-scroll table { border-collapse:separate; border-spacing:0; table-layout:fixed; width:max-content; font:13px/1.45 system-ui,sans-serif; }
+  .wd-sheet-scroll :is(th,td) { padding:1px 5px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); height:22px; }
+  .wd-sheet-scroll th { background:var(--soft); color:var(--muted); font-weight:normal; text-align:center; }
+  .wd-sheet-scroll thead th { position:sticky; top:0; z-index:1; }
+  .wd-sheet-scroll tbody th { position:sticky; left:0; min-width:34px; }
+  .wd-sheet-scroll td { width:88px; max-width:88px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:cell; }
+  .wd-sheet-scroll td[data-number=true] { text-align:right; }
+  .wd-sheet-scroll td[data-selected=true] { outline:2px solid #397ab8; outline-offset:-2px; }
+  .wd-sheet-tabs { display:flex; align-items:center; gap:3px; padding:4px 7px; border-top:1px solid var(--line); overflow-x:auto; }
+  .wd-sheet-tabs button { padding:4px 10px; white-space:nowrap; font-size:13px; }
+  .wd-sheet-tabs button[aria-selected=true] { border-bottom:2px solid var(--text); }
+}

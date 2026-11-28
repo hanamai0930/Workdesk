@@ -114,7 +114,7 @@ def material_view(root,name):
         return {**record,'binary':True,'content':'二进制材料已保存。此处仅核对文件字节与指纹，不表示模型读取或理解。请查看附件处理路线及运行回执。'}
 
 
-def select_files(root, names, forbidden=None):
+def select_files(root, names, forbidden=None, *, directories=True):
     root=Path(root).absolute()
     if not root.is_dir():raise ValueError('项目目录不存在。')
     if not isinstance(names,list) or len(names)>MAX_FILES:raise ValueError('选定材料列表过大。')
@@ -128,6 +128,7 @@ def select_files(root, names, forbidden=None):
         if forbidden and (path.resolve()==Path(forbidden).resolve() or path.resolve().is_relative_to(Path(forbidden).resolve())):
             raise ValueError('控制服务数据不能作为任务材料。')
         if io_path(path).is_dir():
+            if not directories:raise ValueError('请选择具体成果文件。')
             for child in sorted(io_path(path).iterdir()):
                 if child.name in SKIP_DIRS or child.name.lower() in PRIVATE:
                     excluded.append(child.relative_to(io_path(root)).as_posix());continue

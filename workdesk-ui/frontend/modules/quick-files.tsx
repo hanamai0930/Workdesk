@@ -44,7 +44,7 @@ function useFileRequest<T>(url:string|null){
   return result?.url===url?result:null;
 }
 
-function PreviewContents({value,name,pdf}:{value:Preview;name:string;pdf?:string}){
+export function PreviewContents({value,name,pdf}:{value:Preview;name:string;pdf?:string}){
   if(value.kind==='image')return <img src={value.image} alt={name}/>;
   if(value.kind==='pdf'&&pdf)return <iframe title={`预览 ${name}`} src={pdf}/>;
   if(value.kind!=='text')return <p className="wk-note">此文件格式需要使用对应的本机应用打开。</p>;

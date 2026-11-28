@@ -1,8 +1,11 @@
 import {Fragment,useEffect,useRef,useState,type ReactNode} from 'react';
-import {ArrowUp,FileText,PanelLeft} from 'lucide-react';
+import {ArrowUp,FileText,PanelLeft,PanelRight} from 'lucide-react';
 import {coreClient as core} from '../core/client';
 import {partnerRunning,partnerStateLabel,type PartnerRun} from '../core/partner-runtime';
 import {Template} from '../components/template';
+import {SafeMarkdown} from '../components/safe-markdown';
+import {QuickWorkspace,useQuickWorkspaceView} from './quick-workspace';
+import {TaskFilePreview,type ResultFile} from './task-file-preview';
 import type {TaskDetail,Job,Decision,Version,ToolRequest,Delivery} from './task-delivery';
 import './task-chat.css';
 
@@ -20,11 +23,23 @@ function Message({name,user=false,children}:{name:string;user?:boolean;children:
   return <article className={user?'wd-talk-user':'wd-talk-answer'}><span className="wk-byline">{name}</span><div className="wd-talk-body">{children}</div></article>;
 }
 function Text({value}:{value:string}){return <Template html={window.WorkdeskLegacy.markdown(value)}/>;}
-function Answer({value}:{value:string}){
-  if(value.length<=580)return <Text value={value}/>;
+function Answer({value,files}:{value:string;files:Map<string,()=>void>}){
+  if(value.length<=580)return <SafeMarkdown text={value} fileLinks={files}/>;
   const opening=value.split(/\n\s*\n/)[0].trim();
   const short=opening.length<=300?opening:opening.slice(0,280)+'…';
-  return <><Text value={short}/><details><summary>查看完整回复</summary><Text value={value}/></details></>;
+  return <><SafeMarkdown text={short} fileLinks={files}/><details><summary>查看完整回复</summary><SafeMarkdown text={value} fileLinks={files}/></details></>;
+}
+function resultFiles(output:Output,round:number):ResultFile[]{
+  if(output.file && output.job){
+    const f=output.file;
+    return [{name:fileName(f.path),path:f.path,round,sha256:f.sha256,mime:f.mime,source:'job',
+      route:'v2/jobs/'+enc(output.job.id)+'/artifact?'+new URLSearchParams({path:f.path,download:'1'})}];
+  }
+  const s=output.snapshot;
+  return s?Object.entries(s.snapshot.manifest).map(([file,{sha256}])=>({
+    name:fileName(file),path:file,round,sha256,source:'snapshot',
+    route:'v1/result-preview?'+new URLSearchParams({id:s.id,snapshot_hash:s.snapshot_hash,file})
+  })):[];
 }
 function mutation(text:string){
   return !/[?？]|^(为什么|请问|能否|是否|如何|怎么|解释|告诉我)|(?:吗|呢)[。！!]?$/u.test(text)&&/^(请|帮我|麻烦|再|请你|我想|我需要|可以)?\s*(把|将|改为|改成|修改|修订|调整|更新|换成|删除|添加|增加|去掉|重做)|^[^。！？\n]{1,36}(改成|改为|调成|调整为)/u.test(text);
@@ -42,6 +57,10 @@ export function TaskChat(p:Props){
   const [text,setText]=useState(''),[target,setTarget]=useState(''),[askTarget,setAskTarget]=useState(false);
   const [snapshots,setSnapshots]=useState<Snapshot[]>([]),[snapshotError,setSnapshotError]=useState('');
   const [reply,setReply]=useState<Record<string,string>>({});
+  const [preview,setPreview]=useState<ResultFile>();
+  const workspaceKey='work:'+task.id+':project:'+task.project_id;
+  const workspace=useQuickWorkspaceView(true,workspaceKey);
+  function openFile(file:ResultFile){setPreview(file);workspace.reveal();}
   const log=useRef<HTMLDivElement>(null),stick=useRef(true),input=useRef<HTMLTextAreaElement>(null);
   const live=useRef(true);
   useEffect(()=>{live.current=true;return()=>{live.current=false;};},[]);
@@ -115,31 +134,14 @@ export function TaskChat(p:Props){
       if(fromMessage&&live.current){setText('');setTarget('');setAskTarget(false);}
     });
   }
-  function saveFile(blob:Blob,name:string){
-    const url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download=fileName(name);document.body.append(a);a.click();a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),60000);
-  }
-  async function downloadArtifact(url:string,f:Version){
-    // Request file bytes explicitly so Edge hands Office documents to this result card.
-    const response=await fetch(url,{cache:'no-store',credentials:'omit',headers:{Accept:'application/octet-stream',Range:'bytes=0-'}});
-    if(!response.ok)throw Error('文件暂时无法下载，请重新核对这个版本。');
-    const bytes=await response.arrayBuffer();
-    const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
-    if(digest!==f.sha256)throw Error('文件与所选版本不一致，请重新核对。');
-    if(live.current)saveFile(new Blob([bytes],{type:f.mime}),f.path);
-  }
-  async function download(s:Snapshot,file:string){
-    const v=await core.request<{data:string;mime:string;sha256:string}>('v1/result-preview?'+new URLSearchParams({id:s.id,snapshot_hash:s.snapshot_hash,file}));
-    if(!live.current)return;
-    if(v.sha256!==s.snapshot.manifest[file].sha256)throw Error('文件版本已变化，请重新打开此成果。');
-    saveFile(new Blob([Uint8Array.from(atob(v.data),c=>c.charCodeAt(0))],{type:v.mime}),file);
-  }
   const state=run.state==='STOP_REQUESTED'?'正在停止这项工作。':run.state.includes('UNKNOWN')?'上次运行的结果还没有确认。':
     run.state==='WAITING_APPROVAL'?'正在等你确认本次操作。':run.state==='WAITING_INPUT'?'需要你补充信息。':active?'正在处理你的要求…':
     ended?(info?.state==='COMPLETED'?'任务已完成。':items.length?'本轮已结束，成果可查看。':'本轮已结束。'):'本次工作已暂停。';
-  return <section className="wd-task-chat" aria-label="工作对话" data-partner-work>
-    <header><button type="button" onClick={p.onDetails}><PanelLeft size={15}/>任务详情</button><strong>{task.title}</strong></header>
+  return <div className="wd-task-layout" data-expanded={workspace.open&&workspace.expanded}>
+    <section className="wd-task-chat" aria-label="工作对话" data-partner-work>
+    <header><button type="button" onClick={p.onDetails}><PanelLeft size={15}/>任务详情</button><strong>{task.title}</strong>
+      <button ref={workspace.toggleRef} className="wd-task-side-toggle" aria-label="工作侧栏" title="工作侧栏" aria-expanded={workspace.open}
+        aria-controls="wd-task-side" onClick={workspace.toggle}><PanelRight size={16}/></button></header>
     <div ref={log} className="wd-talk-scroll" onScroll={e=>{const el=e.currentTarget;stick.current=el.scrollHeight-el.scrollTop-el.clientHeight<64;}}>
     <div className="wd-talk-column">
     <Message name={nickname} user><Text value={task.spec.goal}/></Message>
@@ -150,19 +152,27 @@ export function TaskChat(p:Props){
       const user=continuation?.user_message??(priorDecision?priorDecision.note:recorded);
       const isLatest=a.id===latest.id,answer=a.result?.answer||a.result?.native_result?.text||(isLatest?(run.output||run.result?.text):'');
       const versions=outputs(a.id);
+      const filesByVersion=versions.map(v=>resultFiles(v,n+1));
+      const links=new Map<string,()=>void>(), seen=new Set<string>();
+      for(const file of filesByVersion.flat()){
+        if(seen.has(file.name))links.delete(file.name);
+        else {seen.add(file.name);links.set(file.name,()=>openFile(file));}
+      }
       return <Fragment key={a.id}>
         {user&&<Message name={nickname} user><Text value={user}/></Message>}
-        {answer&&<Message name={p.speaker}><Answer value={answer}/></Message>}
-        {versions.map(i=>{
+        {answer&&<Message name={p.speaker}><Answer value={answer} files={links}/></Message>}
+        {versions.map((i,index)=>{
           const accepted=i.decision?.decision==='accept'||i.snapshot?.decision?.value==='accept';
           const returned=i.decision?.decision==='revise'||i.snapshot?.decision?.value==='return';
           const snapshot=i.snapshot;
           const expected=i.job&&p.requests.find(r=>r.invocation_id===i.job!.id)?.parameters.expected;
           const checkedValues=i.job?.checks?.some(c=>c.kind==='关键值'&&c.state==='PASSED'&&c.sha256===i.file?.sha256)&&expected&&typeof expected==='object'
             ?Object.entries(expected).slice(0,4).map(([cell,v])=>cell+' = '+String(v)).join('，'):'';
-          return <Message key={i.key} name="Workdesk"><div className="wd-talk-artifact"><FileText size={18}/><strong>{i.label}</strong><small>第 {n+1} 轮 · {accepted?'已验收':returned?'已退回':'待验收'}</small></div>
-            {checkedValues&&<p>文件已核对：{checkedValues}。</p>}{i.file&&i.job&&<a download={i.label} onClick={e=>{if(!e.ctrlKey&&!e.metaKey&&!e.shiftKey){e.preventDefault();const url=e.currentTarget.href;void p.act(()=>downloadArtifact(url,i.file!),true);}}} href={'api/v2/jobs/'+enc(i.job.id)+'/artifact?'+new URLSearchParams({path:i.file.path,download:'1'})}>下载此版本</a>}
-            {snapshot&&Object.keys(snapshot.snapshot.manifest).map(file=><button key={file} onClick={()=>void p.act(()=>download(snapshot,file),true)}>下载 {fileName(file)}</button>)}
+          return <Message key={i.key} name="Workdesk"><div className="wd-talk-artifact">
+            {filesByVersion[index].length?filesByVersion[index].map(file=><button type="button" key={file.route} className="wd-talk-file-link"
+              data-preview-file={file.name} title={'预览 '+file.path} onClick={()=>openFile(file)}><FileText size={16}/>{file.name}</button>):<strong>{i.label}</strong>}
+            <small>第 {n+1} 轮 · {accepted?'已验收':returned?'已退回':'待验收'}</small></div>
+            {checkedValues&&<p>文件已核对：{checkedValues}。</p>}
             {snapshot&&!Object.keys(snapshot.snapshot.manifest).length&&!answer&&<details><summary>查看回复</summary><Text value={String((snapshot.snapshot as {answer?:string}).answer||'已保存回复记录。')}/></details>}
             {isLatest&&ended&&<><button disabled={p.blocked} onClick={()=>{setTarget(i.key);setAskTarget(false);input.current?.focus();}}>修改此版</button>
               {!accepted&&<button disabled={p.blocked} onClick={()=>accept(i)}>验收此版</button>}</>}
@@ -192,5 +202,11 @@ export function TaskChat(p:Props){
         <button className="wk-send" aria-label="发送工作消息" disabled={p.blocked||!text.trim()||(!active&&!ended)||run.state==='STOP_REQUESTED'}><ArrowUp size={18}/></button></div>
       </form>
     </div>
-  </section>;
+  </section>
+  <aside id="wd-task-side" ref={workspace.panelRef} className="wd-task-side" aria-label="工作侧栏" hidden={!workspace.open}>
+    <QuickWorkspace stateKey={workspaceKey} projectId={task.project_id} onClose={workspace.close}
+      expanded={workspace.expanded} onToggleExpanded={workspace.toggleExpanded}
+      preview={preview && {request:preview,name:preview.name,onClose:()=>setPreview(undefined),
+        body:<TaskFilePreview key={preview.route+preview.sha256} file={preview}/>}}/>
+  </aside></div>;
 }

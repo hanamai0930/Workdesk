@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { createRoot, type Root } from 'react-dom/client';
 import './safe-markdown.css';
 
-type MarkdownNode = { type: string; value?: string; children?: MarkdownNode[] };
+type MarkdownNode = { type: string; value?: string; url?: string; children?: MarkdownNode[] };
 const blockContainers = new Set(['root', 'blockquote', 'listItem', 'footnoteDefinition']);
 
 /** Keep HTML/XML as source text; never pass it through as active HTML. */
@@ -83,9 +83,39 @@ const components = {
   pre: CodeBlock,
 };
 
-export function SafeMarkdown({ text }: { text: string }) {
+type FileLinks = ReadonlyMap<string, () => void>;
+
+function linkFileMentions(files: FileLinks) {
+  const names = [...files.keys()].sort((a,b) => b.length - a.length);
+  const escaped = names.map(name => name.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\$&'));
+  const mention = new RegExp('(?<![\\w.\\-])(' + escaped.join('|') + ')(?![\\w.\\-])', 'gu');
+  return () => (tree: MarkdownNode) => {
+    function visit(parent: MarkdownNode) {
+      if (!parent.children || ['link','linkReference','image','code'].includes(parent.type)) return;
+      parent.children = parent.children.flatMap(node => {
+        if (node.type === 'inlineCode' && node.value && files.has(node.value))
+          return [{ type: 'link', url: '', children: [node] }];
+        if (node.type !== 'text' || !node.value) { visit(node); return [node]; }
+        return node.value.split(mention).filter(Boolean).map((part): MarkdownNode =>
+          files.has(part) ? { type: 'link', url: '', children: [{ type: 'text', value: part }] } : { type: 'text', value: part });
+      });
+    }
+    visit(tree);
+  };
+}
+
+export function SafeMarkdown({ text, fileLinks }: { text: string; fileLinks?: FileLinks }) {
+  const withFiles = fileLinks?.size ? {
+    plugins: [...plugins, linkFileMentions(fileLinks)],
+    components: { ...components, a: (props: ComponentProps<'a'>) => {
+      const name = plainText(props.children);
+      const open = !props.href && fileLinks.get(name);
+      return open ? <button type="button" className="wd-talk-file-link" data-preview-file={name} onClick={open}>{props.children}</button>
+        : components.a(props);
+    } },
+  } : { plugins, components };
   return <div className="wd-safe-markdown" data-safe-markdown>
-    <ReactMarkdown skipHtml remarkPlugins={plugins} components={components}
+    <ReactMarkdown skipHtml remarkPlugins={withFiles.plugins} components={withFiles.components}
       urlTransform={(value, key) => key === 'href' ? safeMarkdownLink(value) || '' : ''}>
       {text.replace(/^\uFEFF/, '')}
     </ReactMarkdown>

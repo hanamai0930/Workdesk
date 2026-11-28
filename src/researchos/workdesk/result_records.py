@@ -6,39 +6,104 @@ import tempfile
 import os
 import base64
 import difflib
+import re
+from urllib.parse import unquote
 
 from . import workspace
 from .store import ACTIVE, UNKNOWN, canonical, digest, uid
 
 
-def delivered_answer(db, attempt):
+def _deepseek_turn_events(db, attempt, event_type):
     result = attempt.get('result') or {}
-    answer = result.get('answer') or ''
     run_id = result.get('partner_run_id')
-    if answer or not run_id or result.get('partner_id') != 'deepseek' or attempt['state'] != 'COMPLETED':
-        return answer
-    # This native endpoint also delivers final text in session events. Read only
-    # the final assistant message of the completed turn in this exact run.
-    row = db.execute("""
-        SELECT json_extract(e.data,'$.native.params.event.data.message.content')
+    if not run_id or result.get('partner_id') != 'deepseek' or attempt['state'] != 'COMPLETED':
+        return
+    # Older stores and local standalone endpoints can have no Go event ledger.
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_events'").fetchone():
+        return
+    query = """
+        SELECT json_extract(e.data,'$.native.params.event.data')
         FROM core_partner_events e JOIN core_partner_objects r ON r.kind='run' AND r.id=e.run_id
         WHERE e.run_id=? AND json_extract(r.data,'$.parent_attempt_id')=?
           AND json_extract(r.data,'$.parent_task_id')=?
           AND json_extract(e.data,'$.native.params.sessionId')=?
-          AND json_extract(e.data,'$.native.params.event.type')='assistant/message'
-          AND json_extract(e.data,'$.native.params.event.data.message.role')='assistant'
+          AND json_extract(e.data,'$.native.params.event.type')=?
+          AND (?!='assistant/message' OR json_extract(e.data,'$.native.params.event.data.message.role')='assistant')
           AND json_extract(e.data,'$.native.params.event.data.turn')=(
               SELECT json_extract(end.data,'$.native.params.event.data.turn')
               FROM core_partner_events end WHERE end.run_id=e.run_id
               AND json_extract(end.data,'$.native.params.sessionId')=?
               AND json_extract(end.data,'$.native.params.event.type')='turn/end'
               ORDER BY end.seq DESC LIMIT 1)
-        ORDER BY e.seq DESC LIMIT 1""",
-        (run_id,attempt['id'],attempt['task_id'],attempt.get('session_id'),attempt.get('session_id'))).fetchone()
-    if not row or not row[0]:
-        return ''
-    return '\n'.join(b['text'] for b in json.loads(row[0]) if isinstance(b,dict)
-                     and b.get('type')=='text' and isinstance(b.get('text'),str))
+        ORDER BY e.seq DESC"""
+    if event_type == 'assistant/message':
+        query += ' LIMIT 1'
+    for row in db.execute(query, (run_id, attempt['id'], attempt['task_id'],
+                          attempt.get('session_id'), event_type, event_type, attempt.get('session_id'))):
+        if row[0]:
+            yield json.loads(row[0])
+
+
+def delivered_answer(db, attempt):
+    answer = (attempt.get('result') or {}).get('answer') or ''
+    if answer:
+        return answer
+    event = next(_deepseek_turn_events(db, attempt, 'assistant/message'), {})
+    message = event.get('message', {})
+    return '\n'.join(b['text'] for b in message.get('content', []) if isinstance(b, dict)
+                      and b.get('type') == 'text' and isinstance(b.get('text'), str))
+
+
+def delivered_files(db, task, attempt, answer):
+    # Prefer the native presentation receipt. Where the endpoint has none,
+    # accept only explicit filename links in its final answer, never a directory listing.
+    presented = [f.get('path') for event in _deepseek_turn_events(db, attempt, 'deliverables/presented')
+                 for f in event.get('files', []) if isinstance(f, dict)]
+    paths = presented or _answer_file_links(answer)
+    root = Path(attempt['workspace'])
+    ended = (attempt.get('result') or {}).get('ended_at') or 0
+    names = []
+    matched = set()
+    for path in paths:
+        if not isinstance(path, str) or not path or len(path) > 1024 or path.startswith(('\\\\', '//')):
+            continue
+        try:
+            target = Path(path)
+            if target.drive and not target.is_absolute():
+                continue
+            name = workspace.relative((target.relative_to(root) if target.is_absolute() else target).as_posix())
+            parts = [part.casefold() for part in Path(name).parts]
+            if (any(part.startswith('.') or part in workspace.SKIP_DIRS for part in parts)
+                    or 'workdesk-inputs' in parts or name in task['spec'].get('materials', {})):
+                continue
+            file = workspace.io_path(workspace.plain(root / name, root))
+            if file.is_file() and attempt['started'] <= file.stat().st_mtime <= ended:
+                matched.add(path)
+                if name not in names:
+                    names.append(name)
+        except (ValueError, OSError):
+            continue
+    return names, any(not isinstance(path, str) or path not in matched for path in presented)
+
+
+def _answer_file_links(answer):
+    # A filename as the visible label distinguishes file delivery from prose,
+    # filenames mentioned in code blocks, and links to general documentation.
+    fenced = None
+    pattern = r'(?<!!)\[([^\]\n]{1,240})\]\((?:<([^<>\n]{1,1024})>|([^()\n]{1,1024}))\)'
+    for line in answer.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(('```', '~~~')):
+            marker = stripped[:3]
+            if fenced is None or marker == fenced:
+                fenced = None if fenced else marker
+            continue
+        if fenced:
+            continue
+        for match in re.finditer(pattern, line):
+            path = unquote(match[2] or match[3])
+            if Path(path).name == match[1] and Path(path).suffix:
+                yield path
 
 
 def preview_file(folder, name, expected):
@@ -94,9 +159,13 @@ class Results:
     def capture_delivered(self,db,task,attempt):
         names=task['spec'].get('deliverable_files',[])
         try:
-            for name in names:
-                file=workspace.plain(Path(attempt['workspace'])/name,Path(attempt['workspace']))
-                if not workspace.io_path(file).is_file():raise ValueError('未取得声明文件：'+name)
+            if not names:
+                answer=delivered_answer(db,attempt)
+                names,missing=delivered_files(db,task,attempt,answer)
+                if missing:
+                    self.s.store.event(task['id'],attempt['id'],'work_result_capture_pending',
+                                       {'files':names,'reason':'工作端已报告交付，但部分文件未能在本回合的工作目录中核实。'},db)
+                if not names and not answer:return
             self.capture(db,{'task_id':task['id'],'attempt_id':attempt['id'],'owner':attempt['owner'],'files':names},finishing=True)
         except (ValueError,OSError) as exc:
             self.s.store.event(task['id'],attempt['id'],'work_result_capture_pending',{'files':names,'reason':str(exc)},db)
@@ -109,8 +178,9 @@ class Results:
         if self.s.store.usage(task=task['id'],db=db)['unknown_requests']:raise ValueError('仍有未知请求，先核对。')
         names=p.get('files',[])
         if not isinstance(names,list) or any(not isinstance(n,str) for n in names):raise ValueError('请选择成果文件清单。')
-        root=Path(attempt['workspace']);files,_=workspace.select_files(root,names,self.s.locations.data)
+        root=Path(attempt['workspace']);files,_=workspace.select_files(root,names,self.s.locations.data,directories=not finishing)
         manifest=workspace.current_manifest(root,files)
+        if finishing and set(manifest)!=set(names):raise ValueError('未取得全部交付文件。')
         if sum(f['bytes'] for f in manifest.values())>workspace.MAX_ATTACHMENT_TOTAL:raise ValueError('成果文件合计超过32MB，请减少选择。')
         answer=delivered_answer(db,attempt)
         if not manifest and not answer:raise ValueError('没有可保存的回复或成果文件。')

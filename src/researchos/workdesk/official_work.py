@@ -225,8 +225,8 @@ def run(service, identity, stop, resume_mode, note):
         service.store.update_attempt(identity,result['state'],db=db,result=result)
         db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),identity))
         service.store.event(task['id'],identity,'attempt_result_saved',result,db)
-        if task['spec'].get('work_mode')=='independent' and result['state']=='COMPLETED' and (result.get('answer') or task['spec'].get('deliverable_files')):
-            service.results.capture_delivered(db,task,attempt)
+        if task['spec'].get('work_mode')=='independent' and result['state']=='COMPLETED':
+            service.results.capture_delivered(db,task,service.store.attempt(identity,db))
 
 
 def _legacy_run(service,task,attempt,tools,stop,resume,note):
