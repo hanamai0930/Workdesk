@@ -12,8 +12,10 @@ import subprocess
 import threading
 import time
 
+from . import extension_access as access
+from .partners.native_features import catalog as native_catalog
 from .paths import clean_env
-from .store import uid
+from .store import digest, uid
 
 
 class Extensions:
@@ -27,18 +29,53 @@ class Extensions:
 
     def handlers(self):
         return {'extension.save':self.save,'extension.enable':self.enable,
-                'extension.run':self.prepare,'extension.stop':self.stop,'extension.remove':self.remove}
+                'extension.restore':self.restore,'extension.authorize':self.authorize,'extension.run':self.prepare,'extension.stop':self.stop,'extension.remove':self.remove}
 
-    def catalog(self):
+    def catalog(self, run_id=None, task_id=None):
         with self.s.store.read() as db:
-            entries=self.c.all(db,'extension');runs=self.c.all(db,'extension_run')[:40]
+            if run_id:
+                return {'run':self.c.get(db,'extension_run',run_id)}
+            if task_id:
+                rows=db.execute("SELECT data FROM collaboration WHERE kind='extension_run' AND json_extract(data,'$.task_id')=? ORDER BY updated DESC",(task_id,))
+                return {'task_id':task_id,'runs':[json.loads(row[0]) for row in rows]}
+            entries=self.c.all(db,'extension')
+            runs=[json.loads(r[0]) for r in db.execute("SELECT data FROM collaboration WHERE kind='extension_run' ORDER BY updated DESC LIMIT 40")]
+            checked={e['id']:r['tools'] for e in entries if (r:=self.checked(db,e))}
+
+            versions=[]
+            for kind,owner in [('extension_version','extension_id'),('capability_version','capability_id')]:
+                versions.extend({'owner':r[owner],'revision':r['revision'],'updated':r['updated']} for r in self.c.all(db,kind))
+            contexts=access.contexts(db)
             capabilities=self.s.capabilities.catalog(db);scenes=self.s.scenes.catalog(db)
-        return {'extensions':entries,'runs':runs,'capabilities':capabilities,'scenes':scenes,'no_dispatch':True,
+        return {'extensions':entries,'checked_tools':checked,'versions':versions,'contexts':contexts,'runs':runs,'capabilities':capabilities,'scenes':scenes,'no_dispatch':True,
                 'execution_path':'EXPLICIT_LOCAL_MCP_OPERATION',
                 'task_auto_mount':'EXPLICIT_SCENE_SELECTION','credentials':'NOT_READ_OR_FORWARDED',
-                'native':[{'provider':p,'source':'官方SDK / CLI原生路径',
-                           'management':'插件 / Skills 随原生工作端配置与当前任务权限；用户插件仍属用户来源，不由此处覆盖。'}
-                          for p in ('codex','qwen','deepseek')]}
+                'partner_releases':[{'release_id':key,**value} for key,value in native_catalog().items()],
+                'native':[{'provider':p,'source':'官方工作端','management':'依已登记发行版的路由、传输和任务授权加载。'}
+                          for p in sorted({r['partner_id'] for r in native_catalog().values()})]}
+
+    @staticmethod
+    def checked(db,entry):
+        row=db.execute("""SELECT data FROM collaboration WHERE kind='extension_run'
+            AND json_extract(data,'$.extension.id')=? AND json_extract(data,'$.extension.revision')=?
+            AND json_extract(data,'$.extension.activation') IS ? AND json_extract(data,'$.state')='SUCCEEDED'
+            AND json_extract(data,'$.operation')='check' ORDER BY updated DESC LIMIT 1""",
+            (entry['id'],entry['revision'],entry.get('activation'))).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def version(self,db,entry):
+        key='extension-version:'+entry['revision']
+        if not db.execute("SELECT 1 FROM collaboration WHERE id=?", (key,)).fetchone():
+            self.c.put(db,'extension_version',dict(entry,id=key,extension_id=entry['id']))
+
+    def restore(self,db,p):
+        current=self.c.get(db,'extension',p.get('id'))
+        previous=self.c.get(db,'extension_version','extension-version:'+str(p.get('target_revision')))
+        if current['id']!=previous['extension_id'] or current['revision']==previous['revision']:
+            raise ValueError('请选择此服务的另一个历史版本。')
+        # Restore the exact recorded files, never silently adopt changed dependencies.
+        access.check_dependencies(self.s,db,previous)
+        return self.save(db,{**previous,'id':current['id'],'revision':p.get('revision')})
 
     def save(self,db,p):
         from .capabilities import mcp_config
@@ -51,10 +88,19 @@ class Extensions:
         if p.get('id'):
             old=self.c.get(db,'extension',identity)
             if p.get('revision')!=old['revision']:raise ValueError('MCP 配置版本已改变，请刷新。')
+            self.version(db,old)
         if any(e['name']==name and e['id']!=identity for e in entries):raise ValueError('扩展名称已存在。')
         entry={'id':identity,'name':name,'source':source.strip(),'kind':'USER_MCP',
-               'config':config,'revision':uid(),
+               'config':config,'revision':uid(),'dependencies':access.dependencies(config),
+               'permissions':{'tool_calls_per_operation':1,'forwards_credentials':False,'requires_task_confirmation':True},
                'enabled':False,'updated':time.time()}
+        bundle=p.get('bundle') or (old.get('bundle') if p.get('id') else None)
+        if bundle:
+            if not isinstance(bundle,dict) or set(bundle)!={'id','revision','server'}:
+                raise ValueError('插件来源须指定标识、修订和服务名。')
+            entry['bundle']=bundle
+            access.check_dependencies(self.s,db,entry)
+        self.version(db,entry)
         self.c.put(db,'extension',entry)
         return {'extension':entry,'no_dispatch':True,'configuration_change_disables':True}
 
@@ -69,25 +115,45 @@ class Extensions:
         e=self.c.get(db,'extension',p.get('id'))
         if type(p.get('enabled')) is not bool:raise ValueError('启停状态须为布尔值。')
         if p.get('revision')!=e['revision']:raise ValueError('扩展配置已改变，请刷新。')
+        if p['enabled']!=e['enabled']:e['activation']=uid()
         e.update(enabled=p['enabled'],updated=time.time());self.c.put(db,'extension',e)
         return {'extension':e,'no_dispatch':True,'in_flight':'Existing operations retain their frozen configuration.'}
 
-    def prepare(self,db,p):
+    def selection(self,db,p):
         e=self.c.get(db,'extension',p.get('id'))
         if not e['enabled']:raise ValueError('扩展已停用。')
         if p.get('revision')!=e['revision']:raise ValueError('扩展配置已改变，请刷新后重新确认。')
-        if any(r['state'] in {'QUEUED','RUNNING','STOP_REQUESTED'} for r in self.c.all(db,'extension_run')):
-            raise ValueError('仍有扩展操作在途，先停止或等待回收。')
-        operation=p.get('operation','check');tool=p.get('tool');arguments=p.get('arguments',{})
+        operation=p.get('operation','check');tool=p.get('tool');arguments=p.get('arguments',{});definition=None
         if operation not in {'check','call'}:raise ValueError('未知扩展操作。')
         if operation=='call':
             if not isinstance(arguments,dict) or len(json.dumps(arguments).encode())>65536:raise ValueError('工具参数须为最多64KiB的JSON对象。')
-            prior=next((r for r in self.c.all(db,'extension_run') if r['extension']['id']==e['id'] and r['extension']['revision']==e['revision'] and r['state']=='SUCCEEDED'),None)
-            if not prior or tool not in [t['name'] for t in prior.get('tools',[])]:raise ValueError('请先检查当前版本，并选择已列出的准确工具名。')
+            prior=self.checked(db,e)
+            definition=next((t for t in (prior or {}).get('tools',[]) if t['name']==tool),None)
+            if not definition:raise ValueError('请先检查当前版本，并选择已列出的准确工具名。')
+        files=access.check_dependencies(self.s,db,e)
+        if operation=='call' and prior.get('dependencies')!=files:
+            raise ValueError('程序或脚本与已检查版本不符，请重新检查。')
+        return e,operation,tool,arguments,files,definition
+
+    def authorize(self,db,p):
+        e,operation,tool,arguments,_,definition=self.selection(db,p)
+        if operation!='call':raise ValueError('只可授权准确的工具调用。')
+        row=access.authorize(self.s,db,e,{**p,'tool':tool,'arguments':arguments,'tool_definition_hash':digest(definition)})
+        return {'authorization_id':row['id'],'authorization':row,'no_dispatch':True}
+
+    def prepare(self,db,p):
+        e,operation,tool,arguments,files,definition=self.selection(db,p)
+        if db.execute("SELECT 1 FROM collaboration WHERE kind='extension_run' AND json_extract(data,'$.state') IN ('QUEUED','RUNNING','STOP_REQUESTED') LIMIT 1").fetchone():
+            raise ValueError('仍有扩展操作在途，先停止或等待回收。')
         run={'id':'extension-run:'+uid(),'extension':e,'operation':operation,'tool':tool if operation=='call' else None,
              'arguments':arguments if operation=='call' else {},'state':'QUEUED','created':time.time(),
              'limits':{'seconds':15,'tool_calls':1 if operation=='call' else 0,'output_bytes':1048576,'model_requests':0},
              'material_recipient':e['name'],'no_automatic_retry':True}
+        run.update(command_id=self.s.command_identity,dependencies=files,tool_definition=definition,
+                   implementation_revision=self.s.implementation,process_instance=self.s.instance)
+        if 'authorization_id' in p or any(k in p for k in access.SCOPE):
+            if operation!='call':raise ValueError('任务授权仅适用于调用。')
+            access.consume(self.s,db,e,p,run)
         self.c.put(db,'extension_run',run)
         return {'run_id':run['id'],'launch_extension':run['id'],'state':'QUEUED'}
 
@@ -117,7 +183,17 @@ class Extensions:
         process=None;job=None;run=None;sent=False;tools=[];result=None;reader_thread=None
         try:
             with self.s.store.write() as db:
-                run=self.c.get(db,'extension_run',identity);run.update(state='RUNNING',started=time.time())
+                run=self.c.get(db,'extension_run',identity)
+                if run['state']=='STOP_REQUESTED' or stop.is_set():
+                    stop.set()
+                    raise InterruptedError('扩展操作已请求停止。')
+                entry=self.c.get(db,'extension',run['extension']['id'])
+                if not entry['enabled'] or entry['revision']!=run['extension']['revision'] or entry.get('activation')!=run['extension'].get('activation'):
+                    raise ValueError('扩展准入已变化。')
+                if access.check_dependencies(self.s,db,entry)!=run['dependencies']:
+                    raise ValueError('MCP 依赖已变化。')
+                if run.get('task_id'):access.check_scope(db,run)
+                run.update(state='RUNNING',started=time.time())
                 self.c.put(db,'extension_run',run)
             config=run['extension']['config'];deadline=time.monotonic()+15;messages=queue.Queue(maxsize=256)
             env=clean_env()
@@ -193,8 +269,13 @@ class Extensions:
                 if not isinstance(listing,dict) or not isinstance(listing.get('tools'),list):raise ValueError('工具目录分页无效。')
                 tools+=listing['tools']
             if any(not isinstance(t,dict) or not isinstance(t.get('name'),str) for t in tools):raise ValueError('工具名无效。')
+            if len({t['name'] for t in tools})!=len(tools):raise ValueError('MCP 返回重复的工具名。')
             if run['operation']=='call':
-                if run['tool'] not in [t['name'] for t in tools]:raise ValueError('当前进程未提供选定工具。')
+                if run.get('task_id'):
+                    with self.s.store.read() as db:access.check_scope(db,run)
+                    if time.time()>=run['authorization_expires_at']:raise ValueError('本次扩展授权已到期。')
+                current=next((t for t in tools if t['name']==run['tool']),None)
+                if current!=run['tool_definition']:raise ValueError('当前服务工具目录已变化，请重新检查并确认调用。')
                 result=request(3,'tools/call',{'name':run['tool'],'arguments':run['arguments']})
                 if not isinstance(result,dict):raise ValueError('工具返回格式无效。')
             state='TOOL_ERROR' if isinstance(result,dict) and result.get('isError') else 'SUCCEEDED';error=None
@@ -220,3 +301,6 @@ class Extensions:
                                process_cleanup=cleanup,tool_request_sent=sent,remote_side_effects='UNKNOWN' if sent else 'NO_TOOL_CALL_SENT')
                     if cleanup=='UNKNOWN':run['state']='UNKNOWN'
                     self.c.put(db,'extension_run',run)
+                    if run.get('task_id'):
+                        self.s.store.event(run['task_id'],run['attempt_id'],'extension.finished',
+                            {k:run[k] for k in ('id','authorization_id','command_id','state','process_cleanup','tool_request_sent')},db)

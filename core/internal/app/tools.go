@@ -24,6 +24,7 @@ import (
 
 type runningJob struct{ cancel context.CancelFunc }
 type Job struct {
+	Action                 string           `json:"action,omitempty"`
 	CommandID              string           `json:"command_id,omitempty"`
 	TaskID                 string           `json:"task_id,omitempty"`
 	AttemptID              string           `json:"attempt_id,omitempty"`
@@ -176,6 +177,11 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 				return e
 			}
 			receipt = map[string]any{"invocation_id": job.ID, "state": "QUEUED", "real_model_requests": 0}
+		case "tool.input":
+			receipt, taskID, attemptID, e = a.queueTerminalInput(s, p)
+			if e != nil {
+				return e
+			}
 		case "tool.cancel":
 			cancelID = str(p["invocation_id"])
 			r, e := s.Execute(`SELECT state,data FROM core_tool_jobs WHERE id=?`, []any{cancelID})
@@ -233,6 +239,11 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 		a.mu.Unlock()
 		go a.runTool(ctx, cancel, job)
 	}
+	if fresh && kind == "tool.input" {
+		if err := a.sendTerminalInput(str(p["invocation_id"]), id, str(p["text"])); err != nil {
+			return nil, fmt.Errorf("输入交付待核对，请查原回执：%w", err)
+		}
+	}
 	if fresh && cancelID != "" {
 		a.mu.Lock()
 		if j := a.jobs[cancelID]; j != nil {
@@ -287,7 +298,18 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 	}
 	req := map[string]any{"project_root": job.ProjectRoot, "input_files": job.InputFiles, "output_dir": job.OutputDir}
 	module := "researchos.workdesk.professional_tools.summary"
-	if job.ToolVersion == documentVersion {
+	if job.ToolVersion == computerVersion {
+		prepared, e := a.computerRequest(job)
+		if e != nil {
+			a.admission.Unlock()
+			job.State = "FAILED"
+			job.Error = e.Error()
+			_ = a.saveJob(job, "tool.failed_no_start")
+			return
+		}
+		req = prepared
+		module = "researchos.workdesk.professional_tools.computer"
+	} else if job.ToolVersion == documentVersion {
 		frozen, cleanup, e := a.documentRequest(job)
 		if e != nil {
 			a.admission.Unlock()
@@ -345,6 +367,9 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 		decodeErr := json.Unmarshal(stdout.Bytes(), &result)
 		if err != nil || decodeErr != nil || result.State != "COMPLETED" {
 			job.State = "FAILED"
+			if decodeErr == nil && job.ToolVersion == computerVersion && result.State == "OUTCOME_UNKNOWN" {
+				job.State = "OUTCOME_UNKNOWN"
+			}
 			job.Error = result.Error
 			if job.Error == "" {
 				job.Error = "工具未返回有效完成回执"
@@ -391,6 +416,9 @@ func (a *App) runTool(ctx context.Context, cancel context.CancelFunc, job *Job) 
 			job.State = "STOP_UNKNOWN"
 		}
 		job.Error = "进程树退出尚未核对；保留原运行，不自动重发"
+	}
+	if job.ToolVersion == computerVersion && job.Action == "terminal.run" && (owner == nil || owner.ExitConfirmed()) {
+		a.finishTerminal(job)
 	}
 	if e := a.saveJob(job, "tool.finished"); e != nil {
 		fmt.Fprintln(a.Log, "tool completion requires reconciliation:", e)
@@ -446,8 +474,8 @@ func (a *App) serveArtifact(w http.ResponseWriter, r *http.Request, id, path str
 	if e != nil {
 		return e
 	}
-	if len(rows) != 1 || rows[0]["state"] != "COMPLETED" {
-		return errors.New("成果尚未明确完成")
+	if len(rows) != 1 {
+		return errors.New("未找到该作业")
 	}
 	var job Job
 	if e = json.Unmarshal([]byte(str(rows[0]["data"])), &job); e != nil {
@@ -455,6 +483,11 @@ func (a *App) serveArtifact(w http.ResponseWriter, r *http.Request, id, path str
 	}
 	if e = a.resolveJob(&job); e != nil {
 		return e
+	}
+	// A stopped or failed terminal can still have a sealed partial transcript.
+	if rows[0]["state"] != "COMPLETED" && !(job.ToolVersion == computerVersion && job.Action == "terminal.run" &&
+		(job.State == "CANCELLED" || job.State == "FAILED") && filepath.Base(path) == "console.txt") {
+		return errors.New("成果尚未明确完成")
 	}
 	for _, artifact := range job.Artifacts {
 		if artifact.Path != path {

@@ -63,6 +63,7 @@
       <p class="sp-note">${h(p.root)} · ${p.work_items} 个任务 · ${p.project_conversations} 条项目对话 · ${p.records} 条执行记录 · ${p.drafts} 个草稿 · ${p.goals} 个目标</p>
       <a class="project-primary-link" href="#work-items/project/${h(p.id)}">进入项目任务与对话</a>
       ${document.documentElement.dataset.workdeskChannel?`<div class="sp-actions">
+        ${S.button('电脑与开发工具',`data-project="computer-tools" data-id="${h(p.id)}"`)}
         ${S.button('文档工具',`data-project="document-tools" data-id="${h(p.id)}"`)}
         ${S.button('材料与成果版本',`data-project="versions" data-id="${h(p.id)}"`)}
       </div><section aria-label="项目版本清单" aria-live="polite" data-project-versions></section>`:''}
@@ -101,7 +102,7 @@
   document.addEventListener('input',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='name')v.name=e.target.value;});
   document.addEventListener('change',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='scene')v.scene=e.target.value;});
   document.addEventListener('click',async e=>{const el=e.target.closest('[data-project]');if(!active()||!el||el.disabled||v.busy)return;v.busy=true;try{const a=el.dataset.project,p=v.data.projects.find(p=>p.id===el.dataset.id);
-    if(a==='document-tools')window.dispatchEvent(new CustomEvent('workdesk-document-tools',{detail:{project_id:p.id,project_root:p.root}}));
+    if(a==='document-tools'||a==='computer-tools')window.dispatchEvent(new CustomEvent('workdesk-'+a,{detail:{project_id:p.id,project_root:p.root}}));
     if(a==='versions'||a==='versions-more'||a==='versions-export'){
       const panel=el.closest('[data-project-card]').querySelector('[data-project-versions]');
       try{if(a==='versions-export')await exportVersions(panel,p.id);else await projectVersions(panel,p.id,a==='versions-more');}

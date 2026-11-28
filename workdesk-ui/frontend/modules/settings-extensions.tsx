@@ -26,7 +26,7 @@ type ExtensionEntry = {
 type ExtensionCatalog = {
   capabilities: (ExtensionEntry & { kind: string })[];
   extensions: ExtensionEntry[];
-  runs: { extension: Pick<ExtensionEntry, 'id' | 'revision'>; operation: string; state: string }[];
+  checked_tools: Record<string, unknown[]>;
   scenes: {
     categories: { id: string; name: string }[];
     presets: (ExtensionEntry & { scene: string; default: boolean })[];
@@ -122,8 +122,7 @@ export function SettingsExtensions() {
           </div>
           <div className="wd-settings-actions"><SettingsLink href="#extensions/scenes" label="管理所有预设"/></div>
         </> : entries?.length ? entries.map(row => {
-          const checked = tab === 'mcp' && catalog.runs.some(run => run.operation === 'check' && run.state === 'SUCCEEDED'
-            && run.extension.id === row.id && run.extension.revision === row.revision);
+          const checked = tab === 'mcp' && Array.isArray(catalog.checked_tools?.[row.id]);
           return <div className="wd-settings-row" key={row.id}>
             <div className="wd-settings-copy"><h3>{row.name}</h3></div>
             <div className="wd-settings-value">

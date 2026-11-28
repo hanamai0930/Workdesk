@@ -125,7 +125,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
 			return
 		}
-		if kind == "tool.run" || kind == "tool.cancel" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
+		if kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
 			result, e := a.toolCommand(body)
 			if e != nil {
 				failed(w, e)
@@ -187,6 +187,9 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 	}
 	if path == "/api/v2/tools" {
 		return a.documentCatalog(), nil
+	}
+	if strings.HasPrefix(path, "/api/v2/jobs/") && strings.HasSuffix(path, "/console") {
+		return a.terminalConsole(strings.TrimSuffix(strings.TrimPrefix(path, "/api/v2/jobs/"), "/console"))
 	}
 	if path == "/api/v2/tool-contexts" {
 		rows, e := a.query("SELECT t.title,t.id AS task_id,t.spec_hash,a.id AS attempt_id"+eligibleContexts+" ORDER BY a.started DESC LIMIT 200", q.Get("project_id"), now())

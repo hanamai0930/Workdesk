@@ -132,7 +132,7 @@ class Capabilities:
     def __init__(self,service):self.s=service;self.c=service.collaboration
 
     def handlers(self):
-        return {'capability.import':self.import_bundle,'capability.enable':self.enable,'capability.remove':self.remove}
+        return {'capability.import':self.import_bundle,'capability.enable':self.enable,'capability.remove':self.remove,'capability.restore':self.restore}
 
     def catalog(self,db):return self.c.all(db,'capability')
 
@@ -239,10 +239,24 @@ class Capabilities:
             normalized[key]=mcp_config(value)
         return normalized
 
+    def restore(self,db,p):
+        current=self.c.get(db,'capability',p.get('id'))
+        previous=self.c.get(db,'capability_version',p.get('target_revision'))
+        if (current['revision']!=p.get('revision') or current['id']!=previous['capability_id']
+                or current['revision']==previous['revision']):
+            raise ValueError('请选择此能力的历史版本，并核对当前修订。')
+        verify_bundle(previous)
+        row={k:v for k,v in previous.items() if k!='capability_id'}
+        row.update(id=current['id'],revision=uid(),enabled=False,updated=time.time())
+        self.c.put(db,'capability_version',dict(row,id=row['revision'],capability_id=row['id']))
+        self.c.put(db,'capability',row)
+        return {'capability':row,'restored_from':previous['revision'],'no_dispatch':True}
+
     def enable(self,db,p):
         row=self.c.get(db,'capability',p.get('id'))
         if row['revision']!=p.get('revision'):raise ValueError('能力版本已改变，请刷新。')
         if type(p.get('enabled')) is not bool:raise ValueError('启用状态无效。')
+        if row['enabled']!=p['enabled']:row['activation']=uid()
         row.update(enabled=p['enabled'],updated=time.time());self.c.put(db,'capability',row)
         return {'capability':row,'no_dispatch':True,'existing_tasks_unchanged':True}
 

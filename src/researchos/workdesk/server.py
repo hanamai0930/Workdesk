@@ -83,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path=='/api/v1/handoff-preview':value=self.server.service.operations.preview(args.get('id',[''])[0])
             elif parsed.path=='/api/v1/persistence':value=self.server.service.persistence.catalog()
             elif parsed.path=='/api/v1/verification':value=self.server.service.verification.catalog()
-            elif parsed.path=='/api/v1/extensions':value=self.server.service.extensions.catalog()
+            elif parsed.path=='/api/v1/extensions':value=self.server.service.extensions.catalog(args.get('run_id',[None])[0],args.get('task_id',[None])[0])
             elif parsed.path=='/api/v1/scenes':
                 with self.server.service.store.read() as db:value=self.server.service.scenes.catalog(db)
             elif parsed.path=='/api/v1/ui-state':value=self.server.service.ui_features.catalog()

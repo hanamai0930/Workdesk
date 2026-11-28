@@ -1,0 +1,31 @@
+/* Verify the project tool entry through the real UI of the isolated check instance. */
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const fixture = path.resolve(process.argv[2]);
+const state = JSON.parse(fs.readFileSync(path.join(fixture,'user/runtime/ui/instance-core.json'),'utf8'));
+const config = JSON.parse(fs.readFileSync(path.join(fixture,'instance.json'),'utf8'));
+assert.equal(state.instance_id,config.instance_id);
+assert.equal(path.resolve(config.user_root),path.join(fixture,'user'));
+const {chromium} = require(require.resolve('playwright',{paths:[
+  __dirname,path.join(process.env.USERPROFILE||'', '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules')
+]}));
+(async()=>{
+  const browser=await chromium.launch({channel:'msedge',headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1360,height:940}});
+    page.setDefaultTimeout(25000);
+    await page.goto('http://127.0.0.1:'+state.port+'/s/'+state.token+'/#projects');
+    const card=page.locator('[data-project-card="'+config.default_project_id+'"]');
+    await card.getByRole('button',{name:'电脑与开发工具',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'电脑与开发工具'});
+    await dialog.getByLabel('操作',{exact:true}).selectOption('file.read');
+    await dialog.getByLabel('项目内文件路径').fill('notes.txt');
+    await dialog.getByRole('button',{name:'授权并执行本次操作'}).click();
+    const entry=dialog.locator('article').filter({hasText:'已完成 file.read'}).first();
+    const output=entry.locator('div').filter({has:page.locator('a[download]').filter({hasText:'output.txt'})}).first();
+    await output.getByRole('button',{name:'查看输出'}).click();
+    await output.locator('pre').filter({hasText:'updated by the project tool'}).waitFor();
+    await page.screenshot({path:path.join(fixture,'computer-tools.png')});
+  }finally{await browser.close();}
+})().catch(error=>{console.error(String(error.message).replace(/\/s\/[^/]+\//g,'/s/…/'));process.exitCode=1});

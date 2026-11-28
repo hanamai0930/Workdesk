@@ -20,5 +20,23 @@
     "materials":"/api/v2/projects/{project_id}/materials","export":"/api/v2/projects/{project_id}/export?version={url_encoded_version_json}","export_selection":"repeat version for up to 32 files; 64 MiB total; ZIP with manifest.json",
     "artifact":"/api/v2/jobs/{id}/artifact?path={path}&download=1","model_requests":0
   },
+  "computer_tool": {
+    "version":"computer/1","discovery":"/api/v2/tools","actions":"tools[].actions",
+    "authorize":"tool.authorize","run":"tool.run","cancel":"tool.cancel","input":"tool.input",
+    "project":"registered root","parent":["task_id","attempt_id","spec_hash"],
+    "example_parameters":{"action":"git.diff","path":"notes.txt"},
+    "console":"/api/v2/jobs/{id}/console","input_payload":["invocation_id","text"],
+    "result":"/api/v2/jobs/{id}","lookup":"/api/v2/jobs?project_id={project_id}&tool_version=computer%2F1",
+    "execution_identity":"local OS account","model_requests":0
+  },
+  "extensions": {
+    "discovery":"/api/v1/extensions","partner_catalog":"/api/v2/partners",
+    "authorize":"extension.authorize","run":"extension.run","stop":"extension.stop",
+    "selection":["id","revision","operation","tool","arguments","confirm"],
+    "authorization_parent":["project_id","task_id","attempt_id","spec_hash"],
+    "run_binding":"authorization_id with matching selection","receipt":"run_id",
+    "detail":"/api/v1/extensions?run_id={run_id}","history":"/api/v1/extensions?task_id={task_id}",
+    "unknown_receipt":"/api/v1/receipt?id={command_id}"
+  },
   "ownership": {"lock": "backend.lock", "byte_offset": 0, "byte_length": 1, "writer": "go-core", "stale_epoch_rejected": true}
 }

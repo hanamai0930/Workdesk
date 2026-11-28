@@ -19,19 +19,20 @@ const documentVersion = "document/1"
 const documentInputLimit = 64 << 20
 
 type toolGrant struct {
-	ID             string         `json:"authorization_id"`
-	Actor          string         `json:"actor"`
-	ProjectID      string         `json:"project_id"`
-	ProjectRoot    string         `json:"project_root"`
-	TaskID         string         `json:"task_id,omitempty"`
-	AttemptID      string         `json:"attempt_id,omitempty"`
-	SpecHash       string         `json:"spec_hash,omitempty"`
-	Implementation string         `json:"implementation_revision"`
-	Process        string         `json:"process_instance"`
-	Expires        float64        `json:"expires_at"`
-	Tool           string         `json:"tool_version"`
-	Inputs         []Artifact     `json:"input_versions"`
-	Parameters     map[string]any `json:"parameters"`
+	ID                 string            `json:"authorization_id"`
+	Actor              string            `json:"actor"`
+	ProjectID          string            `json:"project_id"`
+	ProjectRoot        string            `json:"project_root"`
+	TaskID             string            `json:"task_id,omitempty"`
+	AttemptID          string            `json:"attempt_id,omitempty"`
+	SpecHash           string            `json:"spec_hash,omitempty"`
+	Implementation     string            `json:"implementation_revision"`
+	Process            string            `json:"process_instance"`
+	Expires            float64           `json:"expires_at"`
+	Tool               string            `json:"tool_version"`
+	RepositoryVersions map[string]string `json:"repository_versions,omitempty"`
+	Inputs             []Artifact        `json:"input_versions"`
+	Parameters         map[string]any    `json:"parameters"`
 }
 
 func nullID(id string) any {
@@ -111,7 +112,7 @@ func authoritativeDocument(p map[string]any) bool {
 	return p["tool_version"] != nil && p["tool_version"] != "material-summary/1"
 }
 func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (map[string]any, error) {
-	if p["confirm"] != true || p["tool_version"] != documentVersion {
+	if p["confirm"] != true || (p["tool_version"] != documentVersion && p["tool_version"] != computerVersion) {
 		return nil, errors.New("请确认本次文档操作及输入范围")
 	}
 	params, ok := p["parameters"].(map[string]any)
@@ -122,13 +123,7 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 	if len(raw) > 512<<10 {
 		return nil, errors.New("文档参数超过512 KiB")
 	}
-	format := str(params["format"])
-	switch format {
-	case "xlsx", "csv", "docx", "pdf", "pptx", "md", "html", "tex":
-	default:
-		return nil, errors.New("文件类型无效")
-	}
-	g := toolGrant{ID: id, Actor: "Human control command", ProjectID: str(p["project_id"]), TaskID: str(p["task_id"]), AttemptID: str(p["attempt_id"]), SpecHash: str(p["spec_hash"]), Tool: documentVersion, Parameters: params, Expires: now() + 900, Process: a.Process, Implementation: a.Implementation, Inputs: []Artifact{}}
+	g := toolGrant{ID: id, Actor: "Human control command", ProjectID: str(p["project_id"]), TaskID: str(p["task_id"]), AttemptID: str(p["attempt_id"]), SpecHash: str(p["spec_hash"]), Tool: str(p["tool_version"]), Parameters: params, Expires: now() + 900, Process: a.Process, Implementation: a.Implementation, Inputs: []Artifact{}}
 	var e error
 	g.ProjectRoot, e = projectRoot(s, g.ProjectID)
 	if e != nil {
@@ -136,6 +131,18 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 	}
 	if e = checkToolBinding(s, g); e != nil {
 		return nil, e
+	}
+	if g.Tool == computerVersion {
+		if e = a.freezeComputerGrant(&g, p); e != nil {
+			return nil, e
+		}
+		return map[string]any{"authorization_id": id, "state": "AUTHORIZED", "grant": g}, nil
+	}
+	format := str(params["format"])
+	switch format {
+	case "xlsx", "csv", "docx", "pdf", "pptx", "md", "html", "tex":
+	default:
+		return nil, errors.New("文件类型无效")
 	}
 	files, ok := p["input_files"].([]any)
 	if !ok && p["input_files"] != nil {
@@ -259,7 +266,7 @@ func (a *App) authorizedJob(s *storage.Session, p map[string]any) (*Job, error) 
 	for _, f := range g.Inputs {
 		names = append(names, f.Path)
 	}
-	return &Job{ID: id, ProjectID: g.ProjectID, ProjectRoot: g.ProjectRoot, TaskID: g.TaskID, AttemptID: g.AttemptID, SpecHash: g.SpecHash, AuthorizationID: g.ID, State: "QUEUED", InputFiles: names, InputVersions: g.Inputs, OutputDir: filepath.Join(a.Profile.DataRoot, "results", id), Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: g.Tool}, nil
+	return &Job{ID: id, ProjectID: g.ProjectID, ProjectRoot: g.ProjectRoot, TaskID: g.TaskID, AttemptID: g.AttemptID, SpecHash: g.SpecHash, AuthorizationID: g.ID, State: "QUEUED", InputFiles: names, InputVersions: g.Inputs, OutputDir: filepath.Join(a.Profile.DataRoot, "results", id), Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: g.Tool, Action: str(g.Parameters["action"])}, nil
 }
 
 // Worker reads only version-checked copies; reopening the original after verification
@@ -371,7 +378,7 @@ func (a *App) documentJobs(q url.Values, id string) (any, error) {
 		sql += " AND id=?"
 		args = append(args, id)
 	}
-	for _, k := range []string{"task_id", "project_id"} {
+	for _, k := range []string{"task_id", "project_id", "tool_version"} {
 		if v := q.Get(k); v != "" {
 			sql += " AND json_extract(data,'$." + k + "')=?"
 			args = append(args, v)
@@ -417,5 +424,5 @@ func (a *App) documentCatalog() map[string]any {
 		docs["probe_state"] = "CHECKED"
 	}
 	summary := map[string]any{"tool_version": "material-summary/1", "worker_present": exists(filepath.Join(root, "summary.py")) && exists(a.Profile.PythonExecutable), "model_requests": 0}
-	return map[string]any{"tools": []any{summary, docs}}
+	return map[string]any{"extension_catalog": "/api/v1/extensions", "partner_catalog": "/api/v2/partners", "tools": []any{summary, docs, map[string]any{"tool_version": computerVersion, "actions": computerActions, "worker_present": exists(filepath.Join(root, "computer.py")) && exists(a.Profile.PythonExecutable), "scope": "HUMAN_EXPLICIT_PROJECT_OR_WINDOW", "execution_isolation": "NOT_ESTABLISHED_BY_PROJECT", "model_requests": 0}}}
 }

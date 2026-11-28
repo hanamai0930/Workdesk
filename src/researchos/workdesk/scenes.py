@@ -113,6 +113,11 @@ class Scenes:
                 raise ValueError('固定任务预设「'+snapshot['name']+'」含原生插件「'+bundle['name']+'」。'
                                  + ' '.join(warnings) + '请另选可移植 Skill 或 MCP 预设。')
 
+    def freeze_extension(self,db,item,wire):
+        from .extension_access import check_dependencies
+        return {'name':wire,'label':item['name'],'extension_id':item['id'],'config':item['config'],
+                'revision':item['revision'],'dependencies':check_dependencies(self.s,db,item)}
+
     def freeze_row(self,db,row,composer=()):
         snapshot=copy.deepcopy(row);snapshot['bundles']=[];snapshot['mcp']=[]
         names=set();skill_names=set()
@@ -130,7 +135,7 @@ class Scenes:
             item=self.c.get(db,'extension',identity)
             if not item['enabled']:raise ValueError('预设中的 MCP 已停用：'+item['name'])
             wire='wd_'+digest(identity)[:16]
-            snapshot['mcp'].append({'name':wire,'label':item['name'],'config':item['config'],'revision':item['revision']})
+            snapshot['mcp'].append(self.freeze_extension(db,item,wire))
         if not isinstance(composer,(list,tuple)) or len(composer)>30:
             raise ValueError('能力选择格式无效。')
         for reference in composer:
@@ -158,7 +163,7 @@ class Scenes:
                 if reference['name']!=item['name']:raise ValueError('所选 MCP 已不可用。')
                 wire='wd_'+digest(item['id'])[:16]
                 if not any(server['name']==wire for server in snapshot['mcp']):
-                    snapshot['mcp'].append({'name':wire,'label':item['name'],'config':item['config'],'revision':item['revision']})
+                    snapshot['mcp'].append(self.freeze_extension(db,item,wire))
         if composer:snapshot['composer_capabilities']=copy.deepcopy(composer)
         snapshot['snapshot_hash']=digest(snapshot)
         return snapshot

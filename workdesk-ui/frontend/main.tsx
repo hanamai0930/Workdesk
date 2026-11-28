@@ -47,20 +47,27 @@ window.WorkdeskLegacyModules = loadLegacyModule;
 const WorkItemFilePreview = lazy(() => import('./modules/work-item-file-preview'));
 const ResourceSpace = lazy(async () => ({ default: (await import('./modules/resource-space')).ResourceSpace }));
 const DocumentTools = lazy(() => import('./core/document-tools'));
-window.addEventListener('workdesk-document-tools', event => {
-  const context = (event as CustomEvent).detail;
-  if (typeof context?.project_id !== 'string' || !context.project_id || document.querySelector('#document-tools-dialog')) return;
-  const dialog = document.createElement('dialog');
-  dialog.id = 'document-tools-dialog';
-  dialog.dataset.uiModule = 'projects';
-  dialog.setAttribute('aria-label', '文档工具');
-  document.body.append(dialog);
-  dialog.addEventListener('close', () => { release(dialog); dialog.remove(); }, {once: true});
-  renderInto(dialog, <Suspense fallback={<p role="status">正在打开文档工具…</p>}>
-    <DocumentTools context={context} onClose={() => dialog.close()}/>
-  </Suspense>);
-  dialog.showModal();
-});
+const ComputerTools = lazy(() => import('./core/computer-tools'));
+for (const [eventName, title, Panel] of [
+  ['workdesk-document-tools','文档工具',DocumentTools],
+  ['workdesk-computer-tools','电脑与开发工具',ComputerTools],
+] as const) {
+  window.addEventListener(eventName, event => {
+    const context = (event as CustomEvent).detail;
+    if (typeof context?.project_id !== 'string' || !context.project_id || document.querySelector('dialog[data-project-tool]')) return;
+    const dialog = document.createElement('dialog');
+    dialog.id = eventName.slice('workdesk-'.length)+'-dialog';
+    dialog.dataset.projectTool = '';
+    dialog.dataset.uiModule = 'projects';
+    dialog.setAttribute('aria-label',title);
+    document.body.append(dialog);
+    dialog.addEventListener('close', () => { release(dialog); dialog.remove(); }, {once:true});
+    renderInto(dialog,<Suspense fallback={<p role="status">正在读取工具…</p>}>
+      <Panel context={context} onClose={()=>dialog.close()}/>
+    </Suspense>);
+    dialog.showModal();
+  });
+}
 registerMarkdownElement();
 renderInto(document.getElementById('root')!, <Shell/>);
 window.WorkdeskReact = {
