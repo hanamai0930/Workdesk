@@ -29,6 +29,7 @@ type App struct {
 	Legacy                          *bridge.Peer
 	Process, Implementation, Source string
 	SourceDirty                     bool
+	startedAt                       int64
 	Epoch                           int64
 	Control, Viewer, UIToken        string
 	mu                              sync.Mutex
@@ -121,7 +122,7 @@ func wire(v any) any {
 }
 
 func New(p *instance.Profile, db *storage.Store, implementation, source string, log io.Writer) (*App, error) {
-	a := &App{Profile: p, DB: db, Process: ID(), Implementation: implementation, Source: source, Control: Token(32), Viewer: Token(32), UIToken: Token(24), sessions: map[string]*storage.Session{}, processes: map[string]map[string]any{}, jobs: map[string]*runningJob{}, partnerProcesses: map[string]*partnerProcess{}, Stop: make(chan struct{}), Log: log}
+	a := &App{Profile: p, DB: db, startedAt: time.Now().Unix(), Process: ID(), Implementation: implementation, Source: source, Control: Token(32), Viewer: Token(32), UIToken: Token(24), sessions: map[string]*storage.Session{}, processes: map[string]map[string]any{}, jobs: map[string]*runningJob{}, partnerProcesses: map[string]*partnerProcess{}, Stop: make(chan struct{}), Log: log}
 	if err := a.loadSources(); err != nil {
 		return nil, err
 	}
@@ -186,6 +187,9 @@ func (a *App) tick() {
 			if a.verifySources() != nil {
 				continue
 			}
+			if err := a.tickToolSchedules(); err != nil {
+				fmt.Fprintln(a.Log, "tool schedule:", err)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			var result any
 			err := a.Legacy.Call(ctx, "legacy.tick", map[string]any{}, &result)
@@ -232,6 +236,9 @@ func (a *App) prepareTables() error {
 		_, e := s.Execute(`UPDATE core_tool_jobs SET state='ORPHANED_UNKNOWN' WHERE state IN ('QUEUED','RUNNING','STOP_REQUESTED')`, nil)
 		if e != nil {
 			return e
+		}
+		if err := recoverToolRounds(s); err != nil {
+			return err
 		}
 		tables, e := s.Execute(`SELECT name FROM sqlite_master WHERE type='table' AND name='attempts'`, nil)
 		if e != nil || len(tables.Rows) == 0 {
@@ -316,11 +323,11 @@ func (a *App) callback(method string, raw json.RawMessage) (any, error) {
 		a.sessions[id] = s
 		a.mu.Unlock()
 		return map[string]any{"session": id}, nil
-	case "db.execute", "db.commit", "db.rollback":
+	case "db.execute", "db.check_attempt_budget", "db.commit", "db.rollback":
 		id := str(p["session"])
 		a.mu.Lock()
 		s := a.sessions[id]
-		if method != "db.execute" {
+		if method == "db.commit" || method == "db.rollback" {
 			delete(a.sessions, id)
 		}
 		a.mu.Unlock()
@@ -328,6 +335,15 @@ func (a *App) callback(method string, raw json.RawMessage) (any, error) {
 			return nil, errors.New("存储事务已结束")
 		}
 		switch method {
+		case "db.check_attempt_budget":
+			revision, e := checkBudget(s, str(p["project_id"]), "UNPRICED_EXECUTION")
+			if errors.Is(e, ErrToolBudgetBlocked) {
+				return nil, &bridge.RPCError{Type: "ValueError", Message: e.Error()}
+			}
+			if e != nil {
+				return nil, e
+			}
+			return map[string]any{"revision": revision}, nil
 		case "db.execute":
 			args, _ := normalize(p["args"]).([]any)
 			r, e := s.Execute(str(p["sql"]), args)

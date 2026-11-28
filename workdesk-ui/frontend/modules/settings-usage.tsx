@@ -3,6 +3,7 @@ import { Button } from '../components/ui/button';
 import { NativeSelect } from '../components/ui/native-select';
 import { formatMoney } from '../lib/format';
 import type { APIProvider, Partner } from './partners';
+import { SettingsProjectBudget } from './settings-project-budget';
 import './settings-usage.css';
 
 type Quota = {
@@ -250,6 +251,7 @@ export function SettingsUsage() {
   const visible=(data?.quotas||[]).filter(quota=>partnerId==='all'||(quota.partner_id||quota.provider)===partnerId);
   const quotaRows=(rows:Quota[])=>rows.map(quota=><QuotaRow key={[quota.partner_id||quota.provider,quota.route,quota.api_provider,quota.account_id||quota.label].join(':')} quota={quota} partnerName={data?.partners?.find(partner=>partner.id===quota.partner_id)?.name} apiName={data?.api_providers?.find(provider=>provider.id===quota.api_provider)?.name} refresh={()=>setRetry(value=>value+1)}/>);
   return <div aria-busy={!data && !error}>
+    <SettingsProjectBudget/>
     <section className="wd-settings-group wd-settings-card" aria-label="账户额度">
       <div className="wd-settings-usage-header">
         <h2>账户额度</h2>

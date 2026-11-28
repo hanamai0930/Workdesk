@@ -57,5 +57,24 @@
     "personal_scope":"personal without project_id","project_scope":"project with project_id",
     "commands":["memory.save","memory.archive","memory.delete","memory.merge","project.handoff-create"]
   },
+  "scheduling": {
+    "list":"/api/v2/tool-schedules?project_id={project_id}",
+    "create":"schedule.tool-create","change":"schedule.tool-state","states":["PAUSED","ACTIVE","CANCELLED"],
+    "schedule_payload":["project_id","tool_version","parameters","timezone","repeat","max_runs","confirm"],
+    "first_time":"first_local in selected timezone or RFC3339 first_at","repeat":["once","daily","weekly"],
+    "parent":["task_id","attempt_id","spec_hash"],"finite_actions":["file.read","env.inspect"],
+    "example_parameters":{"action":"file.read","path":"notes.txt"},
+    "round_keys":["round_id","schedule_id","job_id","command_id","state"],
+    "job_detail":"/api/v2/jobs/{job_id}","cancel_job":"tool.cancel"
+  },
+  "budget":{
+    "command":"budget.save","project_policy":"/api/v2/project-budget?project_id={project_id}",
+    "report":"/api/v1/project-usage?project_id={project_id}",
+    "filters":["task_id","attempt_id","tool_version","partner_id","account_id"]
+  },
+  "notifications":{
+    "list":"/api/v2/notifications?project_id={project_id}","detail":"/api/v2/notifications?id={id}",
+    "create":"notice.create","transition":"notice.state","open_round":"#planning/round/{round_id}?project_id={project_id}"
+  },
   "ownership": {"lock": "backend.lock", "byte_offset": 0, "byte_length": 1, "writer": "go-core", "stale_epoch_rejected": true}
 }

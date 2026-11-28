@@ -137,6 +137,8 @@ def send(service, db, payload, *, cooperative=None):
     identity,owner=uid(),uid();now=time.time()
     fork=task['spec'].get('native_fork') if not prior else None
     session=prior['session_id'] if prior else fork['session_id'] if fork else uid()
+    from .project_usage import check_native_budget
+    check_native_budget(db, task)
     db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                (identity,task['id'],uid(),owner,'RESERVED',now,0,str(root),session,None,0,None,None,canonical({'runtime_mode':'official',**({'partner_resume':partner_resume} if partner_resume else {})}),None,service.instance))
     db.execute("UPDATE tasks SET state='RESERVED',updated=? WHERE id=?",(now,task['id']))

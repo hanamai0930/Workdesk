@@ -176,6 +176,9 @@ func applyPartnerAuthOptions(account, options map[string]any) {
 // Progress belongs to the original attempt; authentication remains an
 // independently observed official fact, including while a web login stays open.
 func (a *App) putPartnerRun(s *storage.Session, run map[string]any) error {
+	if err := accountPartnerBudget(s, run); err != nil {
+		return err
+	}
 	mode := str(run["mode"])
 	if (mode == "login" || mode == "inspect") && str(run["account_id"]) != "" {
 		account, err := partnerObject(s, "account", str(run["account_id"]))

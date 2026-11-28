@@ -24,6 +24,8 @@ import (
 
 type runningJob struct{ cancel context.CancelFunc }
 type Job struct {
+	ScheduleID             string           `json:"schedule_id,omitempty"`
+	RoundID                string           `json:"round_id,omitempty"`
 	Action                 string           `json:"action,omitempty"`
 	CommandID              string           `json:"command_id,omitempty"`
 	TaskID                 string           `json:"task_id,omitempty"`
@@ -93,6 +95,21 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			return json.Unmarshal([]byte(str(row[2])), &receipt)
 		}
 		switch kind {
+		case "budget.save":
+			receipt, e = saveProjectBudget(s, id, p)
+			if e != nil {
+				return e
+			}
+		case "schedule.tool-create", "schedule.tool-state":
+			receipt, e = a.scheduleCommand(s, id, kind, p)
+			if e != nil {
+				return e
+			}
+		case "notice.create", "notice.state":
+			receipt, e = noticeCommand(s, id, kind, p)
+			if e != nil {
+				return e
+			}
 		case "memory.save", "memory.archive", "memory.delete", "memory.merge", "project.handoff-create":
 			receipt, e = applyMemory(s, id, kind, p)
 			if e != nil {
@@ -181,8 +198,7 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 				job = &Job{ID: jobID, ProjectID: project, State: "QUEUED", Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProjectRoot: root, OutputDir: output, InputFiles: files, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: "material-summary/1"}
 			}
 			job.CommandID = id
-			data, _ := json.Marshal(job)
-			_, e = s.Execute(`INSERT INTO core_tool_jobs VALUES(?,?,?,?,?)`, []any{job.ID, job.ProjectID, job.State, string(data), job.Updated})
+			e = insertToolJob(s, job)
 			if e != nil {
 				return e
 			}
@@ -243,11 +259,7 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 		return nil, err
 	}
 	if fresh && job != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		a.mu.Lock()
-		a.jobs[job.ID] = &runningJob{cancel: cancel}
-		a.mu.Unlock()
-		go a.runTool(ctx, cancel, job)
+		a.launchToolJob(job)
 	}
 	if fresh && kind == "tool.input" {
 		if err := a.sendTerminalInput(str(p["invocation_id"]), id, str(p["text"])); err != nil {
@@ -263,12 +275,36 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 	}
 	return map[string]any{"receipt": receipt, "replayed": !fresh, "command_id": id}, nil
 }
+func insertToolJob(s *storage.Session, job *Job) error {
+	if err := reserveToolBudget(s, *job); err != nil {
+		return err
+	}
+	data, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	_, err = s.Execute("INSERT INTO core_tool_jobs VALUES(?,?,?,?,?)", []any{job.ID, job.ProjectID, job.State, string(data), job.Updated})
+	return err
+}
+func (a *App) launchToolJob(job *Job) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	a.mu.Lock()
+	a.jobs[job.ID] = &runningJob{cancel: cancel}
+	a.mu.Unlock()
+	go a.runTool(ctx, cancel, job)
+}
 func (a *App) saveJob(job *Job, kind string) error {
 	job.Updated = now()
 	data, _ := json.Marshal(job)
 	return a.write(func(s *storage.Session) error {
 		if _, e := s.Execute(`UPDATE core_tool_jobs SET state=?,data=?,updated=? WHERE id=?`, []any{job.State, string(data), job.Updated, job.ID}); e != nil {
 			return e
+		}
+		if err := settleToolBudget(s, *job); err != nil {
+			return err
+		}
+		if err := updateScheduleRound(s, job); err != nil {
+			return err
 		}
 		event, _ := json.Marshal(map[string]any{"invocation_id": job.ID, "state": job.State, "owner_epoch": a.Epoch})
 		_, e := s.Execute(`INSERT INTO events(at,task_id,attempt_id,kind,payload) VALUES(?,?,?,?,?)`, []any{now(), nullID(job.TaskID), nullID(job.AttemptID), kind, string(event)})

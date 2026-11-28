@@ -48,6 +48,31 @@ const {chromium} = require(require.resolve('playwright',{paths:[
       const archive=page.getByRole('dialog',{name:'项目版本归档'});
       await archive.getByText(/已重开/).first().waitFor();
       await page.screenshot({path:path.join(fixture,'archive.png')});
+    }else if(batch==='D'){
+      const card=page.locator('[data-project-card="'+config.default_project_id+'"]');
+      await card.getByRole('button',{name:'工具预约',exact:true}).click();
+      const dialog=page.getByRole('dialog',{name:'项目工具预约'});
+      await dialog.getByLabel('预约操作').selectOption('env.inspect');
+      const date=new Date(Date.now()+48*3600*1000).toISOString().slice(0,16);
+      await dialog.getByLabel('首次执行时间').fill(date);
+      await dialog.getByLabel('执行时区').fill('UTC');
+      await dialog.getByRole('button',{name:'授权并保存预约'}).click();
+      const saved=dialog.locator('article').filter({hasText:'检查开发环境'}).filter({hasText:'UTC'});
+      await saved.getByRole('button',{name:'取消后续轮次'}).first().click();
+      await saved.filter({hasText:'已取消'}).first().waitFor();
+      await dialog.getByRole('button',{name:'关闭',exact:true}).click();
+      await page.goto('http://127.0.0.1:'+state.port+'/s/'+state.token+'/#settings/usage');
+      const budget=page.getByRole('region',{name:'项目预算与用量'});
+      await budget.getByLabel('预算项目').selectOption(config.default_project_id);
+      await budget.getByRole('button',{name:'保存项目预算'}).waitFor();
+      const round=process.argv[4];
+      assert.ok(round,'missing tested occurrence');
+      await page.goto('http://127.0.0.1:'+state.port+'/s/'+state.token+'/#settings/notifications');
+      const inbox=page.getByRole('region',{name:'任务收件箱'});
+      const link=inbox.locator('a').filter({hasText:'打开原轮次'}).and(page.locator('a[href*="'+round+'"]'));
+      await link.click();
+      await dialog.getByRole('heading',{name:/原作业/}).waitFor();
+      await page.screenshot({path:path.join(fixture,'schedule-job.png')});
     }else throw Error('未知批次');
   }finally{await browser.close();}
 })().catch(error=>{console.error(String(error.message).replace(/\/s\/[^/]+\//g,'/s/…/'));process.exitCode=1});

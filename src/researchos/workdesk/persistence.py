@@ -327,6 +327,9 @@ class Persistence:
             self.c.put(connection,'backup',{'id':package['id'],'root':str(root),'manifest_hash':package['manifest_hash'],'created':package['created'],'state':'READY'})
             from .library_assets import rebind_catalog
             rebind_catalog(connection,target)
+            connection.execute("""UPDATE collaboration SET data=json_set(data,'$.state','PAUSED',
+                '$.reason','从备份恢复，请核对范围后手动继续。','$.revision',json_extract(data,'$.revision')+1)
+                WHERE kind='tool_schedule' AND json_extract(data,'$.state')='ACTIVE'""")
             for kind in ('goal_job','scheduled_job','ui_schedule','cooperative_job'):
                 for saved in self.c.all(connection,kind):
                     if saved['state'] in {'RUNNING','ACTIVE'}:saved.update(state='PAUSED',reason='从备份恢复，核对后手动继续。',revision=uid());self.c.put(connection,kind,saved)

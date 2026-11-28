@@ -126,17 +126,30 @@ def check_c(chain):
             'knowledge_to_handoff':bridge['handoff_id'],'archive':check_archive(chain)}
 
 
+def check_d(chain):
+    from check_stage3_schedule import check_schedule
+    from check_stage3_notifications import check_notifications
+    from check_stage3_budget import check_budget
+    scheduled=check_schedule(chain)
+    absent=chain.api('/api/v1/receipt?id='+str(uuid4()))
+    require(absent['state']=='UNKNOWN_OR_NOT_COMMITTED' and absent['no_resend'],
+            '回执缺失时未返回待核对状态')
+    return {'missing_receipt':absent,'schedule':scheduled,'budget':check_budget(chain,scheduled),
+            'notifications':check_notifications(chain,scheduled)}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable',required=True,type=Path)
-    parser.add_argument('--batch',choices=('B','C'),required=True)
+    parser.add_argument('--batch',choices=('B','C','D','BCD'),required=True)
     args=parser.parse_args()
     with fixture(args.executable,args.batch) as chain:
         evidence={'implementation':chain.manifest['implementation_revision'],'checks':{},'fixture':True}
         for batch in args.batch:
-            evidence['checks'][batch]={'B':check_b,'C':check_c}[batch](chain)
-            if batch in ('B','C'):
-                subprocess.run(['node',str(BASE/'tools/check_stage3_ui.cjs'),str(chain.root),batch],check=True,timeout=85)
+            evidence['checks'][batch]={'B':check_b,'C':check_c,'D':check_d}[batch](chain)
+            if batch in ('B','C','D'):
+                extra=[evidence['checks']['D']['schedule']['round_id']] if batch=='D' else []
+                subprocess.run(['node',str(BASE/'tools/check_stage3_ui.cjs'),str(chain.root),batch,*extra],check=True,timeout=100)
                 evidence['checks'][batch]['browser_entry_verified']=True
         output=chain.root/'foundation-check.json'
         output.write_text(json.dumps(evidence,ensure_ascii=False,indent=2),encoding='utf8')

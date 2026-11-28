@@ -1,4 +1,10 @@
 @scope ([data-ui-module="settings"]) {
+  .wd-project-budget { display:grid;gap:12px;margin-bottom:16px;padding:16px; }
+  .wd-project-budget-fields { display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px; }
+  .wd-project-budget label { display:grid;gap:4px; }
+  .wd-project-budget li { margin-block:4px;overflow-wrap:anywhere; }
+  .wd-project-budget ul { max-height:18rem;overflow:auto; }
+
   .wd-settings-usage-header,.wd-settings-usage-header nav {
     display:flex;align-items:center;flex-wrap:wrap;gap:8px;
   }

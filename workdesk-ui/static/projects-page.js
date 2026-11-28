@@ -85,6 +85,7 @@
       ${document.documentElement.dataset.workdeskChannel?`<div class="sp-actions">
         ${S.button('电脑与开发工具',`data-project="computer-tools" data-id="${h(p.id)}"`)}
         ${S.button('文档工具',`data-project="document-tools" data-id="${h(p.id)}"`)}
+        ${S.button('工具预约',`data-project="tool-schedules" data-id="${h(p.id)}"`)}
         ${S.button('项目版本归档',`data-project="project-archive" data-id="${h(p.id)}"`)}
         ${S.button('材料与成果版本',`data-project="versions" data-id="${h(p.id)}"`)}
       </div><section aria-label="项目版本清单" aria-live="polite" data-project-versions></section>`:''}
@@ -123,7 +124,7 @@
   document.addEventListener('input',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='name')v.name=e.target.value;});
   document.addEventListener('change',e=>{if(!active())return;const form=e.target.closest('form');if(form?.dataset.projectEdit)return updateEdit(form);if(form?.id==='projects-add'&&e.target.name==='scene')v.scene=e.target.value;});
   document.addEventListener('click',async e=>{const el=e.target.closest('[data-project]');if(!active()||!el||el.disabled||v.busy)return;v.busy=true;try{const a=el.dataset.project,p=v.data.projects.find(p=>p.id===el.dataset.id);
-    if(['document-tools','computer-tools','project-archive'].includes(a))window.dispatchEvent(new CustomEvent('workdesk-'+a,{detail:{project_id:p.id,project_root:p.root}}));
+    if(['document-tools','computer-tools','project-archive','tool-schedules'].includes(a))window.dispatchEvent(new CustomEvent('workdesk-'+a,{detail:{project_id:p.id,project_root:p.root}}));
     if(a==='versions'||a==='versions-more'||a==='versions-export'||a==='versions-compare'){
       const panel=el.closest('[data-project-card]').querySelector('[data-project-versions]');
       try{if(a==='versions-compare')await compareVersions(panel,p.id);else if(a==='versions-export')await exportVersions(panel,p.id);else await projectVersions(panel,p.id,a==='versions-more');}

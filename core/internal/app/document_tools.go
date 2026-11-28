@@ -261,12 +261,15 @@ func (a *App) authorizedJob(s *storage.Session, p map[string]any) (*Job, error) 
 	if len(exists.Rows) > 0 {
 		return nil, errors.New("该授权已有作业，请按原命令查询")
 	}
+	return a.newAuthorizedJob(g), nil
+}
+func (a *App) newAuthorizedJob(g toolGrant) *Job {
 	id := ID()
 	var names []string
 	for _, f := range g.Inputs {
 		names = append(names, f.Path)
 	}
-	return &Job{ID: id, ProjectID: g.ProjectID, ProjectRoot: g.ProjectRoot, TaskID: g.TaskID, AttemptID: g.AttemptID, SpecHash: g.SpecHash, AuthorizationID: g.ID, State: "QUEUED", InputFiles: names, InputVersions: g.Inputs, OutputDir: filepath.Join(a.Profile.DataRoot, "results", id), Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: g.Tool, Action: str(g.Parameters["action"])}, nil
+	return &Job{ID: id, ProjectID: g.ProjectID, ProjectRoot: g.ProjectRoot, TaskID: g.TaskID, AttemptID: g.AttemptID, SpecHash: g.SpecHash, AuthorizationID: g.ID, State: "QUEUED", InputFiles: names, InputVersions: g.Inputs, OutputDir: filepath.Join(a.Profile.DataRoot, "results", id), Artifacts: []Artifact{}, Created: now(), Updated: now(), OwnerEpoch: a.Epoch, ProcessInstance: a.Process, DataRoot: a.Profile.DataRoot, ImplementationRevision: a.Implementation, ToolVersion: g.Tool, Action: str(g.Parameters["action"])}
 }
 
 // Worker reads only version-checked copies; reopening the original after verification

@@ -10,6 +10,7 @@ import { AppearancePanel } from './settings-appearance';
 import { SettingsAccounts } from './settings-accounts';
 import { SettingsPartners } from './partners';
 import { SettingsUsage } from './settings-usage';
+import { SettingsInbox } from './settings-inbox';
 import { SettingsTokenUsage } from './settings-token-usage';
 import { SettingsExtensions, SettingsManagementSummary } from './settings-extensions';
 
@@ -534,6 +535,7 @@ export function SettingsPage(props: SettingsProps) {
             values={{ '5s': '5 秒', '10s': '10 秒', '15s': '15 秒', '30s': '30 秒', '0s': '永久显示' }}
             onChange={value => void save('connectionNoticeSeconds', Number.parseInt(value, 10))} disabled={blocked}/>
         </Group>
+        {document.documentElement.dataset.workdeskChannel&&<SettingsInbox/>}
         <NoticeList bridge={bridge} choices={preferences.notifications}/>
       </> : <p role="status">暂无可用的任务通知设置。</p>;
       break;

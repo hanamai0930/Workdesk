@@ -91,6 +91,8 @@ class TaskExecutionCommands:
             if spec['campaign']==NATIVE_CAMPAIGN:
                 from .native import guard_campaign
                 guard_campaign(self,db,task)
+        from .project_usage import check_native_budget
+        check_native_budget(db, task)
         folder=self.locations.data/'tasks'/task['id'];working=folder/'worktree'
         if prior:
             baseline=workspace.current_manifest(working,set(spec['materials'])|set(spec['writable']))

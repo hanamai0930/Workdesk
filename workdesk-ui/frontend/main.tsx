@@ -47,10 +47,12 @@ window.WorkdeskLegacyModules = loadLegacyModule;
 const WorkItemFilePreview = lazy(() => import('./modules/work-item-file-preview'));
 const ResourceSpace = lazy(async () => ({ default: (await import('./modules/resource-space')).ResourceSpace }));
 const DocumentTools = lazy(() => import('./core/document-tools'));
+const ToolSchedules = lazy(() => import('./core/tool-schedules'));
 const ProjectArchive = lazy(() => import('./core/project-archive'));
 const ComputerTools = lazy(() => import('./core/computer-tools'));
 for (const [eventName, title, Panel] of [
   ['workdesk-document-tools','文档工具',DocumentTools],
+  ['workdesk-tool-schedules','项目工具预约',ToolSchedules],
   ['workdesk-project-archive','项目版本归档',ProjectArchive],
   ['workdesk-computer-tools','电脑与开发工具',ComputerTools],
 ] as const) {

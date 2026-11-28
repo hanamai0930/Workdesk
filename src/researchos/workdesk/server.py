@@ -67,6 +67,9 @@ class Handler(BaseHTTPRequestHandler):
             elif parsed.path=='/api/v1/settings-network-time':
                 from .network_time import clock
                 value=clock.read()
+            elif parsed.path=='/api/v1/project-usage':
+                from .project_usage import report_project
+                value=report_project(self.server.service.store,args)
             elif parsed.path=='/api/v1/settings-usage':
                 from .settings_usage import overview
                 value=overview(self.server.service,args.get('days',[7])[0])

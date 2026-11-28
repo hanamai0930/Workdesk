@@ -125,7 +125,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
 			return
 		}
-		if strings.HasPrefix(kind, "project.archive.") || strings.HasPrefix(kind, "memory.") || kind == "project.handoff-create" || kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
+		if kind == "notice.create" || kind == "notice.state" || strings.HasPrefix(kind, "schedule.tool-") || strings.HasPrefix(kind, "project.archive.") || strings.HasPrefix(kind, "memory.") || kind == "project.handoff-create" || kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "budget.save" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
 			result, e := a.toolCommand(body)
 			if e != nil {
 				failed(w, e)
@@ -182,8 +182,14 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, error) {
 	q := r.URL.Query()
+	if path == "/api/v2/notifications" {
+		return a.inbox(q)
+	}
 	if path == "/api/v2/memories" || path == "/api/v2/project-handoffs" {
 		return a.readProjectMemory(path, q)
+	}
+	if path == "/api/v2/tool-schedules" {
+		return a.toolScheduleView(q)
 	}
 	if strings.HasPrefix(path, "/api/v2/projects/") && (strings.HasSuffix(path, "/archives") || strings.HasSuffix(path, "/archive-download")) {
 		return a.archiveRead(w, r, path)
@@ -232,6 +238,8 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 	}
 	limit := bounded(q.Get("limit"), 50, 200)
 	switch {
+	case path == "/api/v2/project-budget":
+		return a.projectBudgetView(q.Get("project_id"))
 	case path == "/api/v2/projects":
 		offset, _ := strconv.Atoi(q.Get("cursor"))
 		if offset < 0 {

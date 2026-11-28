@@ -137,7 +137,7 @@ def _record(run, account, value, at, source, identity, *, protocol=None, model=N
             'usage_note': '仅最后原生用量观测；缺少消息身份，不能证明全程计费总量' if scope == 'UNIDENTIFIED_NATIVE_MESSAGE' else None}
 
 
-def run_records(db, start=0, end=None, *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None,parent_attempt_ids=None):
+def run_records(db, start=0, end=None, *, partner_id='all', api_provider='all', account_id='all', route='all', run_id=None,parent_attempt_ids=None,project_id=None):
     if not has_partner_tables(db):
         return
     def inside(at):
@@ -147,6 +147,8 @@ def run_records(db, start=0, end=None, *, partner_id='all', api_provider='all', 
     event_table = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_events'").fetchone()
     for run in objects(db, 'run'):
         if run.get('mode') != 'run' or (run_id is not None and run['id'] != run_id):
+            continue
+        if project_id is not None and run.get('project_id') != project_id:
             continue
         if parent_attempt_ids is not None and run.get('parent_attempt_id') not in parent_attempt_ids:
             continue

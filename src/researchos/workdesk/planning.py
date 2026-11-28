@@ -42,8 +42,9 @@ class Planning:
                 for row in self.c.all(db,kind):
                     if row['state']=='RUNNING':
                         row.update(state='PAUSED',revision=uid(),reason='服务重启，核对后手动继续；不补发旧回合。');self.c.put(db,kind,row)
+                        if kind=='goal_job':self.notice(db,row,'review',row.get('last_state_command_id'))
 
-    def handlers(self):return {'planning.schedule-save':self.schedule_save,'planning.goal-save':self.goal_save,'planning.state':self.state,'planning.advance':self.advance,**self.cooperative.handlers()}
+    def handlers(self):return {'planning.schedule-save':self.schedule_save,'planning.goal-save':self.goal_save,'planning.goal-blocker':self.goal_blocker,'planning.goal-review':self.goal_review,'planning.state':self.state,'planning.advance':self.advance,**self.cooperative.handlers()}
 
     def catalog(self):
         with self.s.store.read() as db:
@@ -154,13 +155,25 @@ class Planning:
              'criteria':bounded_text(p.get('criteria'),'完成标准',8000),'project_id':project,'provider':provider,'config':defaults,'access':access,
              'max_rounds':integer(p.get('max_rounds',20),0,1000,'最多自动回合'),'checks':checks,'state':'PAUSED','reason':'尚未启动',
              'rounds':[],'task_id':None,'created':time.time()}
+        deadline=p.get('dispatch_before')
+        if deadline is not None and (type(deadline) not in (float,int) or not time.time()<deadline<253402300799):
+            raise ValueError('目标派发截止须为未来的有效时间。')
+        reference=p.get('source_handoff_id')
+        if reference:
+            source=self.c.get(db,'project_handoff',reference)
+            if source.get('project_id')!=project:raise ValueError('接续材料不属于此目标的项目。')
+        row.update(origin_command_id=self.s.command_identity,dispatch_before=deadline,source_handoff_id=reference,
+                   blocker='',human_paused=True)
         if binding:row['partner_connection']=binding
         row['credential_revision']=self.job_credential(db,row)
         self.c.put(db,'goal_job',row);return {'job':row,'no_dispatch':True}
 
     def state(self,db,p):
         kind,row=self.checked(db,p);state=p.get('state')
-        if state not in {'RUNNING','PAUSED','CANCELLED'} or row['state'] in {'COMPLETE','MODEL_COMPLETE_REVIEW','CANCELLED'}:raise ValueError('此状态不能继续操作。')
+        if state not in {'RUNNING','PAUSED','CANCELLED'} or row['state'] in {'COMPLETE','MODEL_COMPLETE_REVIEW','CANCELLED','ACCEPTED'}:raise ValueError('此状态不能继续操作。')
+        if kind=='goal_job' and state=='RUNNING':
+            if row.get('blocker'):raise ValueError('请先处理并清除目标阻碍。')
+            if row.get('dispatch_before') and row['dispatch_before']<=time.time():raise ValueError('目标派发截止已过。')
         if state=='RUNNING':
             if p.get('confirm') is not True:raise ValueError('请明确确认自动运行。')
             if row.get('task_id'):
@@ -170,7 +183,40 @@ class Planning:
                 row['due']=next_due(self.s.locations,row,time.time())
         if state=='RUNNING':row['credential_revision']=self.job_credential(db,row)
         row.update(state=state,revision=uid(),reason='' if state=='RUNNING' else '仅暂停后续派发；已运行回合请在运行监控中停止。')
+        if kind=='goal_job':
+            row.update(human_paused=state=='PAUSED',last_state_command_id=self.s.command_identity)
+            if state=='PAUSED':self.notice(db,row,'todo',self.s.command_identity)
         self.c.put(db,kind,row);return {'job':row,'no_dispatch':True}
+
+    def notice(self,db,row,category,command=None):
+        self.c.put(db,'inbox_notice_v1',{
+            'id':'notice:goal:'+row['id']+':'+row['revision'],'category':category,
+            'title':row['title'],'reason':row['reason'],'project_id':row['project_id'],
+            'source_kind':'goal','source_state':row['state'],'goal_id':row['id'],
+            'source_command_id':command or row.get('origin_command_id'),
+            'task_id':row.get('task_id'),'attempt_id':row.get('attempt_id'),
+            'href':'#planning/goal/'+row['id'],'at':time.time()})
+
+    def goal_blocker(self,db,p):
+        _,row=self.checked(db,{**p,'kind':'goal_job'})
+        if row['state'] in {'ACCEPTED','CANCELLED','COMPLETE','MODEL_COMPLETE_REVIEW'}:
+            raise ValueError('该目标已结束或等待验收。')
+        blocker=p.get('blocker','')
+        if not isinstance(blocker,str) or len(blocker)>1000:raise ValueError('阻碍说明最多1000字。')
+        row.update(blocker=blocker.strip(),state='PAUSED',human_paused=True,revision=uid(),last_state_command_id=self.s.command_identity,
+                   reason='当前阻碍：'+blocker.strip() if blocker.strip() else '阻碍已清除，等待手动继续。')
+        self.c.put(db,'goal_job',row);self.notice(db,row,'todo',self.s.command_identity)
+        return {'job':row,'no_dispatch':True}
+
+    def goal_review(self,db,p):
+        _,row=self.checked(db,{**p,'kind':'goal_job'})
+        if row['state'] not in {'MODEL_COMPLETE_REVIEW','COMPLETE'} or type(p.get('accepted')) is not bool:
+            raise ValueError('请核对等待验收的目标与决定。')
+        row.update(state='ACCEPTED' if p['accepted'] else 'PAUSED',revision=uid(),last_state_command_id=self.s.command_identity,
+                   human_paused=not p['accepted'],reviewed_attempt_id=row.get('attempt_id'),review_command_id=self.s.command_identity,
+                   reason='Human 已确认完成。' if p['accepted'] else 'Human 要求继续处理，已暂停等待启动。')
+        self.c.put(db,'goal_job',row);self.notice(db,row,'completion' if p['accepted'] else 'todo',self.s.command_identity)
+        return {'job':row,'no_dispatch':True}
 
     def prompt(self,row):
         return row['goal']+'\n\n完成标准：'+row['criteria']+'\n继续完成目标，核对实际结果。仅在确认完成上述目标后，在回复最后单独一行输出 '+MARKER+'。未完成则报告进度并继续下一步。不要用完成标记代替实际操作或检查。'
@@ -205,11 +251,14 @@ class Planning:
                         checks.append({'file':item['file'],'passed':passed,'sha256':data['sha256']})
                     except (ValueError,OSError,UnicodeError):checks.append({'file':item['file'],'passed':False})
                 row['last_check']=checks
-                if declared and all(c['passed'] for c in checks):
+                if declared and row.get('reviewed_attempt_id')!=a['id'] and all(c['passed'] for c in checks):
                     saved=self.s.results.capture(db,{**scope,'files':[c['file'] for c in row['checks']]})
                     if any(saved['result']['snapshot']['manifest'][c['file']]['sha256']!=c['sha256'] for c in checks):raise ValueError('完成检查后文件版本发生变化，未记录目标完成。')
                     row.update(state='COMPLETE' if checks else 'MODEL_COMPLETE_REVIEW',reason='完成文件条件通过；待人工验收。' if checks else '模型报告完成；未提供机器可核对条件，待人工验收。',result_id=saved['result']['id'],revision=uid())
+                    self.notice(db,row,'approval',self.s.command_identity)
                     self.c.put(db,kind,row);return {'job':row,'no_dispatch':True}
+        if kind=='goal_job' and row.get('dispatch_before') and time.time()>=row['dispatch_before']:
+            raise ValueError('已到目标的派发截止，未再启动回合。')
         if kind=='goal_job' and row['max_rounds'] and len(row['rounds'])>=row['max_rounds']:raise ValueError('已达到目标任务的自动回合上限，未继续派发。')
         if kind=='scheduled_job':payload={**scope,'goal':row['content']}
         elif scope:payload={**scope,'goal':self.prompt(row)}
@@ -220,7 +269,7 @@ class Planning:
         launch=self.s.file_inspector.send(db,payload)
         if kind=='goal_job' and not scope:db.execute('UPDATE tasks SET title=? WHERE id=?',(row['title'],launch['task_id']))
         row.update(task_id=launch['task_id'],attempt_id=launch['launch_attempt'],binding=launch['spec_hash'],revision=uid(),reason='')
-        row['runs' if kind=='scheduled_job' else 'rounds'].append({'attempt_id':launch['launch_attempt'],'at':time.time()})
+        row['runs' if kind=='scheduled_job' else 'rounds'].append({'attempt_id':launch['launch_attempt'],'task_id':launch['task_id'],'command_id':self.s.command_identity,'at':time.time()})
         if kind=='scheduled_job':
             if row['frequency']=='once' or len(row['runs'])>=row['max_runs']:row['state']='COMPLETE'
             else:row['due']=next_due(self.s.locations,row,time.time())
@@ -243,4 +292,7 @@ class Planning:
                 try:self.s.command('planning.advance',{'kind':kind,'id':row['id'],'revision':row['revision']},identity)
                 except (ValueError,OSError,LookupError) as exc:
                     with self.s.store.write() as db:
-                        current=self.c.get(db,kind,row['id']);current.update(state='PAUSED',revision=uid(),reason=str(exc)[:1000]);self.c.put(db,kind,current)
+                        current=self.c.get(db,kind,row['id'])
+                        if current['state']!='RUNNING' or current['revision']!=row['revision']:continue
+                        current.update(state='PAUSED',revision=uid(),reason=str(exc)[:1000]);self.c.put(db,kind,current)
+                        if kind=='goal_job':self.notice(db,current,'failure',current.get('last_state_command_id'))

@@ -269,7 +269,7 @@ def execute(req):
     else:raise ValueError('不支持此电脑操作。')
     report=out/'receipt.json';result=out/'output.txt'
     report.write_text(json.dumps({'action':action,'path':p.get('path'),'project_root':str(root),**details},ensure_ascii=False,indent=2),encoding='utf8')
-    result.write_text(text,encoding='utf8')
+    result.write_text(text,encoding='utf8',newline='')
     artifacts=[artifact(report,'application/json'),artifact(result,'text/plain')]
     if (out/'console.txt').is_file():artifacts.append(artifact(out/'console.txt','text/plain'))
     return dict(state='COMPLETED',summary='已完成 '+action,artifacts=artifacts,checks=[],real_model_requests=0)
