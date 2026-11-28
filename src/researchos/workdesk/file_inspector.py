@@ -61,12 +61,41 @@ class FileInspector:
         draft=self.s.ui_features.draft_save(db,{'id':identity,'value':value})['draft']
         return {'draft':draft,'no_dispatch':True,'selection':reference}
 
+    def delivery_selection(self, db, reference, project, files):
+        row = self.c.get(db, 'file_selection', reference.get('id'))
+        if row['revision'] != reference.get('revision') or row['project_id'] != project:
+            raise ValueError('所选材料的版本或项目已变化，请重新选择。')
+        original = {item['file']: item for item in row['selected']}
+        if not isinstance(files, list) or not all(isinstance(name, str) for name in files):
+            raise ValueError('材料清单无效。')
+        if set(files) == set(original):
+            return self.checked(db, reference)
+        if not row.get('chat_source'):
+            raise ValueError('发送材料与已保存选择不一致。')
+        chosen = self.s.ui_features.files_select(db, {'project_id': project, 'files': files})
+        for item in chosen['selected']:
+            previous = original.get(item['file'])
+            if previous:
+                if (previous['bytes'], previous['sha256']) != (item['bytes'], item['sha256']):
+                    raise ValueError('保留的聊天材料已变化，请从原聊天重新选择。')
+                item.update(previous)
+        revised = {**chosen, 'id': 'file-selection:' + uid(), 'revision': uid(), 'created': time.time(),
+                   'project_id': project, 'chat_source': row['chat_source'],
+                   'source_selection': {'id': row['id'], 'revision': row['revision']}}
+        self.c.put(db, 'file_selection', revised)
+        expected = {item['file']: {k: item[k] for k in ('bytes','sha256')} for item in revised['selected']}
+        return revised, expected
+
     def send(self,db,p):
         payload=dict(p);reference=payload.pop('file_selection',None);expected=None
         if reference:
             if payload.get('task_id'):raise ValueError('已有回合的材料清单沿用原配置。')
-            row,expected=self.checked(db,reference)
-            if row['project_id']!=payload.get('project_id'):raise ValueError('所选材料属于另一项目。')
+            texts, attachments = payload.get('files',[]), payload.get('attachments',[])
+            if not isinstance(texts,list) or not isinstance(attachments,list) or any(
+                    not isinstance(item,dict) or not isinstance(item.get('file'),str) for item in attachments):
+                raise ValueError('材料清单无效。')
+            files=texts+[item['file'] for item in attachments]
+            selection,expected=self.delivery_selection(db,reference,payload.get('project_id'),files)
         feedback=payload.pop('feedback_command_id',None)
         guidance=payload.pop('guidance_command_id',None)
         snapshot=payload.pop('feedback_snapshot',None)
@@ -108,12 +137,10 @@ class FileInspector:
                 source['guidance_command_id']=guidance
         result=self.s.scenes.send(db,payload)
         if source:
-            self.s.store.event(result['task_id'],result['launch_attempt'],'single_task_continued',{'previous_attempt_id':payload['attempt_id'],**source},db)
+            self.s.store.event(result['task_id'],result['launch_attempt'],'single_task_continued',{'previous_attempt_id':payload['attempt_id'],'user_message':p.get('goal',''),**source},db)
         if expected is not None:
             task=self.s.store.task(result['task_id'],db)
             materials=task['spec']['materials']
-            matches=(all(materials.get(name)==version for name,version in expected.items())
-                     if row.get('chat_source') else materials==expected)
-            if not matches:raise ValueError('发送材料与已保存选择不一致；请返回原材料重新选择。')
-            self.s.store.event(task['id'],result['launch_attempt'],'file_selection_delivery_verified',{'selection_id':reference['id'],'revision':reference['revision'],'manifest':expected,**({'chat_source':row['chat_source']} if row.get('chat_source') else {}),'model_comprehension':'NOT_ATTESTED'},db)
+            if materials!=expected:raise ValueError('发送材料与已保存选择不一致；请返回原材料重新选择。')
+            self.s.store.event(task['id'],result['launch_attempt'],'file_selection_delivery_verified',{'selection_id':selection['id'],'revision':selection['revision'],'manifest':expected,**{k:selection[k] for k in ('chat_source','source_selection') if k in selection},'model_comprehension':'NOT_ATTESTED'},db)
         return result

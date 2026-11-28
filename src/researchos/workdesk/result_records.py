@@ -11,6 +11,36 @@ from . import workspace
 from .store import ACTIVE, UNKNOWN, canonical, digest, uid
 
 
+def delivered_answer(db, attempt):
+    result = attempt.get('result') or {}
+    answer = result.get('answer') or ''
+    run_id = result.get('partner_run_id')
+    if answer or not run_id or result.get('partner_id') != 'deepseek' or attempt['state'] != 'COMPLETED':
+        return answer
+    # This native endpoint also delivers final text in session events. Read only
+    # the final assistant message of the completed turn in this exact run.
+    row = db.execute("""
+        SELECT json_extract(e.data,'$.native.params.event.data.message.content')
+        FROM core_partner_events e JOIN core_partner_objects r ON r.kind='run' AND r.id=e.run_id
+        WHERE e.run_id=? AND json_extract(r.data,'$.parent_attempt_id')=?
+          AND json_extract(r.data,'$.parent_task_id')=?
+          AND json_extract(e.data,'$.native.params.sessionId')=?
+          AND json_extract(e.data,'$.native.params.event.type')='assistant/message'
+          AND json_extract(e.data,'$.native.params.event.data.message.role')='assistant'
+          AND json_extract(e.data,'$.native.params.event.data.turn')=(
+              SELECT json_extract(end.data,'$.native.params.event.data.turn')
+              FROM core_partner_events end WHERE end.run_id=e.run_id
+              AND json_extract(end.data,'$.native.params.sessionId')=?
+              AND json_extract(end.data,'$.native.params.event.type')='turn/end'
+              ORDER BY end.seq DESC LIMIT 1)
+        ORDER BY e.seq DESC LIMIT 1""",
+        (run_id,attempt['id'],attempt['task_id'],attempt.get('session_id'),attempt.get('session_id'))).fetchone()
+    if not row or not row[0]:
+        return ''
+    return '\n'.join(b['text'] for b in json.loads(row[0]) if isinstance(b,dict)
+                     and b.get('type')=='text' and isinstance(b.get('text'),str))
+
+
 def preview_file(folder, name, expected):
     value = workspace.read_blob(folder, name)
     raw = value.pop('raw')
@@ -82,7 +112,7 @@ class Results:
         root=Path(attempt['workspace']);files,_=workspace.select_files(root,names,self.s.locations.data)
         manifest=workspace.current_manifest(root,files)
         if sum(f['bytes'] for f in manifest.values())>workspace.MAX_ATTACHMENT_TOTAL:raise ValueError('成果文件合计超过32MB，请减少选择。')
-        answer=(attempt['result'] or {}).get('answer','')
+        answer=delivered_answer(db,attempt)
         if not manifest and not answer:raise ValueError('没有可保存的回复或成果文件。')
         identity='result:'+digest({'task':task['id'],'attempt':attempt['id'],'manifest':manifest,'answer':answer,'spec':task['spec_hash']})
         existing=db.execute("SELECT data FROM collaboration WHERE kind='work_result' AND id=?",(identity,)).fetchone()

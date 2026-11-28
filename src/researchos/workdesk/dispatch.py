@@ -4,6 +4,7 @@ import time
 
 from .store import ACTIVE, UNKNOWN
 from .execution_constraints import blockers,snapshot
+from .desktop_preferences import default_work_directory
 
 
 class Dispatch:
@@ -57,7 +58,8 @@ class Dispatch:
         if ids:return self.s.work_items.item(db,ids[0])
         scope=db.execute("SELECT project_id FROM record_scopes WHERE kind='task' AND record_id=?",(task['id'],)).fetchone()
         root=db.execute('SELECT root FROM projects WHERE id=?',(task['project_id'],)).fetchone()[0]
-        project=scope[0] if scope else None if Path(root).resolve()==(self.s.locations.data/'unfiled-work').resolve() else task['project_id']
+        unfiled = {(self.s.locations.data/'unfiled-work').resolve(), default_work_directory(self.s.locations)}
+        project=scope[0] if scope else None if Path(root).resolve() in unfiled else task['project_id']
         goal=task['spec']['goal']
         if len(goal)>16000:goal=goal[:15900]+'\n完整原始目标见关联执行记录：'+task['id']
         return self.s.work_items.create(db,{'title':task['title'],'goal':goal,

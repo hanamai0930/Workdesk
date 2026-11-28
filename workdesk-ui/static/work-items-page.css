@@ -311,46 +311,32 @@
   .wi-cooperation-layout{position:relative;display:flex;flex:1;min-width:0;min-height:0;
     container:wi-cooperation/inline-size}
   .wi-chat-lane{flex:1;min-width:0;min-height:0;container:wi-chat-lane/inline-size}
-  .wi-chat-grid{display:grid;grid-template-columns:minmax(138px,1fr) minmax(0,820px) minmax(138px,1fr);
-    grid-template-rows:minmax(0,1fr);gap:8px;height:100%;min-width:0;min-height:0;
-    padding:12px clamp(9px,1.2vw,18px) 9px}
-  .wi-chat-task-card{grid-area:1 / 1;align-self:start;width:min(100%,150px);padding:10px;border:1px solid var(--wi-chat-line);border-radius:14px;
-    background:var(--wi-chat-tint);font-size:11px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
-  .wi-chat-task-card:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px}
-  .wi-chat-task-card p{margin:0}
-  .wi-chat-task-card :is([data-cooperation-auth],[data-cooperation-deadline]){grid-column:1/-1}
-  .wi-chat-task-card [data-cooperation-mode]{font-size:12px;font-weight:620;color:var(--wi-chat-accent)}
-  .sp-page.wi-cooperation-chat{
-    width:min(100%,820px);height:100%;min-width:0;min-height:0;margin:0 auto;padding:0 3px;
-    grid-area:1 / 2;display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px;
-  }
-  .wi-chat-detail{grid-column:2;grid-row:1/span 2;align-self:start;padding:4px 5px;border-radius:8px;
-    background:color-mix(in srgb,var(--wi-chat-accent) 11%,var(--panel));color:var(--wi-chat-accent);
-    font-size:11px;white-space:nowrap}
-  .wi-chat-detail:is(:hover,:focus-visible){background:color-mix(in srgb,var(--wi-chat-accent) 18%,var(--panel));color:var(--text)}
+  .wi-chat-grid{height:100%;min-width:0;min-height:0;padding:12px clamp(9px,1.2vw,18px) 9px}
+  .sp-page.wi-cooperation-chat{width:min(100%,760px);height:100%;min-width:0;min-height:0;margin:0 auto;padding:0 3px;
+    display:grid;grid-template-rows:minmax(0,1fr) auto;gap:10px}
+  .wi-chat-detail{position:relative;font-size:13px;color:var(--muted);flex:none}
+  .wi-chat-detail summary{cursor:pointer}
+  .wi-chat-detail>summary{display:block;padding:5px 8px;border:1px solid var(--line);border-radius:9px}
+  .wi-chat-detail-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:12;width:min(440px,75vw);
+    max-height:65vh;overflow:auto;padding:14px;background:var(--panel);color:var(--text);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.1);overflow-wrap:anywhere}
+  .wi-chat-detail-panel p{white-space:pre-wrap}
+  .wi-chat-detail-panel a{display:inline-block;margin:6px 12px 6px 0;text-decoration:underline}
   .wi-chat-toggle{display:inline-flex;align-items:center;border:0;border-radius:8px;padding:6px 8px;color:var(--muted)}
   .wi-chat-toggle:is(:hover,:focus-visible,[aria-expanded="true"]){background:var(--soft);color:var(--text)}
   .wi-chat-scroll{min-width:0;min-height:0;overflow:auto;padding:3px 5px 16px;overscroll-behavior:contain;scrollbar-gutter:stable both-edges}
-  @container wi-chat-lane (max-width:1080px){
-    .wi-chat-grid{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:6px}
-    .sp-page.wi-cooperation-chat{grid-area:2 / 1}
-    .wi-chat-task-card:not([hidden]){display:flex;align-items:center;flex-wrap:wrap;justify-self:center;
-      width:min(100%,820px);gap:3px 12px;padding:6px 9px}
-    .wi-chat-detail{margin-inline-start:auto}
-  }
-  [data-cooperation-transcript]{display:grid;gap:17px;min-width:0}
+  [data-cooperation-transcript]{display:grid;gap:26px;min-width:0}
   .wi-chat-section-label{margin:0;font-size:13px;color:var(--muted);font-weight:550}
-  .wi-chat-message{display:grid;gap:5px;min-width:0;max-width:min(92%,640px);justify-self:start}
+  .wi-chat-message{display:grid;gap:5px;min-width:0;max-width:100%;justify-self:start}
   .wi-chat-message[data-chat-role="user"]{justify-self:end}
   .wi-chat-message[data-chat-role="user"] h2{text-align:right}
   .wi-chat-message h2{margin:0 2px;font-size:12px;color:var(--muted);font-weight:550}
-  .wi-chat-bubble{padding:11px 14px;background:var(--panel);border:1px solid var(--line);
-    border-radius:4px 15px 15px 15px;line-height:1.68;overflow-wrap:anywhere;font-size:14px}
-  .wi-chat-message[data-chat-role="user"] .wi-chat-bubble{
-    background:color-mix(in srgb,var(--wi-chat-accent) 12%,var(--panel));
-    border-color:color-mix(in srgb,var(--wi-chat-accent) 20%,var(--line));
-    border-radius:15px 4px 15px 15px
-  }
+  .wi-chat-bubble{line-height:1.85;overflow-wrap:anywhere;font-size:15px}
+  .wi-chat-message[data-chat-role="user"]{max-width:88%}
+  .wi-chat-message[data-chat-role="user"] .wi-chat-bubble{padding:10px 16px;
+    background:color-mix(in srgb,var(--wi-chat-accent) 9%,var(--panel));border-radius:18px 18px 5px 18px}
+  .wi-message-more{margin-top:6px}
+  .wi-message-more>summary{width:fit-content;cursor:pointer;color:var(--muted);font-size:12px}
   .wi-chat-message[data-chat-role="user"] .wi-chat-bubble p{white-space:pre-wrap}
   .wi-chat-bubble p{margin:0}
   .wi-chat-card{border:1px solid var(--line);background:var(--panel);padding:15px 16px;border-radius:14px;min-width:0}
@@ -370,17 +356,8 @@
   .wi-chat-brief-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 13px;margin:8px 0 14px}
   .wi-chat-brief-fields .sp-field{margin:0;gap:4px}
   .wi-chat-brief-fields textarea{height:72px;min-height:58px;padding:7px 9px}
-  .wi-chat-stage header,.wi-chat-stage footer{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
-  .wi-chat-stage header p,.wi-chat-stage header>span{margin:0;color:var(--muted);font-size:12px}
-  .wi-chat-stage header h2{margin-block:3px 9px}
-  .wi-chat-stage .markdown{font-size:13px;line-height:1.7;overflow-wrap:anywhere}
-  :is(.wi-chat-bubble,.wi-chat-stage) pre{max-width:100%;overflow:auto}
-  .wi-chat-stage details{margin-top:9px;font-size:13px}
-  .wi-chat-stage summary{cursor:pointer}
-  .wi-chat-stage footer{justify-content:flex-start;gap:14px;margin-top:11px;padding-top:10px;border-top:1px solid var(--line)}
-  .wi-chat-stage footer a{font-size:12px;color:var(--wi-chat-accent);text-underline-offset:2px}
-  .wi-chat-handoff{width:100%;max-width:100%}
-  .wi-chat-handoff .wi-chat-bubble{padding:14px clamp(10px,2vw,17px)}
+  .wi-chat-bubble pre{max-width:100%;overflow:auto}
+  .wi-chat-handoff .wi-chat-bubble{min-width:0}
   .wi-chat-handoff h3{font-size:13px;margin:12px 0 6px}
   .wi-handoff-summary{margin-top:8px}
   .wi-handoff-files{list-style:none;margin:5px 0 10px;padding:0}
@@ -483,13 +460,12 @@
   .sp-page.sp-page #wi-cooperation-confirm button[type=submit]{background:var(--wi-chat-accent);
     color:light-dark(#fff,#132c23);border:0;font-size:13px;text-align:start}
   .wi-chat-intervention{display:grid;gap:7px;min-width:0;padding:11px 13px;
-    border:1px solid var(--line);border-radius:15px;background:var(--panel)}
+    border:1px solid var(--line);border-radius:24px;background:var(--panel)}
   .wi-chat-intervention:focus-within{border-color:var(--wi-chat-accent)}
-  .wi-chat-intervention-heading{display:flex;align-items:baseline;flex-wrap:wrap;justify-content:space-between;gap:3px 9px}
-  .wi-chat-intervention-heading label{font-size:13px;font-weight:650}
-  .wi-chat-intervention-heading span,.wi-chat-intervention-help{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
-  .sp-page .wi-chat-intervention textarea{width:100%;min-height:44px;max-height:112px;padding:7px 9px;resize:vertical;
-    border:1px solid var(--line);border-radius:9px;background:var(--soft);line-height:1.55}
+  .wi-chat-intervention-help{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+  .wi-chat-intervention-help:empty{display:none}
+  .sp-page .wi-chat-intervention textarea{width:100%;min-height:44px;max-height:135px;padding:4px;resize:vertical;
+    border:0;box-shadow:none;outline:none;background:transparent;font-size:15px;line-height:1.6}
   .wi-chat-intervention :is(.wi-chat-intervention-help,.wi-chat-error){margin:0}
   .wi-chat-intervention-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}
   .sp-page.sp-page .wi-chat-intervention-actions button{font-size:13px;line-height:1.25}
@@ -508,7 +484,7 @@
     .wi-chat-card{padding:11px 12px}
     .wi-chat-brief dl{grid-template-columns:minmax(0,1fr)}
     .wi-chat-brief-fields{grid-template-columns:minmax(0,1fr)}
-    .wi-chat-bubble{padding:9px 11px}
+    .wi-chat-message[data-chat-role="user"] .wi-chat-bubble{padding:9px 11px}
     .wi-chat-intervention{padding:9px;gap:6px}
     .sp-page.sp-page .wi-chat-intervention-actions button{padding-inline:8px}
   }

@@ -11,7 +11,7 @@ export class CoreRequestError extends Error {
   }
 }
 
-type CommandContext = {id: string; kind: string};
+type CommandContext = {id: string; kind: string; owner?: string};
 const uncertain = new Map<string, CommandContext>();
 let identity: InstanceIdentity | null = null;
 
@@ -31,7 +31,9 @@ function restorePending() {
   try {
     const values = JSON.parse(sessionStorage.getItem(key) || '[]');
     if (Array.isArray(values)) for (const value of values) {
-      if (typeof value?.id === 'string' && typeof value?.kind === 'string') uncertain.set(value.id, {id: value.id, kind: value.kind});
+      if (typeof value?.id === 'string' && typeof value?.kind === 'string') uncertain.set(value.id, {
+        id: value.id, kind: value.kind, owner: typeof value.owner === 'string' ? value.owner : undefined,
+      });
     }
   } catch { /* Corrupt local display state never authorizes another send. */ }
 }
@@ -57,12 +59,14 @@ const protectedCommands: Readonly<Record<string,string>> = {
   'v1/chat-api-key/select': 'chat.api-key.select',
 };
 
-function commandContext(route: string, options?: RequestInit): CommandContext | undefined {
+function commandContext(route: string, options?: RequestInit, owner?: string): CommandContext | undefined {
   if ((route !== 'v1/command' && !protectedCommands[route]) || typeof options?.body !== 'string') return;
   try {
     const value = JSON.parse(options.body);
     const kind = protectedCommands[route] || value.kind;
-    if (typeof value.id === 'string' && typeof kind === 'string') return {id: value.id, kind};
+    if (typeof value.id === 'string' && typeof kind === 'string') return {
+      id: value.id, kind, owner: owner || (typeof value.payload?.task_id === 'string' ? value.payload.task_id : undefined),
+    };
   } catch { /* Invalid bodies are rejected by the service. */ }
 }
 
@@ -77,8 +81,8 @@ async function response(route: string, options?: RequestInit) {
   return fetch(url(route), {cache: 'no-store', credentials: 'omit', ...options});
 }
 
-async function request<T = any>(route: string, options?: RequestInit): Promise<T> {
-  const command = commandContext(route, options);
+async function request<T = any>(route: string, options?: RequestInit, owner?: string): Promise<T> {
+  const command = commandContext(route, options, owner);
   const scope = pendingKey();
   if (command) updatePending(command, true, scope);
   let res: Response;
@@ -94,8 +98,8 @@ async function request<T = any>(route: string, options?: RequestInit): Promise<T
     throw error;
   }
   if (!res.ok) {
-    const unknown = !!command && (data.state === 'UNKNOWN' || data.no_resend === true ||
-      (!!protectedCommands[route] && res.status >= 500 && data.explicit_rejection !== true));
+    const unknown = !!command && data.explicit_rejection !== true &&
+      (data.state === 'UNKNOWN' || data.no_resend === true || res.status >= 500);
     if (command) updatePending(command, unknown, scope);
     throw new CoreRequestError(data.error || '记录读取失败，当前状态未知。', res.status, command?.id, unknown);
   }
@@ -115,16 +119,17 @@ async function loadIdentity(signal?: AbortSignal) {
   return value;
 }
 
-async function command<T = any>(kind: string, payload: unknown, id: string = crypto.randomUUID()) {
+async function command<T = any>(kind: string, payload: unknown, id: string = crypto.randomUUID(), owner?: string) {
   const frozen = structuredClone({id, kind, payload});
   return request<{receipt: T; command_id: string; replayed: boolean}>('v1/command', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(frozen),
-  });
+  }, owner);
 }
 
 async function receipt(id: string) {
+  const scope = pendingKey();
   const value = await request('v1/receipt?id=' + encodeURIComponent(id));
-  if (value.state === 'RECORDED') { uncertain.delete(id); savePending(); }
+  if (value.state === 'RECORDED') updatePending({id,kind:value.kind},false,scope);
   return value;
 }
 
@@ -145,7 +150,7 @@ function createReadScope() {
 export const coreClient = {
   request, command, receipt, loadIdentity, createReadScope,
   identity: () => identity,
-  uncertainCommands: () => [...uncertain.values()],
+  uncertainCommands: (owner?:string) => [...uncertain.values()].filter(item => !owner || !item.owner || item.owner === owner),
   async readText(route: string, options?: RequestInit) {
     const res = await response(route, options);
     if (!res.ok) throw new CoreRequestError('成果读取失败，请重新核对文件版本。', res.status);

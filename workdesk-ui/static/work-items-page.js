@@ -932,8 +932,15 @@
   let cooperationView=null;
   const activeCooperation=view=>!!view&&view===cooperationView&&current().conversation===view.id;
   const discussionRole=data=>({leader:'负责人',host_experts:'主持人'})[data.mode]||'Workdesk';
-  const cooperationUser=prefs=>prefs.userNickname||'User';
-  const cooperationAI=(prefs,role,model)=>prefs.assistantNickname||[role,model].filter(Boolean).join(' · ');
+  const cooperationUser=prefs=>prefs.userNickname||'你';
+  const cooperationAI=(...names)=>[...new Set(names.filter(Boolean))].join(' · ');
+  function readableReply(text,label){
+    const value=String(text||'').trim();
+    if(value.length<=240)return markdown(value);
+    const end=value.slice(0,220).search(/[。！？!?](?:\s|$)|[。！？]|\n/);
+    const preview=end>0?value.slice(0,end+1):value.slice(0,140)+'…';
+    return markdown(preview)+'<details class="wi-message-more"><summary>'+h(label)+'</summary><div class="markdown">'+markdown(value)+'</div></details>';
+  }
 
   function cooperationDeliveries(data){
     const history=data?.handoff_history||[];
@@ -945,18 +952,18 @@
     return Array.from(new Map(cooperationDeliveries(data).flatMap(handoff=>
       handoff.units.map(unit=>[unit.run_id,unit]))).values());
   }
-  function cooperationHandoff(data,prefs,handoff){
+  function cooperationHandoff(data,handoff){
     const rows=handoff.units.flatMap(unit=>Object.keys(unit.manifest).map(name=>({unit,name})));
     const summaries=handoff.units.filter(unit=>unit.summary);
     const destination=teamworkHref(data,'delivery');
-    const speaker=cooperationAI(prefs,discussionRole(data),data.discussion_model);
+    const speaker='Workdesk';
     const past=handoff!==data.handoff;
     const round=past&&handoff.after_round?`第 ${h(handoff.after_round)} 轮`:'';
     return `<article class="wi-chat-message wi-chat-handoff" data-cooperation-handoff data-cooperation-message-key="handoff:${h(handoff.id||handoff.after_round||data.rounds)}" data-reading-reply="true">
       <h2>${h(speaker)} · ${round}交付说明</h2>
       <div class="wi-chat-bubble">
-        <p><strong>${round?`已保存${round}交付。`:'已完成本次合作。'}${rows.length?`为你保存了 ${rows.length} 份最终文件。`:''}</strong></p>
-        ${summaries.map(unit=>`<div class="markdown wi-handoff-summary">${summaries.length>1?`<h3>${h(unit.title)}</h3>`:''}${markdown(unit.summary)}</div>`).join('')}
+        <p><strong>${round?`已保存${round}交付。`:'本次合作的成果已就绪。'}${rows.length?`为你保存了 ${rows.length} 份最终文件。`:''}</strong></p>
+        ${summaries.map(unit=>`<div class="markdown wi-handoff-summary">${summaries.length>1?`<h3>${h(unit.title)}</h3>`:''}${readableReply(unit.summary,'完整交付说明')}</div>`).join('')}
         ${rows.length?`<h3>交付文件${handoff.project_name?` <small>· ${h(handoff.project_name)} 项目</small>`:''}</h3>
           <ul class="wi-handoff-files">${rows.map(({unit,name})=>`<li>
             <div><a href="${cooperationFileHref(data.id,unit.run_id,name)}">${h(unit.file_labels[name]||name.split('/').at(-1))}</a>
@@ -969,32 +976,23 @@
     const messages=(data.messages||[]).filter(message=>['user','host'].includes(message.role)).map((message,index)=>{
       const user=message.role==='user';
       return `<article class="wi-chat-message" data-chat-role="${user?'user':'host'}" data-cooperation-message-key="discussion:${h(message.id||index)}" data-reading-reply="${!user&&!!message.text?.trim()}">
-        <h2>${h(user?cooperationUser(prefs):cooperationAI(prefs,discussionRole(data),message.model||data.discussion_model))}</h2>
+        <h2>${h(user?cooperationUser(prefs):cooperationAI(discussionRole(data),message.member,message.model))}</h2>
         <div class="wi-chat-bubble ${user?'':'markdown'}">
-          ${user?`<p>${h(message.text)}</p>`:markdown(message.text)}</div></article>`;
+          ${user?`<p>${h(message.text)}</p>`:readableReply(message.text,'查看完整发言')}</div></article>`;
     }).join('');
-    const brief=data.brief&&data.state!=='DISCUSSING'?`<section class="wi-chat-card wi-chat-brief" aria-label="已确认的任务说明">
-      <h2>已确认的任务说明</h2><dl>${Object.entries(cooperationBriefFields).filter(([name])=>data.brief[name]).map(([name,label])=>
-        `<div><dt>${label}</dt><dd>${h(data.brief[name])}</dd></div>`).join('')}</dl></section>`:'';
     const timeline=new Map(),notesWithoutRound=[];
     function append(round,body){
       if(!timeline.has(round))timeline.set(round,[]);
       timeline.get(round).push(body);
     }
     for(const stage of (data.stages||[]).filter(stage=>Object.hasOwn(cooperationStageNames,stage.stage))){
-      const body=stage.text||'本阶段成果已保存，可打开任务详情查看。';
-      const target=teamworkHref(data),task=encodeURIComponent(stage.task_id);
-      const member=stage.model||({codex:'Codex',deepseek:'DeepSeek',qwen:'Qwen'})[stage.provider]||'';
-      append(stage.round,`<article class="wi-chat-card wi-chat-stage" data-cooperation-stage="${h(stage.id)}" data-cooperation-message-key="stage:${h(stage.id)}" data-reading-reply="true">
-        <header><div><p>第 ${h(stage.round)} 轮</p><h2>${cooperationStageNames[stage.stage]}</h2></div>
-        ${member?`<span title="${h(member)}">${h(cooperationAI(prefs,'',member))}</span>`:''}</header>
-        <div class="markdown">${markdown(body.length>1000?body.slice(0,670)+'…':body)}</div>
-        ${body.length>1000?`<details><summary>查看完整结果</summary><div class="markdown">${markdown(body)}</div></details>`:''}
-        <footer><a href="${target+'/trace/'+task}">执行轨迹</a><a href="${target+'/thoughts/'+task}">公开思考</a></footer></article>`);
+      const member=stage.member||stage.model||stage.provider||'合作成员';
+      append(stage.round,`<article class="wi-chat-message" data-chat-role="member" data-cooperation-stage="${h(stage.id)}" data-cooperation-message-key="stage:${h(stage.id)}" data-reading-reply="true">
+        <h2>${h(cooperationAI(member,stage.model))}</h2>
+        <div class="wi-chat-bubble markdown">${readableReply(stage.text||'这一阶段已完成。','查看完整发言')}</div></article>`);
     }
     for(const handoff of cooperationDeliveries(data))
-      append(handoff.after_round??data.rounds,cooperationHandoff(data,prefs,handoff));
-    const discussion=messages&&data.mode!=='fixed'?'<h2 class="wi-chat-section-label">第 0 轮 · 需求讨论</h2>':'';
+      append(handoff.after_round??data.rounds,cooperationHandoff(data,handoff));
     for(const note of (data.resume_notes||[]).filter(note=>note.text)){
       const body=`<article class="wi-chat-message" data-chat-role="user" data-cooperation-note="${h(note.id)}" data-cooperation-message-key="note:${h(note.id)}">
         <h2>${h(cooperationUser(prefs))} · ${h(note.title||'续跑说明')}</h2><div class="wi-chat-bubble"><p>${h(note.text)}</p></div></article>`;
@@ -1002,7 +1000,7 @@
       else append(note.after_round,body);
     }
     const work=Array.from(timeline.keys()).sort((a,b)=>a-b).map(round=>timeline.get(round).join('')).join('');
-    return discussion+messages+brief+work+notesWithoutRound.join('');
+    return messages+work+notesWithoutRound.join('');
   }
 
   function cooperationDraft(view){
@@ -1047,12 +1045,9 @@
         const title=followup?'继续这项合作':paused?'续跑说明':'运行调整说明';
         const placeholder=followup?'告诉我下一轮想补充、修改或核对什么…':paused?'可补充需要重做或核对的事项…':'可说明下一步如何调整…';
         composer.innerHTML=`<form id="wi-cooperation-${kind}" class="wi-chat-intervention" aria-label="${title}">
-          <div class="wi-chat-intervention-heading">
-            <label for="wi-cooperation-note">${title}</label>
-            <span data-cooperation-recovery-target hidden></span>
-          </div>
-          <textarea id="wi-cooperation-note" name="note" rows="2" maxlength="4000" aria-describedby="wi-cooperation-action-help"
+          <textarea id="wi-cooperation-note" aria-label="${title}" name="note" rows="2" maxlength="4000" aria-describedby="wi-cooperation-action-help"
             placeholder="${placeholder}">${h(draft.note)}</textarea>
+          <span data-cooperation-recovery-target class="wi-chat-intervention-help" hidden></span>
           <p id="wi-cooperation-action-help" class="wi-chat-intervention-help"></p>
           <p data-cooperation-action-error class="wi-chat-error" role="alert" hidden></p>
           <div class="wi-chat-intervention-actions">
@@ -1080,12 +1075,9 @@
     target.textContent=kind==='resume'?recovery?.title||'':'';
     target.hidden=!target.textContent;
     form.querySelector('#wi-cooperation-action-help').textContent=kind==='followup'
-      ?'先查看续作范围和派发安排，确认后再开始。'
-      :kind==='intervene'?('调整用于下一次派发。打断会暂停派发，并向当前回合请求停止。'+
-        (data.can_adjust_budget?' 要增加轮次或修改上限，请选择「调整派发设置」。':''))
-      :recovery?.message||(recovery?.can_resume
-        ?'从中断处接续，继续使用已保存的成果。'
-        :'请在任务详情核对暂停原因，续跑说明会保留在这里。');
+      ?''
+      :kind==='intervene'?'补充要求将在下一步生效。'
+      :(recovery?.message!==data.problem?recovery?.message:'')||'';
     const error=form.querySelector('[data-cooperation-action-error]');
     if(error.textContent!==view.actionError)error.textContent=view.actionError||'';
     error.hidden=!view.actionError;
@@ -1233,7 +1225,10 @@
     if(!page){
       main.innerHTML=`<section class="wi-cooperation-surface" aria-label="合作聊天">
         <header class="wi-conversation-bar">
-          <div class="wi-conversation-name">${icon('chat')}<h1 data-cooperation-title>正在打开聊天…</h1></div>
+          <div class="wi-conversation-name"><details class="wi-chat-detail"><summary>任务详情</summary>
+            <div class="wi-chat-detail-panel"><div data-cooperation-task-facts></div>
+            <a href="${teamworkHref(view,'controls')}">操作与配置</a><a href="${teamworkHref(view,'notes')}">完整执行纪要</a>
+            <a href="${teamworkHref(view,'trace')}">执行轨迹</a><a href="${teamworkHref(view,'delivery')}">成果与验收</a></div></details><h1 data-cooperation-title>正在打开聊天…</h1></div>
           <nav class="wi-conversation-actions" aria-label="当前聊天操作">
             <div class="wi-cooperation-toolbar" data-cooperation-toolbar></div>
             <div data-cooperation-summary-host></div>
@@ -1244,14 +1239,10 @@
         </header>
         <div class="wi-cooperation-layout">
           <div class="wi-chat-lane"><div class="wi-chat-grid">
-            <aside class="wi-chat-task-card" aria-label="任务状态" hidden>
-              <p data-cooperation-mode></p><p data-cooperation-rounds></p>
-              <p data-cooperation-auth hidden></p><p data-cooperation-deadline hidden></p>
-              <a class="wi-chat-detail" href="${teamworkHref(view,'controls')}">任务详情</a>
-            </aside>
             <div class="sp-page wi-cooperation-chat">
               <div class="wi-chat-scroll"><div data-cooperation-transcript></div><div data-cooperation-brief></div>
                 <div data-cooperation-proposal></div><div data-cooperation-capability-wait hidden></div>
+                <small class="wd-chat-byline" data-cooperation-system-name hidden>Workdesk</small>
                 <p class="wi-chat-status" data-cooperation-status role="status" hidden></p>
                 <p class="wi-chat-error" data-cooperation-problem role="alert" hidden></p><p data-cooperation-discussion-run hidden></p>
                 <div class="wd-reading-position" data-cooperation-reading hidden><span class="wd-reading-announcement" role="status" aria-live="polite"></span><button type="button" class="wd-reading-latest" data-cooperation-latest>回到最新</button></div>
@@ -1267,9 +1258,14 @@
         getData:()=>view.data,isCurrent:()=>activeCooperation(view),refresh:()=>refreshCooperation(view)});
     }
     const problem=page.querySelector('[data-cooperation-problem]');
-    const error=view.error||(data?.capability_wait?'':data?.problem)||'';
+    const reason=data?.problem==='主持人决策协议不符。'
+      ?'系统没能读懂主持人的下一步安排。'+(data.recovery?.can_resume?'可以在下方从中断处继续。':'可在任务详情查看上一次记录。')
+      :data?.problem;
+    const error=view.error||(data?.capability_wait?'':reason)||'';
     if(problem.textContent!==error)problem.textContent=error;
     problem.hidden=!error;
+    const systemName=page.querySelector('[data-cooperation-system-name]');
+    systemName.hidden=!error;
     if(!data){
       page.querySelector('[data-cooperation-title]').textContent=error?'暂时无法打开聊天':'正在打开聊天…';
       return;
@@ -1278,18 +1274,17 @@
     title.textContent=title.title=data.title;
     window.WorkdeskCooperationToolbar.update(page.querySelector('[data-cooperation-toolbar]'));
     renderCooperationSummary(view,page.querySelector('[data-cooperation-summary-host]'));
-    page.querySelector('.wi-chat-task-card').hidden=false;
-    page.querySelector('[data-cooperation-mode]').textContent=teamworkModes[data.mode]||'合作任务';
-    page.querySelector('[data-cooperation-rounds]').textContent=data.rounds===1?'单轮':'共 '+data.rounds+' 轮';
-    const authorization=page.querySelector('[data-cooperation-auth]'),deadline=page.querySelector('[data-cooperation-deadline]');
-    const auth=data.authorization;
-    authorization.hidden=!auth;
-    deadline.hidden=!auth;
-    if(auth){
-      authorization.textContent=auth.deadline
-        ?`派发 ${auth.used??0} / ${auth.limit} 次`
-        :`派发上限 ${auth.limit} 次`;
-      deadline.textContent=auth.deadline?`截止 ${S.when(auth.deadline)}`:`开始后 ${auth.hours} 小时`;
+    const taskFacts=page.querySelector('[data-cooperation-task-facts]');
+    const facts=JSON.stringify([data.mode,data.rounds,data.authorization,data.brief,data.problem]);
+    if(facts!==view.taskFacts){
+      view.taskFacts=facts;
+      const auth=data.authorization;
+      taskFacts.innerHTML=`<strong>${h(teamworkModes[data.mode]||'合作工作')}</strong>
+        <p>共 ${h(data.rounds)} 轮${auth?' · 派发 '+h(auth.used??0)+' / '+h(auth.limit)+' 次':''}
+        ${auth?.deadline?' · 截止 '+h(S.when(auth.deadline)):''}</p>
+        ${Object.entries(cooperationBriefFields).filter(([key])=>data.brief?.[key]).map(([key,label])=>
+          `<details><summary>${label}</summary><p>${h(data.brief[key])}</p></details>`).join('')}
+        ${data.problem?`<p>${h(data.problem)}</p>`:''}`;
     }
     const viewport=page.querySelector('.wi-chat-scroll');
     const nearEnd=view.reading.follow;
@@ -1299,14 +1294,12 @@
       data.stages,data.mode,data.resume_notes,data.handoff,data.handoff_history,prefs.userNickname,prefs.assistantNickname]);
     if(signature!==view.transcript){
       const transcript=page.querySelector('[data-cooperation-transcript]');
-      const expanded=new Set(Array.from(transcript.querySelectorAll('[data-cooperation-stage] details[open]'),
-        details=>details.closest('[data-cooperation-stage]').dataset.cooperationStage));
+      const detailsKey=node=>node.closest('[data-cooperation-message-key]').dataset.cooperationMessageKey+':'+
+        Array.from(node.closest('[data-cooperation-message-key]').querySelectorAll('.wi-message-more')).indexOf(node);
+      const expanded=new Set(Array.from(transcript.querySelectorAll('.wi-message-more[open]'),detailsKey));
       if(!view.reading.follow)view.reading.relayout=true;
       transcript.innerHTML=cooperationTranscript(data,prefs);
-      for(const card of transcript.querySelectorAll('[data-cooperation-stage]')){
-        const details=card.querySelector('details');
-        if(details&&expanded.has(card.dataset.cooperationStage))details.open=true;
-      }
+      for(const node of transcript.querySelectorAll('.wi-message-more'))node.open=expanded.has(detailsKey(node));
       view.transcript=signature;
     }
     const discussing=data.state==='DISCUSSING';
@@ -1318,12 +1311,12 @@
         draft.brief={source,values:{...data.brief},edited:false};
       if(!brief.firstElementChild||view.briefSource!==draft.brief.source){
         brief.innerHTML=`<form id="wi-cooperation-confirm" class="wi-chat-card wi-chat-brief">
-          <h2>确认任务说明</h2>
-          <div class="wi-chat-brief-fields">${Object.entries(cooperationBriefFields).map(([name,label])=>
-            S.text(label,name,draft.brief.values[name]||'',`${name==='goal'?'required ':''}maxlength="4000"`)).join('')}</div>
+          <h2>按这个目标开始？</h2><p>${h(draft.brief.values.goal)}</p>
+          <details><summary>查看和调整任务说明</summary><div class="wi-chat-brief-fields">${Object.entries(cooperationBriefFields).map(([name,label])=>
+            S.text(label,name,draft.brief.values[name]||'',`${name==='goal'?'required ':''}maxlength="4000"`)).join('')}</div></details>
           ${data.access==='full'&&!data.plan_only?`<label class="wi-chat-full-access"><input name="confirm_full" type="checkbox" required>
             <span>允许本次正式执行使用完全访问权限。所选工作端可在本机账号权限范围内读写文件、运行命令和使用网络。</span></label>`:''}
-          <button type="submit">${data.plan_only?'确认任务说明并生成方案':'确认任务说明并开始 PDCA'}</button></form>`;
+          <button type="submit">${data.plan_only?'确认任务说明并生成方案':'确认并开始'}</button></form>`;
         view.briefSource=draft.brief.source;
       }
       brief.querySelector('button').disabled=view.submitting||!!data.pending;
@@ -1335,13 +1328,14 @@
     const queued=data.followup_pending;
     const label=(queued?.problem|| (queued&&data.state==='RUNNING'?'已保存续作安排，当前计划完成后接续。':'')||
       (data.pending?'正在整理讨论内容…':{
-      RUNNING:'PDCA 进行中，阶段完成后会在这里显示结果。',
+      RUNNING:'团队正在工作，有进展时会在这里回复。',
       PLAN_READY:'方案已保存，可在任务详情查看。',
       COMPLETED:data.handoff?'':'本次合作已完成。',
       PAUSED:data.capability_wait?'':'工作已暂停。'
     }[data.state]))||'';
     if(status.textContent!==label)status.textContent=label;
     status.hidden=!label;
+    systemName.hidden=!label&&!error;
     const discussionRun=page.querySelector('[data-cooperation-discussion-run]');
     const discussionTask=discussing?(data.pending||data.problem?data.discussion_task_id:null):
       data.attention_task_id||data.recovery?.task_id;
@@ -1517,6 +1511,13 @@
     const view=cooperationView;
     if(event.defaultPrevented||!activeCooperation(view)||
         document.querySelector('dialog[open],[data-cooperation-toolbar] :popover-open'))return;
+    const form=event.target.closest('textarea')?.closest('[data-cooperation-composer] form');
+    if(event.key==='Enter'&&form&&!event.shiftKey&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&!event.isComposing&&event.keyCode!==229){
+      const primary=form.querySelector('.wi-chat-action-primary,button[aria-label="发送讨论消息"]');
+      event.preventDefault();
+      if(event.target.value.trim()&&!event.repeat&&primary&&!primary.disabled&&!primary.hidden)form.requestSubmit(primary);
+      return;
+    }
     const open=view.preview||view.tools;
     if(event.key==='Escape'&&open&&!$('#main [data-conversation-summary-panel]')){
       event.preventDefault();

@@ -7,7 +7,7 @@ import { Textarea } from '../components/ui/textarea';
 import { NativeSelect } from '../components/ui/native-select';
 import { Badge } from '../components/ui/badge';
 import { Template } from '../components/template';
-import { IndependentConversationHeader, IndependentModels, IndependentProvider, IndependentSidebar, IndependentWelcome, WorkModeSwitch, independentAppearance, independentBrand, IndependentService, IndependentRunState } from './independent-work';
+import { IndependentConversationHeader, IndependentModels, IndependentProvider, IndependentSidebar, WorkModeSwitch, independentAppearance, independentBrand, IndependentService, IndependentRunState } from './independent-work';
 import { ChatModels, ChatContext, ChatTurnDetails, chatFallback } from './chat';
 import './conversation.css';
 import { NativeAccess, NativeProcess, NativeUsage } from './native-work';
@@ -104,7 +104,7 @@ function AssistantMessage() {
 export function Conversation(props:any) {
   const detail=props.v.detail,runId=detail?.partner_run_id||detail?.task?.partner_run_id||detail?.task?.spec?.partner_run_id;
   if(props.v.mode!=='chat'&&runId)return <PartnerWork key={runId} runId={runId} detail={detail}/>;
-  if(props.v.mode!=='chat'&&detail?.task?.spec?.execution==='partner_native')return <section className="wd-partners"><h1>{detail.task.title||'伙伴工作'}</h1><p role="status">原生运行归属待核对。保留原记录，没有重新发送。</p><a href="#settings/operations">运行与恢复</a></section>;
+  if(props.v.mode!=='chat'&&detail?.task?.spec?.execution==='partner_native')return <section className="wd-task-chat" aria-label="工作对话"><header><a href={'#control/task/'+encodeURIComponent(detail.task.id)}>任务详情</a></header><div className="wd-talk-scroll"><div className="wd-talk-column"><article className="wd-talk-user"><span className="wk-byline">你</span><div className="wd-talk-body">{detail.task.spec.goal}</div></article><article className="wd-talk-answer"><span className="wk-byline">Workdesk</span><p role="status">正在核对这项工作交给了哪个工作端。确认前会保留原对话。</p></article></div></div></section>;
   return <LegacyConversation {...props}/>;
 }
 function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooperation,chat:chatInfo}:any) {
@@ -150,8 +150,8 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
         <WorkModeSwitch v={v} selected={selected}/>
       </div>}
       {selected&&<>
-        {independentConversation?<aside className="wk-independent-context" data-independent-work="context" data-locked={isLocked} aria-label="独立工作概况">
-          <strong className="wk-independent-context-caption">独立工作</strong>
+        {independentConversation?<details className="wk-independent-context" data-independent-work="context" data-locked={isLocked}>
+          <summary className="wk-independent-context-caption">任务详情</summary>
           <dl>
             {v.detail.task.spec.model&&<div><dt>模型</dt><dd>{v.detail.task.spec.model}</dd></div>}
             {project&&<div><dt>项目</dt><dd>{project.name}</dd></div>}
@@ -159,9 +159,9 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
           </dl>
           {!isLocked&&<div className="wk-independent-draft-context"><Scene/><IndependentProvider v={v} names={names} isLocked={isLocked}/></div>}
           <div className="wk-independent-context-links"><WorkGoalButton taskId={v.detail.task.id}/>
-            <a className="wk-independent-context-item" href={`#work-items/view-work/${encodeURIComponent(v.detail.task.id)}`}>任务详情</a>
+            <a className="wk-independent-context-item" href={`#work-items/view-work/${encodeURIComponent(v.detail.task.id)}`}>完整工作记录</a>
           </div>
-        </aside>:<div className="wk-active-bar">{chat?<><span>{names[c.provider]} · {c.config.model}</span><Badge variant="secondary">工作端文本对话</Badge>{pending&&<Button variant="outline" data-wb="chat-stop">停止回复</Button>}<Button variant="outline" data-wb="official-web">官方网页</Button></>:<><Scene/><span className="wk-faint">合作工作</span><Button variant="outline" data-wb="details">工作详情</Button><a className="wk-button" href={v.dialogue?'#collab/dialogue/'+v.dialogue.id:'#control/task/'+v.detail.task.id}>{v.dialogue?'方案与队列':'运行与控制'}</a>{v.detail?.task.spec.runtime_mode==='official'&&<Button variant="ghost" className="wk-chip" data-wb="native-panel">工作端控制</Button>}</>}</div>}
+        </details>:<div className="wk-active-bar">{chat?<><span>{names[c.provider]} · {c.config.model}</span><Badge variant="secondary">工作端文本对话</Badge>{pending&&<Button variant="outline" data-wb="chat-stop">停止回复</Button>}<Button variant="outline" data-wb="official-web">官方网页</Button></>:<details><summary>任务详情</summary><Scene/><Button variant="outline" data-wb="details">工作说明</Button><a className="wk-button" href={v.dialogue?'#collab/dialogue/'+v.dialogue.id:'#control/task/'+v.detail.task.id}>{v.dialogue?'方案与队列':'运行与控制'}</a>{v.detail?.task.spec.runtime_mode==='official'&&<Button variant="ghost" className="wk-chip" data-wb="native-panel">工作端控制</Button>}</details>}</div>}
         <ThreadPrimitive.Viewport className="wk-thread" data-reading-viewport autoScroll scrollToBottomOnRunStart={false}>
           {!chat&&v.detail?.task.spec.native_fork&&<p className="wk-note">此会话沿用原生分叉历史，可在“工作端控制 → 会话历史”查看。</p>}
           {!chat&&v.detail?.attempts.some((a:any)=>a.native_history_reverted)&&<p className="wk-note">已按官方回退结果更新对话。回退前的运行审计与用量保留在“运行与控制”，项目文件没有撤销。</p>}
@@ -176,17 +176,33 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
       </>}
       <div className={'wk-home'+(compactWork?' wk-home-compact':'')}>
         {independentConversation&&<IndependentRunState detail={v.detail} busy={v.busy}/>}
-        {!selected&&<>{independentWork?<IndependentWelcome provider={v.provider}/>:<div className="wk-greeting"><h1>{chat?'今天想聊些什么？':'我们要做什么？'}</h1>{!chat&&<p>从一个目标开始，把事情一步步完成。</p>}</div>}{!chat&&<div className="wk-setup"><Scene/></div>}</>}
-        {independentWork&&!selected&&<details><summary>完成条件与交付文件</summary>
+        {!selected&&<div className="wk-greeting"><h1>今天想聊点什么？</h1></div>}
+        {!chat&&!selected&&<details className="wk-draft-options"><summary>工作设置</summary>
+          <div className="wk-setup"><Scene/><Button type="button" variant="ghost" className="wk-chip" data-wb-menu="project" aria-label="选择工作区或项目" disabled={v.workLoading}><Folder/>{project?.name||'选择项目'}</Button><Button type="button" className="wk-chip" variant="ghost" data-wb="files"><File/>工作区文件</Button></div>
+          {independentWork&&<>
           <label>完成条件<textarea id="wb-completion-criteria" maxLength={4000} defaultValue={v.formDraft?.completionCriteria||''} onChange={e=>{v.formDraft.completionCriteria=e.target.value;}}/></label>
           <label>交付文件（每行一个项目相对路径）<textarea id="wb-delivery-paths" defaultValue={v.formDraft?.deliveryPaths||''} onChange={e=>{v.formDraft.deliveryPaths=e.target.value;}}/></label>
+          <IndependentService service={independent?.service}/></>}
         </details>}
         <ComposerPrimitive.Root id={chat?'wb-chat-form':'wb-work-form'} onSubmit={e=>e.stopPropagation()}>
           <div className="wk-composer-group"><div className="wk-composer">
+            {!chat&&!selected&&<div aria-live="polite">
+              {v.formDraft?.chatSource?.chat_id&&<a className="wk-chip" href={'#chat/'+encodeURIComponent(v.formDraft.chatSource.chat_id)}>返回原聊天</a>}
+              {[...String(v.files||'').split(/\r?\n/).filter(Boolean),...v.attachments.map((a:any)=>a.file)].map(file=>
+                <button key={file} type="button" className="wk-chip" data-wb="remove-inline-file" data-file={file}
+                  title={'移除 '+file} aria-label={'移除附件 '+file.split('/').pop()} disabled={v.preparingFiles||v.busy}>
+                  <File size={15}/>{file.split('/').pop()} ×
+                </button>)}
+              {v.preparingFiles&&<small>正在准备附件…</small>}
+              {v.fileError&&<div role="alert">附件未就绪：{v.fileError} <button type="button" className="wk-chip" data-wb="dismiss-file-error">忽略本次添加</button></div>}
+            </div>}
             <ComposerPrimitive.Input asChild submitMode="none" addAttachmentOnPaste={false} cancelOnEscape={false} unstable_focusOnThreadSwitched={false}>
               <Textarea id={chat?'wb-chat-input':'wb-work-input'} rows={compactWork?1:2} aria-label={chat?'Chat 消息':'工作目标'} disabled={!chat&&v.workLoading} placeholder={chat?'有什么想法，尽管聊聊…':selected?'补充要求，继续推进这项工作…':independentWork?independentBrand(v.provider).placeholder:'描述目标，或说说你想做什么…'}/>
             </ComposerPrimitive.Input>
-            <div className="wk-composer-tools">{!chat&&<Button type="button" variant="ghost" size="icon" className="wk-icon"
+            <div className="wk-composer-tools">{!chat&&!selected&&<>
+              <input id="wb-inline-files" type="file" multiple hidden disabled={v.preparingFiles||v.workLoading||v.busy}/>
+              <Button type="button" variant="ghost" size="icon" aria-label="添加附件" title="添加附件，也可拖放到输入框" disabled={v.preparingFiles||v.workLoading||v.busy}
+                onClick={e=>e.currentTarget.form?.querySelector<HTMLInputElement>('#wb-inline-files')?.click()}><File/></Button></>}{!chat&&<Button type="button" variant="ghost" size="icon" className="wk-icon"
               data-wb-menu="work-tools" aria-haspopup="menu" aria-expanded={v.menu==='work-tools'}
               aria-label="工作功能" title="添加文件、Skill、MCP 和聊天引用" disabled={v.workLoading||v.busy}><Plus/></Button>}
               {!chat&&v.workPlanOnly&&<Button type="button" variant="ghost" className="wk-chip" data-wb="work-plan-mode"
@@ -200,12 +216,12 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
                   aria-label={selected?'协作分工':'合作方式与分工'} aria-haspopup="dialog" disabled={v.workLoading}>
                   <Workflow/><span>{selected?'协作分工':cooperation}</span><ChevronDown/>
                 </Button>:<IndependentModels v={v} names={names} profile={profile} isLocked={isLocked}/>}</div>
-              {independentWork&&pending&&v.detail?.task.spec.runtime_mode==='official'&&v.detail.task.spec.qwen_runtime!=='daemon'?<Button type="button" data-wb="native-steer" disabled={v.busy||!v.input.trim()} title="通过原生接口补充指令">补充指令</Button>:<ComposerPrimitive.Send asChild><Button type="button" className="wk-send" aria-label={chat?'发送 Chat 消息':v.workPlanOnly?'发送计划请求':selected?'发送工作消息':independentWork?'开始独立工作':'准备开始工作'} disabled={v.busy||pending||(!chat&&v.workLoading)}><ArrowUp/></Button></ComposerPrimitive.Send>}
+              {independentWork&&pending&&v.detail?.task.spec.runtime_mode==='official'&&v.detail.task.spec.qwen_runtime!=='daemon'?<Button type="button" data-wb="native-steer" disabled={v.busy||!v.input.trim()} title="通过原生接口补充指令">补充指令</Button>:<ComposerPrimitive.Send asChild><Button type="button" className="wk-send" aria-label={chat?'发送 Chat 消息':v.workPlanOnly?'发送计划请求':selected?'发送工作消息':independentWork?'开始独立工作':'准备开始工作'} disabled={v.busy||pending||(!chat&&(v.workLoading||v.preparingFiles||!!v.fileError))}><ArrowUp/></Button></ComposerPrimitive.Send>}
             </div>
-          </div>{!chat&&!compactWork&&<div className="wk-shelf"><Button type="button" variant="ghost" className="wk-chip wk-project-chip" data-wb-menu="project" aria-label="选择工作区或项目" disabled={selected||v.workLoading}><Folder/><span>{project?.name||'选择工作区'}</span><ChevronDown/></Button><Button type="button" variant="ghost" className="wk-chip" data-wb="files" disabled={v.workLoading}><File/>文件{count?' · '+count:''}</Button><Button type="button" variant="ghost" className="wk-chip" data-wb="skills" disabled={v.workLoading}><Plug/>插件与 Skills</Button></div>}</div>
+          </div>{!chat&&selected&&!compactWork&&<div className="wk-shelf"><Button type="button" variant="ghost" className="wk-chip wk-project-chip" data-wb-menu="project" aria-label="选择工作区或项目" disabled={selected||v.workLoading}><Folder/><span>{project?.name||'选择工作区'}</span><ChevronDown/></Button><Button type="button" variant="ghost" className="wk-chip" data-wb="files" disabled={v.workLoading}><File/>文件{count?' · '+count:''}</Button><Button type="button" variant="ghost" className="wk-chip" data-wb="skills" disabled={v.workLoading}><Plug/>插件与 Skills</Button></div>}</div>
         </ComposerPrimitive.Root>
-        {chat?<ChatContext chat={chatInfo} selected={!!c}/>:!compactWork&&<p className="wk-hint" role={v.workLoading?'status':undefined}>{v.workLoading?'正在同步工作配置与记录…':v.detail?.task.spec.runtime_mode==='official'?'模型、思考和权限选择在下一回合生效':isLocked?'当前工作场景已固定':selected?'草稿尚未开始，可修订工作配置':independentWork?'开始前可调整场景、工作端和材料':'开始前可调整场景与分工'}</p>}
-        {independentWork&&!compactWork&&<IndependentService service={independent?.service}/>}
+        {chat?<ChatContext chat={chatInfo} selected={!!c}/>:selected&&!compactWork&&<p className="wk-hint" role={v.workLoading?'status':undefined}>{v.workLoading?'正在同步工作配置与记录…':v.detail?.task.spec.runtime_mode==='official'?'模型、思考和权限选择在下一回合生效':isLocked?'当前工作场景已固定':selected?'草稿尚未开始，可修订工作配置':independentWork?'开始前可调整场景、工作端和材料':'开始前可调整场景与分工'}</p>}
+        {independentWork&&selected&&!compactWork&&<IndependentService service={independent?.service}/>}
         {chat&&!c&&<Button variant="outline" data-wb="official-web">使用官方网页</Button>}
         {v.pending&&<p className="wk-note">最近命令 {v.pending.id} · <a href="#control/receipts">查询回执</a></p>}
       </div>

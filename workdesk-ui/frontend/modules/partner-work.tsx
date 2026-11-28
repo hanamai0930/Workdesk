@@ -64,6 +64,12 @@ export function PartnerWork({runId,detail}: {runId?:string;detail?:TaskDetail}) 
   const apiName=(item:{api_provider?:string;driver_provider?:string;account_id:string})=>{const account=data?.accounts.find(account=>account.id===item.account_id),provider=item.api_provider||item.driver_provider||account?.api_provider||'deepseek';return data?.api_providers?.find(item=>item.id===provider)?.name||provider;};
   const release=data?.components.find(item=>item.id===selected?.release_id),account=data?.accounts.find(item=>item.id===selected?.account_id),selectedProject=projects.find(item=>item.id===project);
   const available=selected&&selected.state!=='DISABLED'&&release&&['AVAILABLE','READY','INSTALLED','VERIFIED'].includes(release.state);
+  if(detail && runId && detail.task.spec.work_mode==='independent' && detail.attempts.length){
+    if(!run)return <section aria-label="工作对话" role="status">{error||'正在打开对话…'} {error&&<button onClick={()=>void refresh()}>重试</button>}</section>;
+    return <TaskDelivery key={detail.task.id} detail={detail} run={run}
+      speaker={data?.partners.find(p=>p.id===run.partner_id)?.name||run.partner_id||'助手'}
+      onRunChange={refresh}/>;
+  }
   return <section className="wd-partners wd-partner-work" data-partner-work>
     <header className="wd-partner-work-header"><div><h1>{task?.title||'独立 Work · 伙伴连接'}</h1><p className="wd-partners-note">{task?'本次工作的原生运行与工具请求。':'选择已保存的官方工作端组合，在指定项目中工作。'}</p></div><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work">返回独立 Work</a></Button><Button asChild variant="outline"><a href="#settings/accounts">账号与模型</a></Button><Button variant="outline" disabled={busy||loading} onClick={()=>void refresh()}>刷新状态</Button></div></header>
     {error&&<p role="alert" className="wd-partners-error">{error}</p>}{notice&&<p role="status" className="wd-partners-note">{notice}</p>}
@@ -78,7 +84,6 @@ export function PartnerWork({runId,detail}: {runId?:string;detail?:TaskDetail}) 
       <div className="wd-partners-actions"><Button type="submit" disabled={blocked||!available||!selectedProject||!prompt.trim()}>开始伙伴工作</Button></div>
     </form>}
     {runId&&run&&<><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work/partners">开始另一项工作</a></Button><span className="wd-partners-note">同一运行记录 · {run.id}</span></div><PartnerRunList runs={[run]} busy={busy} blocked={blocked} perform={(kind,payload,success,after)=>{const a=detail?.attempts.at(-1);return kind==='partner.stop'&&a&&detail?.task.spec.work_mode==='independent'?perform('task.stop',{task_id:detail.task.id,attempt_id:a.id,owner:a.owner},success,after):perform(kind,payload,success,after);}} apiProviders={data?.api_providers}/></>}
-    {detail&&run&&detail.task.spec.work_mode==='independent'&&detail.attempts.length>0&&<TaskDelivery detail={detail} run={run}/>}
     {!task&&<section className="wd-partner-work-history"><h2>伙伴工作记录</h2>{!recent.length&&<p className="wd-partners-note">尚无伙伴工作记录。登录和本地检查不会作为工作列入。</p>}<ul>{recent.map(item=><li key={item.id}><a href={'#work/partners/run/'+encodeURIComponent(item.id)}>{item.prompt?.slice(0,100)||data?.partners.find(p=>p.id===item.partner_id)?.name||item.id}</a><span>{partnerStateLabel(item.state)}</span></li>)}</ul>
       <form onSubmit={event=>{event.preventDefault();if(lookup.trim())location.hash='#work/partners/run/'+encodeURIComponent(lookup.trim());}}><label>按准确运行标识打开<Input aria-label="伙伴运行标识" value={lookup} onChange={event=>setLookup(event.currentTarget.value)}/></label><Button type="submit" variant="outline" disabled={!lookup.trim()}>打开原运行</Button></form>
     </section>}

@@ -1,4 +1,4 @@
-import { ChatWorkHandoff, type HandoffChat } from './chat-work-handoff';
+import { ChatWorkHandoff, HandoffMessageContext, type HandoffHandle, type HandoffChat } from './chat-work-handoff';
 import { Button } from '../components/ui/button';
 import { NativeSelect } from '../components/ui/native-select';
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
@@ -23,6 +23,7 @@ export function ChatFrame({record,records,projectId,api,filesDisabled,actions,ch
   record?:ChatRecord;records:ChatRecord[];projectId?:string;api?:boolean;filesDisabled?:boolean;actions?:ReactNode;children:ReactNode;
 }){
   const workspaceKey=`chat:${record?.id||'new'}`;
+  const handoff=useRef<HandoffHandle>(null);
   const workspace=useQuickWorkspaceView(true,workspaceKey);
   const title=record?.title||'新聊天';
   return <>
@@ -30,7 +31,7 @@ export function ChatFrame({record,records,projectId,api,filesDisabled,actions,ch
       <h1 title={title}><MessageSquare aria-hidden="true"/><span>{title}</span></h1>
       <div className="wd-chat-tools">
         {actions}
-        {record?<><ChatWorkHandoff key={record.id} source={record}/>
+        {record?<><ChatWorkHandoff key={record.id} source={record} handle={handoff}/>
           <Button asChild variant="ghost" size="icon-sm"><a href={'#work-items/view-chat/'+encodeURIComponent(record.id)}
             aria-label="对话详情" title="对话详情" data-chat-detail><Info aria-hidden="true"/></a></Button>
           <Button type="button" variant="ghost" size="icon-sm" data-wb-menu="conversation" aria-label="对话操作" title="对话操作" aria-expanded={false}><MoreHorizontal/></Button>
@@ -45,7 +46,7 @@ export function ChatFrame({record,records,projectId,api,filesDisabled,actions,ch
       </div>
     </header>
     <div className="wd-chat-layout" data-workspace-expanded={workspace.expanded}>
-      <div className="wd-chat-main">{children}</div>
+      <div className="wd-chat-main"><HandoffMessageContext.Provider value={record&&!record.pending?id=>handoff.current?.open(id):null}>{children}</HandoffMessageContext.Provider></div>
       <aside ref={workspace.panelRef} id="wd-chat-side-panel" className="wd-chat-side" data-chat-panel hidden={!workspace.open} aria-label="聊天侧栏">
         <QuickWorkspace stateKey={workspaceKey} projectId={record?.list_project} records={records} currentChat={record?.id} onClose={workspace.close}
           expanded={workspace.expanded} onToggleExpanded={workspace.toggleExpanded} requestedTool={workspace.requestedTool}>

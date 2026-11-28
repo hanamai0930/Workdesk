@@ -236,6 +236,8 @@ class CooperationConversationTests(LocalFlowCase):
         self.assertEqual(view['state'], 'COMPLETED', view)
         self.assertEqual([(r['round'], r['stage']) for r in view['stages']], [(1, stage) for stage in STAGES])
         self.assertTrue(all(r['task_id'] and '已保存阶段结果' in r['text'] for r in view['stages']))
+        self.assertEqual([r['member'] for r in view['stages']],list(STAGES))
+        self.assertEqual(view['messages'][-1]['member'],'coordinator')
         self.assertEqual([spec['access'] for phase, spec in self.dispatches if phase.startswith('pdca_')],
                          ['full'] * len(STAGES))
         self.assertEqual([(m['role'], m['text']) for m in view['messages']][-2:],

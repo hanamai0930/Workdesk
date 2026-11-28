@@ -165,6 +165,12 @@ class Planning:
         row.update(origin_command_id=self.s.command_identity,dispatch_before=deadline,source_handoff_id=reference,
                    blocker='',human_paused=True)
         origin=p.get('source_task')
+        draft_id=p.get('source_draft_id')
+        if draft_id:
+            draft=self.c.get(db,'ui_draft',draft_id)['value']
+            if origin or (draft.get('project') and draft['project']!=project):
+                raise ValueError('工作草稿所属项目已变化，请重新打开原对话。')
+            row['source_draft_id']=draft_id
         if origin:
             if not isinstance(origin,dict):raise ValueError('原任务标识无效。')
             task,attempt=self.eligible(db,origin.get('task_id'))
@@ -175,12 +181,10 @@ class Planning:
                 raise ValueError('原任务工作连接已变化。')
             row.update(task_id=task['id'],attempt_id=attempt['id'],binding=task['spec_hash'],
                        source_task=origin,reviewed_attempt_id=attempt['id'],task_usage=self.s.store.usage(task=task['id'],db=db))
-        if p.get('files'):
+        if p.get('files') or p.get('selection_ref'):
             if origin:raise ValueError('已有任务沿用原材料。')
             if p.get('selection_ref'):
-                selection,_=self.s.file_inspector.checked(db,p['selection_ref'])
-                if selection['project_id']!=project or sorted(p['files'])!=sorted(f['file'] for f in selection['selected']):
-                    raise ValueError('已选材料或项目已变化，请重新选择。')
+                selection,_=self.s.file_inspector.delivery_selection(db,p['selection_ref'],project,p.get('files'))
             else:selection=self.s.file_inspector.save(db,{'project_id':project,'files':p['files']})['selection']
             row['file_selection']={k:selection[k] for k in ('id','revision')}
         if binding:row['partner_connection']=binding

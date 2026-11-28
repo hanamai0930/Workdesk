@@ -1,6 +1,7 @@
 """UI-independent task commands, ownership, scoped execution and reconciliation."""
 import json
 from contextlib import nullcontext
+from pathlib import Path
 import threading
 import time
 from . import PROTOCOL_VERSION
@@ -141,6 +142,9 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
         if view not in (None,'workbench'):raise ValueError('未知工作区目录视图。')
         with self.store.read() as db:
             projects=self.work_records.projects(db)
+            for project in projects:
+                if Path(project['root']).absolute() == (self.locations.data / 'unfiled-work').absolute():
+                    project['legacy_unfiled'] = True
             visible=self.work_records.visible('task','tasks.id')
             if view=='workbench':
                 # The sidebar needs identity and grouping, not every saved goal,
@@ -169,11 +173,14 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
                 'execution_resources':self.resources.public_catalog(profiles=profiles)}
 
     def detail(self,identity,cursor=0):
+        from .result_records import delivered_answer
         with self.store.read() as db:
             task=self.store.task(identity,db)
             attempts=[self.store.attempt_row(r) for r in db.execute('SELECT * FROM attempts WHERE task_id=? ORDER BY started',(identity,))]
             reverted={a for r in db.execute("SELECT payload FROM events WHERE task_id=? AND kind='native_history_reverted'",(identity,)) for a in json.loads(r[0]).get('attempt_ids',[])}
             for attempt in attempts:
+                if attempt.get('result') and not attempt['result'].get('answer'):
+                    attempt['result']['answer']=delivered_answer(db,attempt)
                 attempt['native_history_reverted']=attempt['id'] in reverted
                 saved=db.execute("SELECT payload FROM events WHERE attempt_id=? AND kind='execution_reserved' ORDER BY seq LIMIT 1",(attempt['id'],)).fetchone()
                 attempt['model_configuration']=(json.loads(saved[0]).get('configuration_snapshot') if saved else None) or {'status':'LEGACY_NOT_FROZEN'}

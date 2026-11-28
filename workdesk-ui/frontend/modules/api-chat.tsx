@@ -8,12 +8,17 @@ import { Template } from '../components/template';
 import { ChatFrame, ChatRoutePicker, chatDisplayNames } from './chat';
 import './api-chat.css';
 import { ConversationScroll } from './conversation-scroll';
+import { HandoffMessageContext } from './chat-work-handoff';
 
 const active=new Set(['RESERVED','SEND_INTENT','RUNNING','STOP_REQUESTED']);
 const ApiDisplayNames=createContext({user:'User',assistant:'AI'});
 const ApiMessages=createContext<any[]>([]);
 function SafeText({text}:TextMessagePartProps){return <Template html={window.WorkdeskLegacy.markdown(text)}/>;}
-function UserMessage(){const {user}=useContext(ApiDisplayNames);return <MessagePrimitive.Root className="wd-api-user"><span className="wd-chat-byline">{user}</span><div><MessagePrimitive.Parts components={{Text:SafeText}}/></div></MessagePrimitive.Root>;}
+function MessageWorkButton(){
+  const open=useContext(HandoffMessageContext),id=useAuiState(state=>state.message.id);
+  return open?<button type="button" className="wd-message-work" onClick={()=>open(id)}>用这条消息开始工作</button>:null;
+}
+function UserMessage(){const {user}=useContext(ApiDisplayNames);return <MessagePrimitive.Root className="wd-api-user"><span className="wd-chat-byline">{user}</span><div><MessagePrimitive.Parts components={{Text:SafeText}}/></div><MessageWorkButton/></MessagePrimitive.Root>;}
 function AssistantMessage(){
   const {assistant}=useContext(ApiDisplayNames),rows=useContext(ApiMessages);
   const id=useAuiState(state=>state.message.id),turn=rows.find(row=>row.id===id);
@@ -27,7 +32,7 @@ function AssistantMessage(){
   return <MessagePrimitive.Root className={'wd-api-answer'+(!hasBody?' wd-api-answer-status':'')}>
     {hasBody&&<Sparkles aria-hidden="true"/>}
     <div>
-      {hasBody&&<><span className="wd-chat-byline">{assistant}</span><div className="markdown"><MessagePrimitive.Parts components={{Text:SafeText}}/></div></>}
+      {hasBody&&<><span className="wd-chat-byline">{assistant}</span><div className="markdown"><MessagePrimitive.Parts components={{Text:SafeText}}/></div><MessageWorkButton/></>}
       {(status||turn?.error)&&<section className="wd-api-turn-status" data-api-turn-state={turn?.state} role={failed||unknown?'alert':'status'}>
         {status&&<strong>{status}</strong>}
         {turn?.error&&<p>{turn.error}</p>}

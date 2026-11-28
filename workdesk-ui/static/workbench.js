@@ -61,7 +61,10 @@
     }
     const id=crypto.randomUUID();v.pending={id,kind};
     try{const r=await call('command',{id,kind,payload});v.pending=null;return r.receipt;}
-    catch(error){if(error.status===409||error.status===400)v.pending=null;throw Error(error.message+' · 命令 '+id+'；请查操作回执，未自动重发。');}
+    catch(error){
+      if(!error.unknown&&error.status>=400&&error.status<500){v.pending=null;throw error;}
+      throw Error(error.message+' · 命令 '+id+'；请查操作回执，未自动重发。');
+    }
   }
   function config(id){const p=profile(id);if(!p)throw Error('尚未读取工作端配置。');return {provider:id,model:p.model,effort:p.effort,tier:p.tier,execution:id+'_native'};}
   function useWorkDefault(provider){
@@ -765,8 +768,10 @@
       input:v.input,project:v.project,files:v.files,attachments:v.attachments,formDraft:v.formDraft});
   }
   async function sendWork(confirmed=false){
+    if(v.preparingFiles||v.fileError){toast(v.preparingFiles?'文件正在准备，请稍候。':'请先处理输入框旁的附件提示。');return;}
     if(v.workLoading){toast('工作配置仍在读取，请稍候。');return;}
     if(!v.input.trim())return;
+    if(!v.detail&&!v.dialogue)await features.recoverDraftFiles();
     if(v.dialogue){
       const d=v.dialogue;
       modal('发送协作消息',`<p class="wb-goal">${h(v.input)}</p><p class="wk-note">向 ${names[d.config.provider]} 的当前协作讨论发送消息，使用原问题链预算。</p>`,b('取消','close')+b('确认发送','dialogue-send','',true));return;
@@ -856,7 +861,7 @@
     if(action==='roles'){rolesDialog();return;}if(action==='save-roles'){if(locked())throw Error('当前工作已开始，分工已固定。');v.roles={...v.roleDraft};$('#wb-dialog').close();draw();return;}
     if(action==='new-project'||action==='register-project'){if(!v.data)await load();projectDialog(action==='new-project');return;}
     if(action==='project-new-work'){const id=el.dataset.project;await go('#work',true);if(!v.data.projects.some(p=>p.id===id))throw Error('项目登记已变化，请重新选择。');v.project=id;if(scenes[project()?.scene])v.scene=project().scene;draw();features.autosave();return;}
-    if(action==='unfiled'){if(v.detail||v.dialogue)throw Error('已有记录保留原工作区。');v.project='';closeMenu();draw();return;}
+    if(action==='unfiled'){if(v.detail||v.dialogue)throw Error('已有记录保留原工作区。');if(v.files||v.attachments.length||v.preparingFiles)throw Error('本条消息已关联材料。移除附件后可以切换工作区。');v.project='';closeMenu();draw();features.autosave();return;}
     if(action==='skills'){
       if(v.detail?.task.spec.runtime_mode==='official'){await independent.panel();return;}
       const data=await call('extensions'),preset=data.scenes.presets.find(p=>p.scene===v.scene&&p.default&&p.enabled);modal((scenes[v.scene]?.name||'当前工作')+' · 能力预设',`<p class="wk-note">${preset?'新工作会使用预设：'+h(preset.name)+' · 版本 '+h(preset.revision.slice(0,8)):'当前场景没有启用的默认预设，使用工作端原有配置。'}</p>${preset?`<h3>提示词</h3><p class="wk-note">${h(preset.prompt)}</p><h3>输出要求</h3><p class="wk-note">${h(preset.output)}</p><p>能力组合：${preset.capabilities.length+preset.extensions.length} 项</p>`:''}<p class="wk-note">技能文档由工作端读取。MCP 是否可加载以所选连接为准。已有工作保留发送时的版本。</p>`,`<a class="wk-button" href="#extensions/scenes" data-wb-close-link>编辑场景预设</a><a class="wk-button" href="#extensions/skills" data-wb-close-link>管理 Skills 与插件</a><a class="wk-button" href="#extensions/records" data-wb-close-link>查看加载记录</a>`+b('完成','close'));return;
@@ -886,7 +891,9 @@
     if(el.dataset.wbMenu){e.preventDefault();if(el.dataset.wbMenu==='project'&&!v.data)await load();openMenu(el.dataset.wbMenu,el);return;}
     if(el.dataset.wbScene){if(!locked()){try{if(task())await configureDraft({work_scene:el.dataset.wbScene});else v.scene=el.dataset.wbScene;closeMenu();draw();}catch(exc){error(exc);}}return;}
     if(el.dataset.wbType){if(!locked()){v.type=el.dataset.wbType;draw();}return;}
-    if(el.dataset.wbProject){if(v.detail||v.dialogue)return;v.project=el.dataset.wbProject;const selected=project();if(scenes[selected?.scene])v.scene=selected.scene;closeMenu();draw();return;}
+    if(el.dataset.wbProject){if(v.detail||v.dialogue)return;
+      if(v.project!==el.dataset.wbProject&&(v.files||v.attachments.length||v.preparingFiles)){toast('本条消息已关联材料。移除附件后可以切换工作区。');return;}
+      v.project=el.dataset.wbProject;const selected=project();if(scenes[selected?.scene])v.scene=selected.scene;closeMenu();draw();features.autosave();return;}
     if(!el.dataset.wb)return;e.preventDefault();
     if(features.isSideAction(el.dataset.wb)){try{await features.act(el.dataset.wb,el);}catch(exc){error(exc);}return;}
     if(v.busy&&el.dataset.wb!=='close')return;

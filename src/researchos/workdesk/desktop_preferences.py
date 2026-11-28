@@ -191,6 +191,15 @@ def save(user_root, key, value):
         return snapshot(user_root)
 
 
+def default_work_directory(locations):
+    data = locations.data.resolve()
+    parent = Path(locations.user or data.parent) / 'workspaces'
+    if parent.resolve().is_relative_to(data):
+        parent = data.parent / 'workdesk-workspaces'
+    library_key = sha256(str(data).casefold().encode()).hexdigest()[:24]
+    return parent / library_key
+
+
 def scratch_project(service, db, expected=None):
     configured = read(service.locations.user)['workDirectory']
     if expected is not None and expected != configured:
@@ -199,11 +208,13 @@ def scratch_project(service, db, expected=None):
         root = _directory(configured)
         if root.is_relative_to(service.locations.data.resolve()):
             raise ValueError('请在设置中选择控制服务数据以外的工作目录。')
-        prior = db.execute('SELECT id FROM projects WHERE root=?', (str(root),)).fetchone()
-        if prior:
-            service.work_records.guard_project(db, prior['id'])
-            return {'project_id': prior['id']}
     else:
-        root = service.locations.data / 'unfiled-work'
-        root.mkdir(exist_ok=True)
+        root = default_work_directory(service.locations)
+        plain(root, Path(root.anchor), missing=True)
+        root.mkdir(parents=True, exist_ok=True)
+        root = _directory(str(root))
+    prior = db.execute('SELECT id FROM projects WHERE root=?', (str(root),)).fetchone()
+    if prior:
+        service.work_records.guard_project(db, prior['id'])
+        return {'project_id': prior['id']}
     return service._project(db, {'root': str(root), 'name': '未归入项目的工作'})

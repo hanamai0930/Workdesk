@@ -199,7 +199,8 @@ class CooperationConversation:
             context['private_expert_notes'] = [note['text'] for note in row['expert_notes']]
             prompt = ('你是第 0 轮讨论的'+('主持人' if row['mode']=='host_experts' else '负责人')+
                       '，直接和用户对话。只问会改变目标或交付的重要问题，保持用户已经明确的要求。'
-                      '专家意见作为内部依据，只把讨论收束的结论写进用户消息或任务说明。'
+                      '面向用户的 message 用几句自然对话说清结论和待决定的问题。用户交由你决定的做法自行选择。'
+                      '详细分工、技术选项和验收清单写进 brief。专家意见作为内部依据。'
                       '信息足够时给出可以执行和验收的任务说明，否则 brief 为 null。当前只讨论需求，不执行任务、不写文件。'
                       'brief 的约束只写正式执行也适用的用户要求。当前预讨论的行为限制只用于本回合，不得写进 brief。'
                       '\n只返回 JSON，格式为：\n'+canonical({'protocol':PROTOCOL,'message':'直接发给用户的完整消息',
@@ -216,7 +217,8 @@ class CooperationConversation:
         result = self.s.dispatch.complete(db, 'work-item.cooperation-discussion', payload, result,
                                           {k:item[k] for k in ('id','revision')})
         row.update(item_revision=result['work_item']['revision'], problem=None,
-                   pending={'task_id':launch['task_id'], 'attempt_id':launch['launch_attempt'], 'kind':meta['discussion']})
+                   pending={'task_id':launch['task_id'], 'attempt_id':launch['launch_attempt'],
+                            'kind':meta['discussion'], 'member':member['name']})
         self.save(db, row)
         return result
 
@@ -449,7 +451,7 @@ class CooperationConversation:
                     raise ValueError('讨论结构无效。')
                 text = bounded_text(value['message'],'讨论回复',16000)
                 brief = brief_value(value['brief']) if value['brief'] is not None else None
-                row['messages'].append({**new_message('host',text), 'model':task['spec']['model']})
+                row['messages'].append({**new_message('host',text), 'member':pending.get('member'), 'model':task['spec']['model']})
                 row.update(brief=brief,problem=None)
             except (ValueError, TypeError, RecursionError):
                 row['problem'] = '工作端的回复格式暂时无法读取，可以补充一条消息后再试。'
@@ -581,7 +583,7 @@ class CooperationConversation:
                             except ValueError:
                                 continue
                         stages[position] = {'id':run['id'],'round':number,'stage':stage[1],
-                            'text':answer[:4000],'provider':task['spec']['provider'],'model':task['spec']['model'],'task_id':task['id']}
+                            'text':answer[:4000],'member':(unit.get('member') or {}).get('name'),'provider':task['spec']['provider'],'model':task['spec']['model'],'task_id':task['id']}
             can_send = state=='DISCUSSING' and row['pending'] is None and item['revision']==row['item_revision'] and item['state']=='OPEN'
             return {'id':identity,'project_id':item['project_id'],'title':record.get('title') or item['title'],'mode':row['mode'],'state':state,
                     'record':{'revision':record.get('revision',0),'pinned':record.get('pinned',False),

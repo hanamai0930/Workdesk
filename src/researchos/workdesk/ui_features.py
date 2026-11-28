@@ -278,6 +278,8 @@ class UIFeatures:
         if not raw or len(raw) > workspace.MAX_BINARY:
             raise ValueError('单个上传文件须为1字节至8MB。')
         folder = Path(project['root']) / 'workdesk-inputs' / self.s.command_identity
+        if folder.resolve().is_relative_to(self.s.locations.data.resolve()):
+            raise ValueError('当前目录用于保存工作记录。请从新对话添加附件，或选择普通项目目录。')
         workspace.plain(folder, Path(project['root']), missing=True)
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / name

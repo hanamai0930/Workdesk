@@ -122,7 +122,7 @@ window.WorkdeskFeatures = function(B) {
   function chatPage(){return chatModule.page();}
   function submitChat(){return chatModule.prepare();}
   function pollChat(){return chatModule.poll();}
-  function leave(){moveSession=null;closeSide();chatModule.leave();}
+  function leave(){moveSession=null;fileSession=null;v.preparingFiles=false;v.fileError='';closeSide();chatModule.leave();}
   async function selectedTranscript(t=target()){if(!t)throw Error('先选择一段对话。');return call('conversation?kind='+t.kind+'&id='+encodeURIComponent(t.id));}
   function activeRecord(){
     const ref=target();if(!ref)throw Error('先选择一段对话。');
@@ -185,9 +185,31 @@ window.WorkdeskFeatures = function(B) {
     return `<div class="wb-feature-actions">${live?b('停止工作','runtime-stop'):''}${unknown?b('核对状态','runtime-reconcile')+b('结束待核对回合','runtime-close-unknown'):''}${!a?b('确认开始此草稿','existing-start','',true):''}</div>${detail.approvals.filter(a=>a.state==='PENDING').map(a=>`<section class="wb-feature-card"><strong>等待检查审批</strong><pre>${h(a.description||a.id)}</pre>${b('允许本次','runtime-approval',`data-id="${a.id}" data-allow="true"`)}${b('拒绝本次','runtime-approval',`data-id="${a.id}" data-allow="false"`)}</section>`).join('')}${detail.native_requests.filter(r=>r.state==='PENDING').map(r=>`<section class="wb-feature-card"><strong>等待${r.method.includes('UserInput')?'补充输入':'原生审批'}</strong><pre>${h(JSON.stringify(r.params,null,2))}</pre>${nativeActions(r)}</section>`).join('')}`;
   }
   async function runtimeDetail(){return v.detail||await call('task?id='+encodeURIComponent(v.dialogue?.pending||chat()?.pending));}
-  function currentFiles(session){return fileSession===session&&session?.origin===location.hash&&session.generation===v.generation&&$('#wb-dialog').open&&!!$('#wb-selected-files');}
+  function selectedNames(){return [...new Set([...v.files.split(/\r?\n/).filter(Boolean),...v.attachments.map(a=>a.file)])];}
+  function currentFiles(session){
+    if(!session||session!==fileSession||session.origin!==location.hash||session.generation!==v.generation||session.project!==v.project)return false;
+    return session.inline ? v.mode==='work'&&!v.detail&&!v.dialogue : $('#wb-dialog').open&&!!$('#wb-selected-files');
+  }
+  function legacyScratch(project){
+    return v.data?.projects.find(p=>p.id===project)?.legacy_unfiled===true;
+  }
+  async function ensureMaterialProject(session){
+    const legacy=legacyScratch(session.project);
+    if(session.project&&!legacy)return;
+    const result=await command('project.scratch',legacy?{legacy_project_id:session.project,files:[...session.files.keys()]}:{});
+    if(!currentFiles(session))return;
+    session.project=result.project_id;v.project=result.project_id;
+    await load({refresh:false,generation:session.generation});
+  }
+  async function recoverDraftFiles(){
+    if(!legacyScratch(v.project))return;
+    const session=fileSession={inline:true,origin:location.hash,generation:v.generation,project:v.project,files:new Map(selectedNames().map(name=>[name,false]))};
+    await ensureMaterialProject(session);
+    if(!currentFiles(session))throw Error('当前对话已切换，旧草稿仍保留。');
+    await autosave(true);
+  }
   function fileList(){
-    const session=fileSession;if(!currentFiles(session))return;
+    const session=fileSession;if(!currentFiles(session)||session.inline)return;
     $('#wb-selected-files').innerHTML=[...session.files].map(([name,directory])=>`<div class="wd-work-file" data-selected-file="${h(name)}">${icon(directory?'folder':'file')}<span><strong>${h(name.split('/').pop())}</strong><small title="${h(name)}">${h(name)}</small></span>${!session.frozen?b(icon('close'),'remove-work-file',`data-file="${h(name)}" aria-label="移除文件：${h(name)}"`):''}</div>`).join('')||'<p class="wk-note wd-work-file-empty">尚未添加文件</p>';
     const save=$('#wb-dialog [data-wb="save-files"]');if(save)save.disabled=session.pending>0;
   }
@@ -217,7 +239,7 @@ window.WorkdeskFeatures = function(B) {
     const upload=fileUploads.catch(()=>{}).then(async()=>{
       if(!currentFiles(session))return;
       for(const file of batch)if(file.size>8*1024*1024)throw Error('单个文件不能超过8MB：'+file.name);
-      if(!session.project){const receipt=await command('project.scratch',{});session.project=receipt.project_id;if(!currentFiles(session))return;v.project=session.project;await load();}
+      await ensureMaterialProject(session);
       for(const file of batch){
         if(!currentFiles(session))return;
         const raw=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]);r.onerror=reject;r.readAsDataURL(file);});
@@ -225,17 +247,33 @@ window.WorkdeskFeatures = function(B) {
         const result=await command('work.upload',{project_id:session.project,name:file.name,data:raw});
         if(currentFiles(session)){session.files.set(result.file,false);fileList();}
       }
+      if(session.inline&&currentFiles(session))await applySelection(session);
     });
     fileUploads=upload;
-    try{await upload;}catch(exc){if(currentFiles(session))B.error(exc);}
-    finally{session.pending--;if(currentFiles(session))fileList();}
+    try{await upload;}catch(exc){if(currentFiles(session)){if(session.inline)v.fileError=exc.message;else B.error(exc);}}
+    finally{
+      session.pending--;
+      if(session.inline&&session.generation===v.generation){v.preparingFiles=false;draw();}
+      else if(currentFiles(session))fileList();
+    }
+  }
+  function composerUpload(files){
+    if(!files?.length||!$('#wb-inline-files')||v.busy||v.workLoading||v.preparingFiles||v.pending)return;
+    fileSession={inline:true,origin:location.hash,generation:v.generation,project:v.project,pending:0,files:new Map(selectedNames().map(name=>[name,false]))};
+    v.preparingFiles=true;v.fileError='';draw();void uploadFiles(files);
+  }
+  async function applySelection(session){
+    const selected=session.files.size?await command('work.files-select',{project_id:session.project,files:[...session.files.keys()]}):{files:[],attachments:[]};
+    if(!currentFiles(session))return;
+    v.files=selected.files.join('\n');v.attachments=selected.attachments;v.fileError='';autosave();
   }
   async function saveFiles(){
     const session=fileSession;if(!currentFiles(session)||session.frozen)throw Error('当前工作的文件清单不能直接更改。');
     if(session.pending)throw Error('文件仍在加载，请稍候。');
-    const selected=session.files.size?await command('work.files-select',{project_id:session.project,files:[...session.files.keys()]}):{files:[],attachments:[]};
+    if(session.files.size)await ensureMaterialProject(session);
     if(!currentFiles(session))return;
-    v.files=selected.files.join('\n');v.attachments=selected.attachments;$('#wb-dialog').close();draw();autosave();
+    await applySelection(session);
+    if(currentFiles(session)){$('#wb-dialog').close();draw();}
   }
   async function previewFile(file){
     const session=fileSession;if(!currentFiles(session))return;
@@ -384,7 +422,14 @@ window.WorkdeskFeatures = function(B) {
   }
   async function act(action,el){
     if(action==='records'){go('#records');return true;}
-    if(action==='files'){filesDialog();return true;}
+    if(action==='files'){if(v.preparingFiles)throw Error('附件正在准备，请稍候。');filesDialog();return true;}
+    if(action==='remove-inline-file'){
+      if(v.preparingFiles||v.detail||v.dialogue)return true;
+      const name=el.dataset.file;
+      v.files=v.files.split(/\r?\n/).filter(f=>f!==name).join('\n');
+      v.attachments=v.attachments.filter(a=>a.file!==name);autosave();draw();return true;
+    }
+    if(action==='dismiss-file-error'){v.fileError='';draw();return true;}
     if(action==='save-files'){await saveFiles();return true;}
     if(action==='remove-work-file'){if(currentFiles(fileSession)&&!fileSession.frozen){fileSession.files.delete(el.dataset.file);fileList();}return true;}
     if(action==='new'){
@@ -524,13 +569,16 @@ window.WorkdeskFeatures = function(B) {
     if(e.target.closest('#wb-start-form')){const f=new FormData(e.target.form);Object.assign(v.formDraft,Object.fromEntries(['acceptance','writable','checks'].map(k=>[k,f.get(k)||''])));autosave();}
   });
   document.addEventListener('change',e=>{
+    if(e.target.id==='wb-inline-files'){const selected=Array.from(e.target.files);e.target.value='';composerUpload(selected);}
     if(e.target.id==='wb-upload-files'){const selected=Array.from(e.target.files);e.target.value='';uploadFiles(selected).catch(B.error);}
     if(['wb-chat-provider','wb-chat-model','wb-model','wb-provider'].includes(e.target.id)||e.target.dataset.wbRole)setTimeout(autosave,0);
   });
   document.addEventListener('click',e=>{if(e.target.closest('[data-wb-scene],[data-wb-type],[data-wb-project],[data-wb="save-files"],[data-wb="save-roles"]'))setTimeout(autosave,0);});
   document.addEventListener('dragover',e=>{if(e.target.closest('#wb-dialog')&&$('#wb-upload-files'))e.preventDefault();});
+  document.addEventListener('dragover',e=>{if(e.target.closest('#wb-work-form')&&$('#wb-inline-files')&&e.dataTransfer.types.includes('Files'))e.preventDefault();});
+  document.addEventListener('drop',e=>{if(e.target.closest('#wb-work-form')&&$('#wb-inline-files')&&e.dataTransfer.files.length){e.preventDefault();composerUpload(Array.from(e.dataTransfer.files));}});
   document.addEventListener('drop',e=>{if(e.target.closest('#wb-dialog')&&$('#wb-upload-files')){e.preventDefault();uploadFiles(e.dataTransfer.files).catch(B.error);}});
   window.addEventListener('hashchange',()=>{if(side&&side.scope!==sideScope())closeSide();});
   window.addEventListener('pagehide',()=>{const item=captured();if(item)setLocal(localKey(item.key),item.value);});
-  return {chatPresentation:chatModule.presentation,chatSelection:chatModule.selection,chatFiles:chatModule.upload,refresh,beforeRender,suspendChatDrafts,suspendWorkDrafts,restore,autosave,special,applyDraft,chatPage,submitChat,pollChat,leave,act,submit,isSideAction,submitSide,sideConversation,searchResults,saveChat,runtimeControls};
+  return {recoverDraftFiles,chatPresentation:chatModule.presentation,chatSelection:chatModule.selection,chatFiles:chatModule.upload,refresh,beforeRender,suspendChatDrafts,suspendWorkDrafts,restore,autosave,special,applyDraft,chatPage,submitChat,pollChat,leave,act,submit,isSideAction,submitSide,sideConversation,searchResults,saveChat,runtimeControls};
 };

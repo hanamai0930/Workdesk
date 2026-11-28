@@ -20,11 +20,11 @@ window.WorkdeskCooperationToolbar=(()=>{
   }
   function transcript(data){
     const messages=(data.messages||[]).map(message=>({
-      speaker:message.role==='user'?'User':data.mode==='host_experts'?'主持人':'负责人',
+      speaker:message.role==='user'?'用户':[data.mode==='host_experts'?'主持人':'负责人',message.member,message.model].filter(Boolean).join(' · '),
       text:message.text,
     }));
     for(const part of data.stages||[])messages.push({
-      speaker:`第 ${part.round} 轮 · ${stageNames[part.stage]||part.stage}${part.model?' · '+part.model:''}`,
+      speaker:`第 ${part.round} 轮 · ${stageNames[part.stage]||part.stage}${part.member?' · '+part.member:''}${part.model&&part.model!==part.member?' · '+part.model:''}`,
       text:part.text,
     });
     const handoff=(data.handoff?.units||[]).map(unit=>({summary:unit.summary,files:Object.keys(unit.manifest||{})}));

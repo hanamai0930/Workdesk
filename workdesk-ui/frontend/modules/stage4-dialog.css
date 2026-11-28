@@ -8,4 +8,12 @@
  .wd-stage4-dialog button[type=submit] {background:#195849;color:white;}
  .wd-stage4-dialog pre {white-space:pre-wrap;overflow-wrap:anywhere;}
  .wd-stage4-dialog fieldset {padding:.65rem;max-height:30vh;overflow:auto;}
+ .wd-stage4-dialog details > label {margin-block:.45rem;}
+ .wd-message-work {font:inherit;font-size:.76rem;color:var(--muted-foreground);background:transparent;border:0;cursor:pointer;}
+ @media (hover:hover) {
+   .wd-message-work {opacity:0;}
+   :is(.wd-api-answer,.wd-api-user):is(:hover,:focus-within) .wd-message-work {opacity:1;}
+ }
+ .wd-goal-status {font-size:.85rem;line-height:1.4;max-width:30rem;}
+ .wd-goal-status p {margin:.25rem 0;}
 }
