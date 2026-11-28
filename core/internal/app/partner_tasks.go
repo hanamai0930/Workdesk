@@ -66,8 +66,12 @@ func (a *App) partnerTaskResume(p, parent, binding, connection, account map[stri
 			return nil, errors.New("新模型接续记录与原尝试或所选连接不符")
 		}
 		old, err := a.boundPartnerTaskRun(map[string]any{"task_id": p["task_id"], "attempt_id": rows[0]["id"], "run_id": handoff["prior_run_id"]})
-		if err != nil || old == nil || old["id"] != handoff["prior_run_id"] || old["session_id"] != rows[0]["session_id"] || old["state"] != "COMPLETED" || old["local_exit_confirmed"] != true || !samePartnerWorkspace(old["workspace"], parent["workspace"]) || (old["connection_id"] == binding["id"] && fmt.Sprint(old["connection_revision"]) == fmt.Sprint(binding["revision"])) {
+		if err != nil || old == nil || old["id"] != handoff["prior_run_id"] || old["session_id"] != rows[0]["session_id"] || old["state"] != "COMPLETED" || old["local_exit_confirmed"] != true || !samePartnerWorkspace(old["workspace"], parent["workspace"]) || old["connection_id"] != binding["id"] || fmt.Sprint(old["connection_revision"]) != fmt.Sprint(binding["revision"]) || old["partner_id"] != binding["provider"] || old["account_id"] != account["id"] || old["secret_version"] != account["secret_version"] || old["release_id"] != connection["release_id"] {
 			return nil, errors.New("原模型的完成回执与切换记录不符")
+		}
+		snapshot, _ := old["connection_snapshot"].(map[string]any)
+		if snapshot == nil || snapshot["route"] != connection["route"] || connectionAPIProvider(snapshot) != connectionAPIProvider(connection) || str(snapshot["model"]) == str(connection["model"]) {
+			return nil, errors.New("原工作端路线或所选型号与切换记录不符")
 		}
 		_, err = receivedPartnerTurnResult(old)
 		return nil, err
@@ -219,7 +223,20 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		if connection["route"] == "account" && authGeneration != binding["auth_generation"] {
 			return nil, errors.New("原官方登录身份已重新选择，请重新准备分工")
 		}
-		if str(binding["model"]) != "official-default" && binding["model"] != connection["model"] {
+		savedModel := str(connection["model"])
+		if savedModel == "" && connection["route"] == "account" {
+			savedModel = "official-default"
+		}
+		if original, changed := binding["saved_model"]; changed {
+			if original != savedModel || !validPartnerAPIModel(str(binding["model"])) {
+				return nil, errors.New("当前连接与冻结的型号配置不符")
+			}
+			if binding["model"] != "official-default" {
+				connection["model"] = binding["model"]
+			} else if savedModel != "official-default" {
+				return nil, errors.New("所选连接未提供官方默认型号")
+			}
+		} else if str(binding["model"]) != savedModel {
 			return nil, errors.New("原模型绑定与保存的连接不符")
 		}
 		value := str(spec["access"])
@@ -236,6 +253,9 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		}
 		digest := sha256.Sum256([]byte(prompt))
 		link := map[string]any{"parent_task_id": p["task_id"], "parent_attempt_id": p["attempt_id"], "parent_spec_hash": p["spec_hash"], "parent_prompt_sha256": hex.EncodeToString(digest[:]), "workspace": parent["workspace"]}
+		if _, changed := binding["saved_model"]; changed {
+			link["turn_model"] = connection["model"]
+		}
 		for key, value := range resume {
 			link[key] = value
 		}

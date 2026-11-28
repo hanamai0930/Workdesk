@@ -11,15 +11,15 @@ export type Decision={decision:string;relative_path?:string;path:string;sha256:s
 export type Job={id:string;attempt_id:string;state:string;authorization_id:string;command_id:string;artifacts:Version[];decisions?:Decision[];checks?:{kind:string;state:string;detail:string;sha256?:string}[];error?:string};
 export type ToolRequest={id:string;state:string;authorization_id:string;command_id:string;invocation_id?:string;attempt_id:string;run_id:string;spec_hash:string;project_id:string;task_id:string;input_files:unknown[];parameters:Record<string,unknown>;error?:string};
 export type Delivery={state:string;completion?:{criteria:string;command_id:string};guidance?:{command_id:string;note:string}};
-type Task={id:string;project_id:string;spec_hash:string;title:string;spec:{goal:string;materials?:Record<string,unknown>;acceptance?:string;work_mode?:string}};
+type Task={id:string;project_id:string;spec_hash:string;title:string;spec:{goal:string;materials?:Record<string,unknown>;acceptance?:string;work_mode?:string;scene_snapshot?:{name?:string}}};
 export type Attempt={id:string;state:string;owner:string;session_id?:string;model_configuration?:{provider?:string;model?:string};result?:{partner_run_id?:string;partner_id?:string;answer?:string;native_result?:{text?:string}}};
-type TaskEvent={kind:string;attempt_id:string;payload:{user_message?:string;feedback_command_id?:string;human_note?:string;reason?:string;result_id?:string;chat_source?:{chat_id:string;command_id:string}}};
+type TaskEvent={kind:string;attempt_id:string;payload:{turn_files?:{file:string;sha256:string}[];user_message?:string;feedback_command_id?:string;human_note?:string;reason?:string;result_id?:string;chat_source?:{chat_id:string;command_id:string}}};
 export type TaskDetail={task:Task;attempts:Attempt[];events?:TaskEvent[]};
 const enc=encodeURIComponent;
 const basename=(name:string)=>name.split(/[\\/]/).pop();
 const versionRef=(job:Job,f:Version,index:number)=>({kind:'job',source:job.id,entry:String(index),sha256:f.sha256});
 
-export function TaskDelivery({detail,run,speaker,onRunChange}:{detail:TaskDetail;run:PartnerRun;speaker:string;onRunChange:()=>Promise<void>}){
+export function TaskDelivery({detail,run,speaker,projectName,onRunChange}:{detail:TaskDetail;run:PartnerRun;speaker:string;projectName?:string;onRunChange:()=>Promise<void>}){
   const {task,attempts}=detail,attempt=attempts.at(-1)!;
   const [jobs,setJobs]=useState<Job[]>([]),[requests,setRequests]=useState<ToolRequest[]>([]),[info,setInfo]=useState<Delivery|null>(null);
   const [refresh,setRefresh]=useState(0),[busy,setBusy]=useState(false),[error,setError]=useState(''),[loadError,setLoadError]=useState(''),[pending,setPending]=useState(core.uncertainCommands(task.id));
@@ -72,7 +72,7 @@ export function TaskDelivery({detail,run,speaker,onRunChange}:{detail:TaskDetail
     await act(async()=>{await command(kind==='partner.stop'?'task.stop':kind,
       kind==='partner.stop'?{task_id:task.id,attempt_id:attempt.id,owner:attempt.owner}:payload);after?.();await onRunChange();});
   };
-  return <><TaskChat {...{detail,run,jobs,requests,info,speaker,turnEnded,blocked,busy,act,command,approve,pending}}
+  return <><TaskChat key={task.id+attempt.id} {...{detail,run,jobs,requests,info,speaker,projectName,turnEnded,blocked,busy,act,command,approve,pending}}
      refreshKey={refresh} error={error||loadError} onRunChange={onRunChange} onRefresh={()=>setRefresh(x=>x+1)} onDetails={()=>setShowDetails(true)}/>
     {showDetails&&<dialog ref={dialog} className="wd-task-dialog" aria-label="任务详情" onClose={()=>setShowDetails(false)}>
     <button className="wd-close-detail" onClick={()=>dialog.current?.close()}>返回对话</button>

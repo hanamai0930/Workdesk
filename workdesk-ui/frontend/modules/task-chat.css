@@ -21,16 +21,17 @@
   }
   .wd-task-layout:has(>.wd-task-side:not([hidden])) {flex-wrap:wrap}
   .wd-task-chat {
-    --talk-blue:light-dark(#1964bf,#8cbfff);
-    --talk-bubble:light-dark(#e8f2ff,#24384d);
+    --talk-blue:color-mix(in srgb,rgb(var(--work-rgb)) 65%,var(--wk-text));
+    --talk-canvas:rgba(var(--work-rgb),clamp(0,calc(var(--work-opacity) * .55),.04));
+    --talk-bubble:color-mix(in srgb,rgb(var(--work-rgb)) 8%,var(--wk-bg));
     --talk-quiet:color-mix(in srgb,var(--wk-text) 66%,var(--wk-bg));
-    background:var(--wk-bg);
+    position:relative;background:linear-gradient(var(--talk-canvas),var(--talk-canvas)),var(--wk-bg);
     color:var(--wk-text);
     container:work-chat / inline-size;
   }
   .wd-task-chat>header {
     display:flex; flex:none; align-items:center; gap:8px; min-height:50px;
-    padding:6px 18px; border-bottom:1px solid color-mix(in srgb,var(--wk-line) 65%,transparent);
+    padding:6px 15px; border-bottom:1px solid color-mix(in srgb,var(--wk-line) 60%,transparent);
   }
   .wd-task-chat>header strong {min-width:0;font-size:14px;font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
   .wd-task-chat button,.wd-close-detail {cursor:pointer}
@@ -41,13 +42,28 @@
   }
   .wd-task-chat>header button:hover,.wd-task-chat>header button[aria-expanded=true] {color:var(--wk-text);background:var(--wk-soft)}
   .wd-task-chat .wd-task-side-toggle {margin-inline-start:auto}
+  .wd-talk-context {display:none}
+  @container work-chat (min-width:1120px) {
+    .wd-talk-context {display:grid;gap:6px;position:absolute;inset:63px auto auto 16px;width:144px;
+      border:1px solid var(--wk-line);border-radius:11px;padding:8px 10px;background:color-mix(in srgb,var(--wk-bg) 86%,transparent);
+      font-size:12px;line-height:1.55}
+    .wd-talk-context dl {display:grid;gap:4px;margin:0}
+    .wd-talk-context dl>div {display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px}
+    .wd-talk-context dt {color:var(--talk-quiet)}
+    .wd-talk-context dd {margin:0;overflow-wrap:anywhere}
+    .wd-talk-context button {border:0;border-top:1px solid var(--wk-line);background:none;color:var(--wk-good);font:inherit;text-align:start;padding:5px 0 0}
+    .wd-task-chat .wd-talk-heading-details {display:none}
+  }
   .wd-talk-scroll {flex:1;overflow:auto;min-height:0;overscroll-behavior:contain}
-  .wd-talk-column,.wd-talk-compose {width:min(800px,calc(100% - 48px));margin:0 auto;min-width:0}
-  .wd-talk-column {display:flex;flex-direction:column;gap:26px;padding:28px 0 24px}
+  .wd-talk-column,.wd-talk-compose {width:min(760px,calc(100% - 48px));margin:0 auto;min-width:0}
+  .wd-talk-column {display:flex;flex-direction:column;gap:26px;padding:16px 0 24px}
   .wd-talk-user,.wd-talk-answer {display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
   .wd-task-chat .wk-byline {margin:0;color:var(--talk-quiet);font-size:12px;line-height:1.4;font-weight:550}
   .wd-talk-user {align-items:flex-end}
-  .wd-talk-user .wd-talk-body {background:var(--talk-bubble);border-radius:19px;padding:12px 17px;max-width:86%}
+  .wd-talk-user .wd-talk-body {background:var(--talk-bubble);border-radius:17px 17px 5px 17px;padding:10px 15px;max-width:85%}
+  .wd-talk-answer {position:relative;padding-inline-start:38px}
+  .wd-talk-avatar {position:absolute;inset:0 auto auto 0;display:grid;place-items:center;width:27px;height:27px;
+    border-radius:8px;background:color-mix(in srgb,var(--wk-bg) 72%,transparent);color:var(--talk-quiet)}
   .wd-talk-body {max-width:100%;font-size:15px;line-height:1.75;overflow-wrap:anywhere}
   .wd-talk-body .wd-safe-markdown {font:inherit}
   .wd-talk-body p {margin:0 0 .6em}
@@ -67,7 +83,7 @@
   .wd-talk-delivery {
     width:fit-content;max-width:100%;align-self:flex-start;padding:10px 14px;
     border:1px solid var(--wk-line);background:var(--wk-bg);border-radius:14px;
-    font-size:13px;line-height:1.55;
+    font-size:13px;line-height:1.55;margin-inline-start:38px;max-width:calc(100% - 38px);
   }
   .wd-talk-answer+.wd-talk-delivery,.wd-talk-delivery+.wd-talk-delivery {margin-top:-16px}
   .wd-talk-artifact {display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px}
@@ -85,30 +101,43 @@
   :scope.wd-turn-model-menu .wk-model-picker-list {max-height:min(370px,55vh);scrollbar-width:thin}
   :scope.wd-turn-model-menu .wk-model-picker-list button {padding:8px 10px;font-size:14px;line-height:1.45}
   :scope.wd-turn-model-menu .wk-model-picker-list button[aria-selected=true] {background:var(--wk-soft)}
-  :scope.wd-turn-model-menu .wk-model-picker-note {border-top:1px solid var(--wk-line);margin-top:6px;padding-top:7px}
+  :scope.wd-turn-model-menu {padding:7px;width:238px}
+  :scope.wd-turn-model-menu .wk-model-picker-note {margin:2px 9px 5px}
   .wd-talk-model-change {display:flex;align-items:center;justify-content:center;gap:10px;color:var(--talk-quiet);font-size:12px;line-height:1.5;text-align:center}
   .wd-talk-model-change::before,.wd-talk-model-change::after {content:"";flex:1;min-width:12px;height:1px;background:var(--wk-line)}
-  .wd-talk-compose {padding:8px 0 14px;flex:none}
+  .wd-talk-compose {width:min(730px,calc(100% - 48px));padding:8px 0 12px;flex:none}
   .wd-task-chat .wd-talk-compose form.wk-composer {
     padding:12px 12px 9px;border:1px solid var(--wk-line);border-radius:21px;background:var(--wk-bg);
-    box-shadow:0 3px 16px var(--wk-shadow);
+    box-shadow:0 2px 10px var(--wk-shadow);
   }
-  .wd-task-chat .wd-talk-compose form:focus-within {outline:0;border-color:color-mix(in srgb,var(--talk-blue) 37%,var(--wk-line))}
+  .wd-task-chat .wd-talk-compose form.wk-composer:focus-within {outline:0;border-color:color-mix(in srgb,var(--talk-blue) 43%,var(--wk-line));box-shadow:0 0 0 2px color-mix(in srgb,var(--talk-blue) 10%,transparent)}
   .wd-task-chat .wd-talk-compose textarea {
     display:block;width:100%;padding:2px 4px 6px;resize:none;min-height:44px;
     height:auto;field-sizing:content;max-height:min(200px,26vh);overflow:auto;font:inherit;font-size:15px;
     line-height:1.55;color:inherit;background:transparent;border:0;outline:0;
   }
+  .wd-compose-add {position:relative}
+  .wd-add-trigger {display:grid;place-items:center;background:transparent;border:0;color:var(--wk-text);width:32px;height:32px;border-radius:8px}
+  .wd-add-trigger:hover {background:var(--wk-soft)}
+  .wd-add-popup {position:absolute;bottom:calc(100% + 8px);left:0;z-index:8;width:min(258px,75vw);max-height:min(320px,50vh);overflow:auto;border-radius:13px;border:1px solid var(--wk-line);background:var(--wk-bg);box-shadow:0 6px 24px var(--wk-shadow);padding:5px}
+  .wd-add-popup>small {display:block;font-size:12px;color:var(--talk-quiet);padding:6px 9px}
+  .wd-add-popup>button {display:flex;align-items:center;gap:9px;padding:9px 8px;width:100%;color:var(--wk-text);background:transparent;border:0;border-radius:7px;font:inherit;font-size:13px;text-align:start;overflow-wrap:anywhere}
+  .wd-add-popup>button:hover {background:var(--wk-soft)}
+  .wd-add-popup>button:disabled {color:var(--talk-quiet)}
+  .wd-add-popup svg {flex-shrink:0}
+  .wd-compose-files {display:flex;flex-wrap:wrap;gap:4px;max-height:110px;overflow:auto}
+  .wd-compose-files span,.wd-message-file {display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere;padding:4px 8px;background:var(--wk-soft);border-radius:7px;font-size:12px}
+  .wd-compose-files button {background:none;border:0;font:inherit;color:inherit;cursor:pointer}
   .wd-talk-actions {display:flex;align-items:center;justify-content:flex-end;gap:8px}
+  .wd-talk-actions .wk-native-access {margin-inline-end:auto}
   .wd-talk-actions .wd-talk-model-trigger {
     display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:70%;padding:5px 8px;
     border:0;border-radius:8px;background:transparent;color:var(--wk-text);font:inherit;font-size:13px;
   }
   .wd-talk-actions .wd-talk-model-trigger:hover {background:var(--wk-soft)}
-  .wd-talk-model-scope {color:var(--talk-quiet);font-size:12px;margin:4px 3px 7px}
   .wd-task-chat .wd-talk-actions .wk-send {
     margin:0;display:inline-grid;place-items:center;width:33px;height:33px;min-width:33px;min-height:33px;padding:0;
-    border:0;border-radius:50%;background:var(--talk-blue);color:var(--wk-bg);
+    border:0;border-radius:50%;background:var(--talk-blue);color:#fff;
   }
   .wd-task-chat .wd-talk-actions .wk-send:disabled {background:var(--wk-soft);color:var(--talk-quiet);opacity:.8}
   .wd-task-chat button:focus-visible,.wd-talk-body summary:focus-visible {outline:2px solid var(--talk-blue);outline-offset:2px}

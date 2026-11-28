@@ -8,6 +8,30 @@ from .partners.native_features import capabilities
 from .store import digest
 
 
+def turn_models(db, row, api, default_model):
+    """Only models selectable with this exact saved connection and billing route."""
+    choices = {default_model: '默认' if default_model == 'official-default' else default_model}
+    if row.get('route') == 'api':
+        models = api.get('models', [])
+    elif row.get('partner_id') == 'deepseek' and db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='core_partner_events'").fetchone():
+        record = db.execute("""SELECT json_extract(e.data,'$.models')
+            FROM core_partner_objects r JOIN core_partner_events e ON r.id=e.run_id
+            WHERE r.kind='run' AND json_extract(r.data,'$.connection_id')=?
+            AND json_extract(r.data,'$.connection_revision')=?
+            AND json_extract(r.data,'$.account_id')=? AND json_extract(r.data,'$.release_id')=?
+            AND json_extract(e.data,'$.kind')='native_model_selected'
+            ORDER BY e.seq DESC LIMIT 1""", (row['id'], row.get('revision'), row.get('account_id'),
+                                            row.get('release_id'))).fetchone()
+        models = json.loads(record[0]) if record and record[0] else []
+    else:
+        models = []
+    for model in models:
+        if isinstance(model, dict) and isinstance(model.get('id'), str) and model['id']:
+            choices[model['id']] = model.get('name') or model['id']
+    return [{'id': model, 'name': name} for model, name in choices.items()]
+
+
 def projection(db):
     partners, providers = catalog()
     from .partners.permissions import catalog as permission_catalog
@@ -40,7 +64,8 @@ def projection(db):
         source = (apis.get(api, {}).get('name', api or '') + ' API') if route == 'api' else '官方账号'
         features = capabilities({'provider':partner,'route':route,'api_provider':api,
                                  'release_id':row.get('release_id'),'version':release.get('version')})
-        row.update(kind='partner_connection', execution='partner_native', provider=partner,
+        selectable_models = turn_models(db, row, apis.get(api, {}), model)
+        row.update(turn_models=selectable_models, kind='partner_connection', execution='partner_native', provider=partner,
                    revision=str(row.get('revision', '')), api_provider=api, api_name=apis.get(api, {}).get('name'),
                    account_label=account.get('label'), account_revision=account.get('revision'),
                    auth_generation=account.get('auth_generation') or account.get('login_run_id'),
@@ -71,8 +96,11 @@ def selected(db, identity, revision=None):
 def check_frozen(db, frozen):
     current = selected(db, frozen.get('id'), frozen.get('revision'))
     for key in ('provider', 'account_id', 'secret_version', 'auth_generation', 'release_id', 'route', 'api_provider', 'model'):
-        if frozen.get(key) != current.get(key):
+        expected = frozen.get('saved_model', frozen.get('model')) if key == 'model' else frozen.get(key)
+        if expected != current.get(key):
             raise ValueError('伙伴账号、凭据、版本或模型已变化；未改用其他连接。')
+    if frozen.get('saved_model') is not None:
+        return {**current, 'saved_model': current['model'], 'model': frozen['model']}
     return current
 
 

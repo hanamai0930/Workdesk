@@ -57,7 +57,9 @@ def send(service, db, payload, *, cooperative=None):
         if prior and blockers(service,db,task,prior):raise ValueError('旧执行、远端或原生控制回执未知，或退出证据不足；先核对，不重发。')
         if partner and prior:
             previous=task['spec']['partner_connection']
-            if (previous['id'],previous['revision']) != (binding['id'],binding['revision']):
+            if any(previous.get(k)!=binding.get(k) for k in ('id','revision','provider','account_id','secret_version','auth_generation','release_id','route','api_provider')):
+                raise ValueError('此对话只能在原工作端、账号和连接内切换型号。')
+            if previous['model'] != binding['model']:
                 reference=partner_task.completed_reference(task,prior)
                 handoff={'prior_attempt_id':prior['id'],'prior_run_id':reference['resume_run_id'],
                          'prior_session_id':reference['resume_session'],'connection_id':binding['id'],
@@ -65,7 +67,7 @@ def send(service, db, payload, *, cooperative=None):
             else:
                 from .partner_connections import check_frozen
                 check_frozen(db, previous)
-                partner_resume=partner_task.resume_reference(task,prior)
+                partner_resume=partner_task.resume_reference(task,prior,access=payload.get('access'))
         if prior and not partner and not service.independent.describe(task['spec']['provider'])['native_resume']:
             raise ValueError('此工作端的原生会话恢复尚未接通，请新建独立Work；不会悄悄丢弃历史。')
         spec=task['spec'];before=digest(spec)
@@ -79,12 +81,16 @@ def send(service, db, payload, *, cooperative=None):
                 raise ValueError('所选模型不支持当前会话的权限设置。')
             spec.update(provider=binding['provider'],partner_connection=dict(binding),independent_service=partner_task.descriptor(binding))
             spec.pop('execution_resource',None)
-            partner_task.checked_scene_mcp(task,prior['workspace'])
         spec['execution_connection']=payload['_connection_binding']
         for key in ('model','effort','tier'):
             if key in payload:spec[key]=payload[key]
         from .native_permissions import choice,deepseek_preset
         spec['access']=choice(payload.get('access',spec.get('access')))
+        if partner and 'access' in payload:
+            from .partners.permissions import resolve
+            resolve(binding['provider'],spec['access'])
+        if partner and prior and (handoff or 'access' in payload):
+            partner_task.checked_scene_mcp(task,prior['workspace'])
         if spec['provider']=='deepseek':deepseek_preset(spec['access'])
         spec['model_selection']=partner_task.model_selection(binding) if partner else service.profiles.selection_snapshot(spec['provider'],spec['model'],spec['effort'],spec['tier'])
         if digest(spec)!=before:

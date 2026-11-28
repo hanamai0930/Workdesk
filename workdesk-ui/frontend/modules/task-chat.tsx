@@ -1,27 +1,31 @@
-import {Fragment,useEffect,useRef,useState,type ReactNode} from 'react';
-import {ArrowRightLeft,ArrowUp,FileSpreadsheet,FileText,PanelLeft,PanelRight} from 'lucide-react';
+import {Fragment,useEffect,useRef,useState,type CSSProperties,type ReactNode} from 'react';
+import {ArrowRightLeft,ArrowUp,FileSpreadsheet,FileText,Folder,PanelRight,Sparkles} from 'lucide-react';
 import {coreClient as core} from '../core/client';
 import {partnerRunning,partnerStateLabel,type PartnerRun} from '../core/partner-runtime';
 import {Template} from '../components/template';
 import {SafeMarkdown} from '../components/safe-markdown';
 import {QuickWorkspace,useQuickWorkspaceView} from './quick-workspace';
 import {TaskFilePreview,type ResultFile} from './task-file-preview';
+import {independentAppearance} from './independent-work';
+import {TurnAccess} from './native-work';
 import {TurnModelPicker,partnerName,turnModelName,type TurnConnection} from './task-model-picker';
 import type {TaskDetail,Job,Decision,Version,ToolRequest,Delivery} from './task-delivery';
+import {ComposerAdd,useTurnFiles} from './task-composer-files';
+import {WorkGoalButton} from './work-goal';
 import './task-chat.css';
 
 type Snapshot={id:string;task_id:string;attempt_id:string;title:string;revision:string;snapshot_hash:string;snapshot:{manifest:Record<string,{sha256:string}>};
   decision?:{value:string;note:string;command_id:string}};
 type Output={key:string;label:string;job?:Job;file?:Version;snapshot?:Snapshot;decision?:Decision};
 type Command=(kind:string,payload:Record<string,unknown>,id?:string)=>ReturnType<typeof core.command>;
-type Props={detail:TaskDetail;run:PartnerRun;jobs:Job[];requests:ToolRequest[];info:Delivery|null;speaker:string;turnEnded:boolean;
+type Props={detail:TaskDetail;run:PartnerRun;jobs:Job[];requests:ToolRequest[];info:Delivery|null;speaker:string;projectName?:string;turnEnded:boolean;
   blocked:boolean;busy:boolean;error:string;pending:{id:string;kind:string}[];refreshKey:number;act:(fn:()=>Promise<void>,recover?:boolean)=>Promise<void>;
   command:Command;approve:(r:ToolRequest)=>Promise<void>;onRunChange:()=>Promise<void>;onDetails:()=>void;onRefresh:()=>void};
 const enc=encodeURIComponent;
 const fileName=(s:string)=>s.split(/[\\/]/).pop()||s;
 const snapshotRef=(s:Snapshot)=>({id:s.id,revision:s.revision,snapshot_hash:s.snapshot_hash});
 function Message({name,user=false,children}:{name:string;user?:boolean;children:ReactNode}){
-  return <article className={user?'wd-talk-user':'wd-talk-answer'}><span className="wk-byline">{name}</span><div className="wd-talk-body">{children}</div></article>;
+  return <article className={user?'wd-talk-user':'wd-talk-answer'}>{!user&&<span className="wd-talk-avatar" aria-hidden="true"><Sparkles size={15}/></span>}<span className="wk-byline">{name}</span><div className="wd-talk-body">{children}</div></article>;
 }
 function Text({value}:{value:string}){return <Template html={window.WorkdeskLegacy.markdown(value)}/>;}
 function Answer({value,files}:{value:string;files:Map<string,()=>void>}){
@@ -59,6 +63,9 @@ export function TaskChat(p:Props){
   const [snapshots,setSnapshots]=useState<Snapshot[]>([]),[snapshotError,setSnapshotError]=useState('');
   const [reply,setReply]=useState<Record<string,string>>({});
   const [nextConnection,setNextConnection]=useState<TurnConnection|null>(null);
+  const [nextAccess,setNextAccess]=useState('');
+  const attachments=useTurnFiles(task.id,latest.id,task.project_id,p.command,p.act);
+  const goalTrigger=useRef<HTMLButtonElement>(null);
   const [preview,setPreview]=useState<ResultFile>();
   const workspaceKey='work:'+task.id+':project:'+task.project_id;
   const workspace=useQuickWorkspaceView(true,workspaceKey);
@@ -96,7 +103,7 @@ export function TaskChat(p:Props){
     if(active&&/^(?:请)?(?:先)?(?:停一下|停止|停止运行|停止当前工作|暂停当前工作)$/u.test(phrase)){
       void p.act(async()=>{await currentCommand('task.stop',{task_id:task.id,attempt_id:latest.id,owner:latest.owner});if(live.current)setText('');});return;
     }
-    const accepting=/^(?:我)?(?:确认)?(?:验收通过|验收(?:此|这|这个|该|最新)(?:一)?版(?:本)?|接受(?:此|这|该)版(?:本)?)$/u.test(phrase);
+    const accepting=!attachments.files.length&&/^(?:我)?(?:确认)?(?:验收通过|验收(?:此|这|这个|该|最新)(?:一)?版(?:本)?|接受(?:此|这|该)版(?:本)?)$/u.test(phrase);
     let chosen=selected;
     if(target&&!chosen){setTarget('');setAskTarget(true);return;}
     if(ended&&!chosen&&(accepting||mutation(content))&&automatic.length){
@@ -123,8 +130,11 @@ export function TaskChat(p:Props){
         }
         if(!live.current)return;
         await p.command('independent.send',{task_id:task.id,attempt_id:latest.id,owner:latest.owner,goal:content,...feedback,
-          ...(nextConnection?{provider:nextConnection.partner_id,connection_id:nextConnection.id,connection_revision:nextConnection.revision}:{}),
+          ...(attachments.files.length?{turn_files:attachments.files}:{}),
+          ...(nextConnection?{provider:nextConnection.partner_id,connection_id:nextConnection.id,connection_revision:nextConnection.revision,model:nextConnection.model}:{}),
+          ...(nextAccess?{access:nextAccess}:{}),
           ...(guidance?.note?{guidance_command_id:guidance.command_id}:{})});
+        attachments.clear();
         if(live.current)location.reload();
       }
       if(live.current){setText('');setTarget('');setAskTarget(false);}
@@ -143,10 +153,16 @@ export function TaskChat(p:Props){
   const missingFile=detail.events?.some(e=>e.kind==='work_result_capture_pending'&&e.attempt_id===latest.id);
   const shortTitle=task.title.split(/[。！？\n]/u).find(part=>part.trim())||task.title;
   return <div className="wd-task-layout" data-expanded={workspace.open&&workspace.expanded}>
-    <section className="wd-task-chat" aria-label="工作对话" data-partner-work>
-    <header><button type="button" aria-label="任务详情" title="任务详情" onClick={p.onDetails}><PanelLeft size={17}/></button><strong title={task.title}>{shortTitle}</strong>
+    <section className="wd-task-chat" style={independentAppearance(run.partner_id||'') as CSSProperties} aria-label="工作对话" data-partner-work>
+    <header><button className="wd-talk-heading-details" type="button" aria-label="任务详情" title="任务详情" onClick={p.onDetails}><Folder size={16}/></button><strong title={task.title}>{shortTitle}</strong>
       <button ref={workspace.toggleRef} className="wd-task-side-toggle" aria-label="工作侧栏" title="工作侧栏" aria-expanded={workspace.open}
         aria-controls="wd-task-side" onClick={workspace.toggle}><PanelRight size={16}/></button></header>
+    <aside className="wd-talk-context" aria-label="独立工作信息">
+      <span>独立工作</span><dl><div><dt>模型</dt><dd>{turnModelName(run.partner_id,run.result?.model||run.model)}</dd></div>
+      {p.projectName&&<div><dt>项目</dt><dd>{p.projectName}</dd></div>}
+      {task.spec.scene_snapshot?.name&&<div><dt>场景</dt><dd>{task.spec.scene_snapshot.name}</dd></div>}</dl>
+      <button type="button" onClick={p.onDetails}>任务详情</button>
+    </aside>
     <div ref={log} className="wd-talk-scroll" onScroll={e=>{const el=e.currentTarget;stick.current=el.scrollHeight-el.scrollTop-el.clientHeight<64;}}>
     <div className="wd-talk-column">
     <Message name={nickname} user><Text value={task.spec.goal}/></Message>
@@ -169,7 +185,7 @@ export function TaskChat(p:Props){
       }
       return <Fragment key={a.id}>
         {before&&after&&before!==after&&<div className="wd-talk-model-change"><ArrowRightLeft size={13} aria-hidden="true"/><span>模型已从 {before} 更改为 {after}</span></div>}
-        {user&&<Message name={nickname} user><Text value={user}/></Message>}
+        {user&&<Message name={nickname} user><Text value={user}/>{continuation?.turn_files?.map(f=><span key={f.file} className="wd-message-file"><FileText size={14}/>{fileName(f.file)}</span>)}</Message>}
         {answer&&<Message name={author}><Answer value={answer} files={links}/></Message>}
         {versions.map((i,index)=>{
           const accepted=i.decision?.decision==='accept'||i.snapshot?.decision?.value==='accept';
@@ -203,13 +219,17 @@ export function TaskChat(p:Props){
       {run.state.includes('UNKNOWN')&&<button disabled={p.busy} onClick={()=>void p.act(()=>currentCommand('partner.reconcile',{run_id:run.id}),true)}>核对运行状态</button>}
       {missingFile&&<p>有一份交付文件还没取到。<a href={'#results/'+enc(task.id)}>查看已保存成果</a></p>}
     </Message>}</div></div>
-    <div className="wd-talk-compose">{p.pending.length>0&&<p>有操作尚待确认。{p.pending.map(c=><button key={c.id} disabled={p.busy} onClick={()=>void p.act(async()=>{const v=await core.receipt(c.id);if(v.state!=='RECORDED')throw Error('上次操作的结果仍未确认。');await p.onRunChange();if(live.current&&c.kind==='independent.send')location.reload();},true)}>核对原操作</button>)}</p>}
+    <div className="wd-talk-compose">{p.pending.length>0&&<p>有操作尚待确认。{p.pending.map(c=><button key={c.id} disabled={p.busy} onClick={()=>void p.act(async()=>{const v=await core.receipt(c.id);if(v.state!=='RECORDED')throw Error('上次操作的结果仍未确认。');attachments.apply(c.kind,v.receipt);if(c.kind==='independent.send')attachments.clear();await p.onRunChange();if(live.current&&c.kind==='independent.send')location.reload();},true)}>核对原操作</button>)}</p>}
       {(p.error||snapshotError)&&<p role="alert">{p.error||snapshotError} <button onClick={p.onRefresh}>刷新</button></p>}
       {askTarget&&<label>请选择对应的成果：<select value={target} onChange={e=>{setTarget(e.target.value);setAskTarget(false);input.current?.focus();}}><option value="">选择文件</option>{items.map(i=><option key={i.key} value={i.key}>{i.label}</option>)}</select></label>}
       {selected&&<div>正在修改 {selected.label} <button onClick={()=>setTarget('')}>取消选择</button></div>}
-      <form className="wk-composer" onSubmit={e=>{e.preventDefault();send();}}><textarea ref={input} rows={2} aria-label="工作消息" placeholder="继续对话…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send();}}}/>
-        <div className="wd-talk-actions">{active&&<button type="button" disabled={p.blocked||run.state==='STOP_REQUESTED'} onClick={()=>void p.act(()=>currentCommand('task.stop',{task_id:task.id,attempt_id:latest.id,owner:latest.owner}))}>停止</button>}
-        {nextConnection&&<small className="wd-talk-model-scope" title="发送后，新连接将收到接续所需的对话和材料">下一条使用{nextConnection.source_label}{nextConnection.route==='api'?' · 按用量计费':''}</small>}
+      <WorkGoalButton taskId={task.id} triggerRef={goalTrigger}/>
+      <form className="wk-composer" onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}}
+        onDrop={e=>{if(e.dataTransfer.types.includes('Files')){e.preventDefault();if(ended&&!p.blocked)attachments.upload(Array.from(e.dataTransfer.files));}}} onSubmit={e=>{e.preventDefault();send();}}>
+        {attachments.files.length>0&&<div className="wd-compose-files">{attachments.files.map(f=><span key={f.file} title={f.file}><FileText size={15}/>{fileName(f.file)}<button type="button" disabled={p.blocked} aria-label={'移除 '+fileName(f.file)} onClick={()=>attachments.remove(f.file)}>×</button></span>)}</div>}
+        <textarea ref={input} rows={2} aria-label="工作消息" placeholder="继续对话…" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send();}}}/>
+        <div className="wd-talk-actions"><ComposerAdd project={task.project_id} disabled={p.blocked} attachDisabled={!ended} onGoal={()=>goalTrigger.current?.click()} upload={attachments.upload} select={attachments.select}/>{active&&<button type="button" disabled={p.blocked||run.state==='STOP_REQUESTED'} onClick={()=>void p.act(()=>currentCommand('task.stop',{task_id:task.id,attempt_id:latest.id,owner:latest.owner}))}>停止</button>}
+        <TurnAccess spec={task.spec} run={run} choice={nextAccess} onChoose={setNextAccess} disabled={p.blocked||!ended}/>
         <TurnModelPicker run={run} choice={nextConnection} onChoose={setNextConnection} disabled={p.blocked||!ended}/>
         <button className="wk-send" aria-label="发送工作消息" disabled={p.blocked||!text.trim()||(!active&&!ended)||run.state==='STOP_REQUESTED'}><ArrowUp size={18}/></button></div>
       </form>

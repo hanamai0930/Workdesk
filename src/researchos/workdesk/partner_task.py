@@ -16,9 +16,9 @@ def native_continuation(binding, *, automatic=False, access=None):
     return bool(value.get('method') and (not automatic or value.get('automatic') is True))
 
 
-def resume_reference(task, prior):
+def resume_reference(task, prior, *, access=None):
     """Require the prior turn's original result, not a provisional session ID."""
-    if not native_continuation(task['spec'].get('partner_connection') or {}, access=task['spec'].get('access', 'workspace')):
+    if not native_continuation(task['spec'].get('partner_connection') or {}, access=access or task['spec'].get('access', 'workspace')):
         raise ValueError('此工作端版本的准确原生会话续跑尚未核实；原会话保留。')
     return completed_reference(task, prior)
 
@@ -129,6 +129,9 @@ def _validate_run(run, task, attempt, binding, run_id=None):
     for key in ('id','revision','account_id','release_id'):
         if binding.get(key) is not None and str(snapshot.get(key))!=str(binding[key]):
             raise ValueError('伙伴运行冻结的连接已变化：'+key)
+    if binding.get('route')=='account' and binding.get('saved_model') is not None:
+        if (snapshot.get('model') or 'official-default')!=binding['model']:
+            raise ValueError('伙伴运行冻结的官方账号型号与本回合选择不符。')
     if binding.get('route')=='api':
         api=snapshot.get('api_provider') or snapshot.get('driver_provider') or 'deepseek'
         if api!=binding.get('api_provider') or snapshot.get('model')!=binding.get('model'):

@@ -84,16 +84,28 @@ func TestPartnerTaskResumeRequiresExactCompletedOriginal(t *testing.T) {
 		}
 		change.row[change.key] = old
 	}
-	// A different connection can start fresh only on an explicitly reserved handoff.
+	// A new model on the original connection starts a separate native session.
 	for _, key := range partnerResumeKeys {
 		delete(p, key)
 	}
-	handoff := map[string]any{"prior_attempt_id": prior["parent_attempt_id"], "prior_session_id": prior["session_id"], "prior_run_id": prior["id"], "connection_id": "next", "connection_revision": "1"}
+	handoff := map[string]any{"prior_attempt_id": prior["parent_attempt_id"], "prior_session_id": prior["session_id"], "prior_run_id": prior["id"], "connection_id": p["connection_id"], "connection_revision": "7"}
 	baseline, _ = json.Marshal(map[string]any{"partner_handoff": handoff})
 	parent["baseline"] = string(baseline)
-	binding["id"], binding["revision"] = "next", "1"
+	binding["id"], binding["revision"] = p["connection_id"], "7"
+	connection["model"] = "new-model"
 	if r, e := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); e != nil || len(r) != 0 {
 		t.Fatalf("fresh session handoff: %v", e)
+	}
+	for _, change := range []struct {
+		row   map[string]any
+		field string
+	}{{binding, "provider"}, {binding, "id"}, {binding, "revision"}, {account, "id"}, {account, "secret_version"}, {connection, "api_provider"}, {connection, "route"}, {connection, "release_id"}} {
+		saved := change.row[change.field]
+		change.row[change.field] = "wrong"
+		if _, err := a.partnerTaskResume(p, parent, binding, connection, account, "workspace"); err == nil {
+			t.Fatalf("changed %s during model switch", change.field)
+		}
+		change.row[change.field] = saved
 	}
 	handoff["prior_run_id"] = "wrong"
 	baseline, _ = json.Marshal(map[string]any{"partner_handoff": handoff})

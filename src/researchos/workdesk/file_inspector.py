@@ -100,6 +100,20 @@ class FileInspector:
         guidance=payload.pop('guidance_command_id',None)
         snapshot=payload.pop('feedback_snapshot',None)
         source={}
+        turn_files=payload.pop('turn_files',None)
+        if turn_files is not None:
+            if not payload.get('task_id') or not isinstance(turn_files,list) or not 0<len(turn_files)<=workspace.MAX_FILES:
+                raise ValueError('请核对此回合的附件。')
+            if any(not isinstance(f,dict) or not isinstance(f.get('file'),str) or not isinstance(f.get('sha256'),str) for f in turn_files):
+                raise ValueError('附件缺少准确的文件版本。')
+            task=self.s.store.task(payload['task_id'],db)
+            by_path={f['file']:f['sha256'] for f in turn_files}
+            selection=self.save(db,{'project_id':task['project_id'],'files':list(by_path)})['selection']
+            if {f['file']:f['sha256'] for f in selection['selected']}!=by_path:
+                raise ValueError('附件内容已变化，请重新选择后发送。')
+            source['turn_selection']={k:selection[k] for k in ('id','revision')}
+            source['turn_files']=turn_files
+            payload['goal']=payload.get('goal','')+'\n本条消息随附的项目文件，请使用官方工作端的文件工具读取：\n'+json.dumps(list(by_path),ensure_ascii=False)
         if snapshot:
             if feedback or not isinstance(snapshot,dict):raise ValueError('请一次选择一个退修版本。')
             result=self.s.results.checked(db,snapshot)
@@ -108,7 +122,7 @@ class FileInspector:
                 or decision.get('value')!='return' or decision.get('snapshot_hash')!=result['snapshot_hash']
                 or self.s.results.inspect(db,result)['state']!='CURRENT'):
                 raise ValueError('原任务、退修决定或快照已变化，请重新核对。')
-            source={'feedback_snapshot':{**{k:result[k] for k in ('id','revision','snapshot_hash')},'decision_command_id':decision.get('command_id')}}
+            source={**source,'feedback_snapshot':{**{k:result[k] for k in ('id','revision','snapshot_hash')},'decision_command_id':decision.get('command_id')}}
             payload['goal']=payload.get('goal','')+'\n退修原成果 '+result['id']+'，版本 '+result['snapshot_hash']+'：'+(decision.get('note') or '请复核并修订所交成果。')
             if result['snapshot']['manifest']:
                 payload['goal']+='\n对应的项目文件：'+json.dumps(list(result['snapshot']['manifest']),ensure_ascii=False)
@@ -128,7 +142,7 @@ class FileInspector:
                     raise ValueError('该成果已有新的验收决定，请重新选择。')
                 index=next((i for i,f in enumerate(job['artifacts']) if (f['path']==decision['path'] or decision.get('relative_path') and f['relative_path']==decision['relative_path']) and f['sha256']==decision['sha256']),None)
                 if index is None:raise ValueError('退修版本已无法定位。')
-                source={'feedback_command_id':feedback,'input_version':{'kind':'job','source':job['id'],'entry':str(index),'sha256':decision['sha256']}}
+                source={**source,'feedback_command_id':feedback,'input_version':{'kind':'job','source':job['id'],'entry':str(index),'sha256':decision['sha256']}}
                 payload['goal']=payload.get('goal','')+'\n退修意见：'+decision['note']+'\n请以此准确版本作为文档工具 input_files 的输入：'+json.dumps([source['input_version']],ensure_ascii=False)
             if guidance:
                 row=db.execute("SELECT json_extract(payload,'$.receipt') FROM events WHERE task_id=? AND attempt_id=? AND kind='work.guidance' ORDER BY seq DESC LIMIT 1",(task_id,attempt_id)).fetchone()

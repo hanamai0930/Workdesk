@@ -6,7 +6,7 @@
     "complete": {"kind":"work.complete","fields":["task_id","attempt_id","run_id","spec_hash","invocation_id","path","sha256","criteria","confirm"]},
     "native_snapshot":{"complete":"result.task-complete","verify":"result.verify","decision":"result.decide","reference":["id","revision","snapshot_hash"]},
     "guidance": {"kind":"work.guidance","fields":["task_id","attempt_id","run_id","spec_hash","previous","note"],"effect":"editable until original turn continuation"},
-    "continue": {"kind":"independent.send","parent":["task_id","attempt_id","owner"],"optional_next_connection":["connection_id","connection_revision"],"connection_change":"same task, new official session with original goal, selected materials and recent conversation; original turn must have confirmed completion","optional_sources":["feedback_command_id","feedback_snapshot","guidance_command_id"]}
+    "continue": {"kind":"independent.send","parent":["task_id","attempt_id","owner"],"optional_model_selection":["connection_id","connection_revision","model"],"model_change":"same frozen provider, account, connection and revision; choose a model from its catalog; new official session with original goal, materials and recent conversation after confirmed completion","optional_access":"access mode supported by the current official work endpoint","optional_turn_files":["file","sha256"],"optional_sources":["feedback_command_id","feedback_snapshot","guidance_command_id"]}
   },
   "instance_schema": 1,
   "storage_schema": 3,

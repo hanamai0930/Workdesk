@@ -7,7 +7,7 @@ type Defaults={project?:string;goal?:string;provider?:string;connection?:string;
 type Connection={id:string;partner_id:string;name:string;model?:string;revision:number;auto_goal_supported:boolean};
 type Goal={id:string;title:string;revision:string;criteria:string;max_rounds:number;task_id?:string;state:string;reason?:string;blocker?:string;file_selection?:{id:string};source_draft_id?:string};
 type Catalog={projects:{id:string;name:string}[];partner_connections:Connection[];providers:{id:string;name:string;legacy_auto_goal_supported:boolean}[];goals:Goal[]};
-export function WorkGoalButton({taskId,defaults={}}:{taskId?:string;defaults?:Defaults}){
+export function WorkGoalButton({taskId,defaults={},triggerRef}:{taskId?:string;defaults?:Defaults;triggerRef?:React.RefObject<HTMLButtonElement|null>}){
  const dialog=useRef<HTMLDialogElement>(null),lock=useRef(false);
  const [catalog,setCatalog]=useState<Catalog|null>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[pending,setPending]=useState('');
  const [initial,setInitial]=useState<Defaults>({});
@@ -60,7 +60,7 @@ export function WorkGoalButton({taskId,defaults={}}:{taskId?:string;defaults?:De
  const existing=catalog?.goals.filter(g=>taskId?g.task_id===taskId:!!draftId&&g.source_draft_id===draftId);
  const selectedConnection=initial.connection||(initial.provider?'legacy:'+initial.provider:'');
  const knownConnection=catalog?.partner_connections.some(c=>c.id===selectedConnection&&c.auto_goal_supported)||catalog?.providers.some(p=>'legacy:'+p.id===selectedConnection&&p.legacy_auto_goal_supported);
- return <><Button type="button" variant="outline" size="sm" onClick={open}>按完成条件继续</Button>
+ return <><Button ref={triggerRef} hidden={!!triggerRef} style={triggerRef?{display:'none'}:undefined} type="button" variant="outline" size="sm" onClick={open}>按完成条件继续</Button>
  {saved&&<div className="wd-goal-status" role="status"><strong>{saved.title}</strong> · {saved.state==='PAUSED'?'已暂停':saved.state==='RUNNING'?'已启用':'状态已更新'}
    <p>{saved.criteria} · 最多 {saved.max_rounds} 回合</p>
    {(saved.blocker||saved.reason)&&<p>{saved.blocker||saved.reason}</p>}

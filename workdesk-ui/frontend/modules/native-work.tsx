@@ -6,16 +6,32 @@ import { nativeTrace, type NativeTrace } from './native-events';
 import './native-work.css';
 
 export function NativeAccess({v}:any){
-  const [open,setOpen]=useState(false);
   const raw=v.workAccess||v.detail?.task.spec.access||'workspace',access=raw==='inherit'?'workspace':raw;
   const connection=!v.detail?v.data?.partner_connections?.connections.find((row:any)=>row.id===v.connectionId&&row.partner_id===v.provider):null;
   const service=v.detail?.independent_service||v.data?.independent_work?.services.find((s:any)=>s.provider===v.provider);
   const options=!v.detail&&v.data?.partner_connections?connection?.permission_modes||[]:service?.access_modes||[];
-  const label=options.find((mode:any)=>mode.id===access)?.name||(access==='full'?'完全访问权限':access==='auto'?'官方自动审核':'请求批准');
-  const icons:any={workspace:Hand,auto:ShieldCheck,full:ShieldAlert};const Icon=icons[access]||Shield;
-  return <Popover.Root open={open} onOpenChange={setOpen}><Popover.Trigger asChild><Button type="button" variant="ghost" className={'wk-native-access '+(access==='full'?'is-full':'')} aria-label={'访问权限：'+label} disabled={v.workLoading||v.busy}><Icon/><span>{label}</span><ChevronDown/></Button></Popover.Trigger>
+  return <AccessMenu access={access} options={options} disabled={v.workLoading||v.busy} onChoose={id=>window.WorkdeskWorkbench.selectWorkAccess(id)}/>;
+}
+
+type AccessMode={id:string;name:string;description:string;supported?:boolean;reason?:string};
+type AccessSpec={goal:string;access?:string;partner_connection?:{permission_modes?:AccessMode[]};independent_service?:{access_modes?:AccessMode[]}};
+export function TurnAccess({spec,run,choice,onChoose,disabled}:{spec:AccessSpec;run:{id:string;resolved_permission?:{value?:string}};choice:string;onChoose:(id:string)=>void;disabled:boolean}){
+  const options=(spec.partner_connection?.permission_modes||spec.independent_service?.access_modes||[]).filter(m=>m.supported===true);
+  const current=run.resolved_permission?.value||spec.access;
+  const access=choice||(current==='inherit'?'workspace':current)||'';
+  return <AccessMenu access={access} options={options} disabled={disabled||!options.length} onChoose={onChoose} turn/>;
+}
+
+function AccessMenu({access,options,disabled,onChoose,turn=false}:{access:string;options:AccessMode[];disabled:boolean;onChoose:(id:string)=>void;turn?:boolean}){
+  const [open,setOpen]=useState(false);
+  const short:Record<string,string>={full:'完全访问',workspace:'请求批准',auto:'自动审核'};
+  const label=(turn?short[access]:options.find(m=>m.id===access)?.name)||short[access]||'访问权限';
+  const icons:Record<string,typeof Shield>={workspace:Hand,auto:ShieldCheck,full:ShieldAlert};
+  const Icon=icons[access]||Shield;
+  return <Popover.Root open={open&&!disabled} onOpenChange={setOpen}><Popover.Trigger asChild><Button type="button" variant="ghost" className={'wk-native-access '+(access==='full'?'is-full':'')} aria-label={'访问权限：'+label} disabled={disabled}><Icon/><span>{label}</span><ChevronDown/></Button></Popover.Trigger>
     <Popover.Portal><Popover.Content data-ui-module="workbench" className="wk-access-menu" side="top" align="start" sideOffset={9} collisionPadding={12} aria-label="访问权限">
-      <div className="wk-access-menu-heading">应如何批准操作？</div>{options.filter((m:any)=>m.id!=='inherit').map((m:any)=>{const ItemIcon=icons[m.id]||Shield;return <button key={m.id} type="button" className={'wk-access-menu-option '+(m.id==='full'?'is-full':'')} aria-pressed={m.id===access} disabled={m.supported===false||v.busy} onClick={async()=>{setOpen(false);await window.WorkdeskWorkbench.selectWorkAccess(m.id);}}><ItemIcon/><span><strong>{m.name}</strong><small>{m.supported===false?m.reason||m.description:m.description}</small></span>{m.id===access&&<Check/>}</button>;})}
+      <div className="wk-access-menu-heading">{turn?'下一条消息的访问权限':'应如何批准操作？'}</div>
+      {options.filter(m=>m.id!=='inherit').map(m=>{const ItemIcon=icons[m.id]||Shield;return <button key={m.id} type="button" className={'wk-access-menu-option '+(m.id==='full'?'is-full':'')} aria-pressed={m.id===access} disabled={m.supported===false||disabled} onClick={()=>{setOpen(false);onChoose(m.id);}}><ItemIcon/><span><strong>{m.name}</strong><small>{turn&&m.id==='full'?'允许工作端访问文件、运行命令和使用网络。':m.reason||m.description}</small></span>{m.id===access&&<Check/>}</button>;})}
     </Popover.Content></Popover.Portal>
   </Popover.Root>;
 }

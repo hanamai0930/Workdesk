@@ -449,12 +449,18 @@ class ExecutionResources:
             for key in ('provider','model','effort','tier'):
                 if p.get(key)!=selection['member'][key]:raise ValueError('草稿模型配置与所选成员不一致，请重新准备。')
         if kind=='independent.send':
-            if p.get('task_id') and p.get('connection_id'):
-                from .partner_connections import selected
-                if not p.get('connection_revision'):raise ValueError('请选择有准确版本的模型连接。')
-                c=selected(db,p.pop('connection_id'),p.pop('connection_revision'))
-            elif p.get('task_id'):
+            if p.get('task_id'):
                 c=self.task_connection(self.s.store.task(p['task_id'],db),db)
+                if 'connection_id' in p or 'connection_revision' in p:
+                    ref=(p.pop('connection_id',None),str(p.pop('connection_revision',None)))
+                    if ref!=(c['id'],str(c.get('revision'))) or c.get('kind')!='partner_connection':
+                        raise ValueError('此对话已固定工作端和账号，只能切换当前连接的模型型号。')
+                if c.get('kind')=='partner_connection' and p.get('model',c['model'])!=c['model']:
+                    from .partner_connections import check_frozen
+                    refreshed=check_frozen(db,c)
+                    if p['model'] not in {m['id'] for m in refreshed['turn_models']}:
+                        raise ValueError('所选型号不在当前工作端与账号的模型目录中。')
+                    c={**refreshed,'saved_model':c.get('saved_model',c['model']),'model':p['model']}
             elif p.get('connection_id'):
                 from .partner_connections import selected
                 c=selected(db,p.pop('connection_id'),p.pop('connection_revision',None))

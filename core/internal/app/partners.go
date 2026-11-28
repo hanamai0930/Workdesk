@@ -378,7 +378,7 @@ func (a *App) completePartnerRun(s *storage.Session, run map[string]any, accepta
 		right, rightErr := json.Marshal(connection["options"])
 		revisionMatches = leftErr == nil && rightErr == nil && string(left) == string(right)
 	}
-	if !revisionMatches || str(current["account_id"]) != str(run["account_id"]) || str(current["partner_id"]) != str(run["partner_id"]) || str(current["release_id"]) != str(run["release_id"]) {
+	if str(current["model"]) != str(connection["model"]) || !revisionMatches || str(current["account_id"]) != str(run["account_id"]) || str(current["partner_id"]) != str(run["partner_id"]) || str(current["release_id"]) != str(run["release_id"]) {
 		return nil
 	}
 	if str(current["route"]) == "api" && connectionAPIProvider(current) != connectionAPIProvider(connection) {
@@ -879,6 +879,10 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 				}
 				if revision, supplied := p["connection_revision"]; supplied && number(revision) != number(connection["revision"]) {
 					return errors.New("连接配置已变化，请刷新后重新选择本次组合")
+				}
+				if model, selected := parent["turn_model"]; selected {
+					// This map is the run snapshot. The saved connection remains at its original revision.
+					connection["model"] = model
 				}
 				account, e = partnerObject(s, "account", str(connection["account_id"]))
 				if e != nil {

@@ -1,6 +1,7 @@
 """Durable UI actions. Model text never becomes a control command."""
 import base64
 import binascii
+from hashlib import sha256
 import json
 import math
 from pathlib import Path
@@ -289,7 +290,7 @@ class UIFeatures:
         else:
             target.write_bytes(raw)
         path = target.relative_to(project['root']).as_posix()
-        return {'file': path, 'bytes': len(raw), 'no_dispatch': True}
+        return {'file': path, 'bytes': len(raw), 'sha256': sha256(raw).hexdigest(), 'no_dispatch': True}
 
     def schedule_save(self, db, p):
         kind = p.get('kind'); identity = p.get('id')

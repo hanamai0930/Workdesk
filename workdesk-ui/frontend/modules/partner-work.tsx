@@ -66,7 +66,7 @@ export function PartnerWork({runId,detail}: {runId?:string;detail?:TaskDetail}) 
   const available=selected&&selected.state!=='DISABLED'&&release&&['AVAILABLE','READY','INSTALLED','VERIFIED'].includes(release.state);
   if(detail && runId && detail.task.spec.work_mode==='independent' && detail.attempts.length){
     if(!run)return <section aria-label="工作对话" role="status">{error||'正在打开对话…'} {error&&<button onClick={()=>void refresh()}>重试</button>}</section>;
-    return <TaskDelivery key={detail.task.id} detail={detail} run={run}
+    return <TaskDelivery key={detail.task.id} detail={detail} run={run} projectName={projects.find(project=>project.id===detail.task.project_id)?.name}
       speaker={data?.partners.find(p=>p.id===run.partner_id)?.name||run.partner_id||'助手'}
       onRunChange={refresh}/>;
   }

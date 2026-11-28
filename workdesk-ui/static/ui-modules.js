@@ -30,7 +30,7 @@
   definitions.settings.styles.push('../frontend/modules/partners.css');
   definitions.workbench.sources.push('../frontend/modules/partner-work.tsx','../frontend/modules/task-delivery.tsx');
   definitions.workbench.sources.push('../frontend/modules/chat-work-handoff.tsx','../frontend/modules/work-goal.tsx');
-  definitions.workbench.sources.push('../frontend/modules/task-chat.tsx','../frontend/modules/task-model-picker.tsx','../frontend/modules/task-file-preview.tsx','../frontend/modules/workbook-preview.tsx');
+  definitions.workbench.sources.push('../frontend/modules/task-chat.tsx','../frontend/modules/task-composer-files.tsx','../frontend/modules/task-model-picker.tsx','../frontend/modules/task-file-preview.tsx','../frontend/modules/workbook-preview.tsx');
   definitions.workbench.styles.push('../frontend/modules/task-chat.css','../frontend/modules/workbook-preview.css');
   definitions.workbench.styles.push('../frontend/modules/partner-work.css','../frontend/modules/stage4-dialog.css');
   // Native Work-only floating selectors; portal roots retain workbench scope.
