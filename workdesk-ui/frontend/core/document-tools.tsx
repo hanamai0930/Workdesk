@@ -15,7 +15,7 @@ const reason = (e:unknown)=>e instanceof Error ? e.message : '操作失败，请
 const baseName = (p:string)=>p.split(/[\\/]/).pop() || p;
 const artifactUrl = (id:string,file:Artifact)=>'api/v2/jobs/'+encodeURIComponent(id)+'/artifact?'+new URLSearchParams({path:file.path,download:'1'});
 
-function ArtifactPreview({job,file,onClose}:{job:string;file:Artifact;onClose:()=>void}){
+export function ArtifactPreview({job,file,onClose}:{job:string;file:Artifact;onClose:()=>void}){
   const [body,setBody]=useState(''),[error,setError]=useState(''),[blob,setBlob]=useState('');
   const mime=file.mime.split(';')[0];
   const renderedHtml=mime==='text/html'&&file.relative_path==='results/'+job+'/preview/index.html'&&/[\\/]preview[\\/]index\.html$/i.test(file.path);

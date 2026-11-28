@@ -14,6 +14,7 @@ import { NativeAccess, NativeProcess, NativeUsage } from './native-work';
 import { nativeTrace } from './native-events';
 import { useQuickWorkspaceView } from './quick-workspace';
 import { ConversationScroll } from './conversation-scroll';
+import { WorkGoalButton } from './work-goal';
 import { PartnerWork } from './partner-work';
 
 const active = new Set(['RESERVED','SEND_INTENT','RUNNING','WAITING_APPROVAL','WAITING_INPUT','STOP_REQUESTED']);
@@ -102,7 +103,7 @@ function AssistantMessage() {
 
 export function Conversation(props:any) {
   const detail=props.v.detail,runId=detail?.partner_run_id||detail?.task?.partner_run_id||detail?.task?.spec?.partner_run_id;
-  if(props.v.mode!=='chat'&&runId)return <PartnerWork key={runId} runId={runId} task={detail.task}/>;
+  if(props.v.mode!=='chat'&&runId)return <PartnerWork key={runId} runId={runId} detail={detail}/>;
   if(props.v.mode!=='chat'&&detail?.task?.spec?.execution==='partner_native')return <section className="wd-partners"><h1>{detail.task.title||'伙伴工作'}</h1><p role="status">原生运行归属待核对。保留原记录，没有重新发送。</p><a href="#settings/operations">运行与恢复</a></section>;
   return <LegacyConversation {...props}/>;
 }
@@ -145,6 +146,7 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
       {independentConversation?<IndependentConversationHeader v={v} open={workspace.open} toggleRef={workspace.toggleRef}
         onToggle={workspace.toggle} onOpenTab={(tool,entry)=>workspace.openTool(tool,entry?.file)}/>:!chat&&<div className="wk-work-toolbar">
         {independentWork?<IndependentProvider v={v} names={names} isLocked={isLocked}/>:<span className="wk-work-toolbar-label"><Workflow/>合作工作</span>}
+        {independentWork&&<WorkGoalButton defaults={{project:v.project,goal:v.input,provider:v.provider,connection:v.connectionId,access:v.workAccess,selection:v.formDraft?.fileSelection,files:[...String(v.files||'').split(/\r?\n/).filter(Boolean),...(v.attachments||[]).map((f:any)=>f.file)]}}/>}
         <WorkModeSwitch v={v} selected={selected}/>
       </div>}
       {selected&&<>
@@ -156,7 +158,7 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
             {isLocked&&<div><dt>场景</dt><dd className="wk-independent-context-scene">{scenes[v.scene]?.name||'未分类'}</dd></div>}
           </dl>
           {!isLocked&&<div className="wk-independent-draft-context"><Scene/><IndependentProvider v={v} names={names} isLocked={isLocked}/></div>}
-          <div className="wk-independent-context-links">
+          <div className="wk-independent-context-links"><WorkGoalButton taskId={v.detail.task.id}/>
             <a className="wk-independent-context-item" href={`#work-items/view-work/${encodeURIComponent(v.detail.task.id)}`}>任务详情</a>
           </div>
         </aside>:<div className="wk-active-bar">{chat?<><span>{names[c.provider]} · {c.config.model}</span><Badge variant="secondary">工作端文本对话</Badge>{pending&&<Button variant="outline" data-wb="chat-stop">停止回复</Button>}<Button variant="outline" data-wb="official-web">官方网页</Button></>:<><Scene/><span className="wk-faint">合作工作</span><Button variant="outline" data-wb="details">工作详情</Button><a className="wk-button" href={v.dialogue?'#collab/dialogue/'+v.dialogue.id:'#control/task/'+v.detail.task.id}>{v.dialogue?'方案与队列':'运行与控制'}</a>{v.detail?.task.spec.runtime_mode==='official'&&<Button variant="ghost" className="wk-chip" data-wb="native-panel">工作端控制</Button>}</>}</div>}
@@ -175,6 +177,10 @@ function LegacyConversation({v,scenes,names,isLocked,controls,independent,cooper
       <div className={'wk-home'+(compactWork?' wk-home-compact':'')}>
         {independentConversation&&<IndependentRunState detail={v.detail} busy={v.busy}/>}
         {!selected&&<>{independentWork?<IndependentWelcome provider={v.provider}/>:<div className="wk-greeting"><h1>{chat?'今天想聊些什么？':'我们要做什么？'}</h1>{!chat&&<p>从一个目标开始，把事情一步步完成。</p>}</div>}{!chat&&<div className="wk-setup"><Scene/></div>}</>}
+        {independentWork&&!selected&&<details><summary>完成条件与交付文件</summary>
+          <label>完成条件<textarea id="wb-completion-criteria" maxLength={4000} defaultValue={v.formDraft?.completionCriteria||''} onChange={e=>{v.formDraft.completionCriteria=e.target.value;}}/></label>
+          <label>交付文件（每行一个项目相对路径）<textarea id="wb-delivery-paths" defaultValue={v.formDraft?.deliveryPaths||''} onChange={e=>{v.formDraft.deliveryPaths=e.target.value;}}/></label>
+        </details>}
         <ComposerPrimitive.Root id={chat?'wb-chat-form':'wb-work-form'} onSubmit={e=>e.stopPropagation()}>
           <div className="wk-composer-group"><div className="wk-composer">
             <ComposerPrimitive.Input asChild submitMode="none" addAttachmentOnPaste={false} cancelOnEscape={false} unstable_focusOnThreadSwitched={false}>

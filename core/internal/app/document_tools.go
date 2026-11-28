@@ -19,6 +19,7 @@ const documentVersion = "document/1"
 const documentInputLimit = 64 << 20
 
 type toolGrant struct {
+	RequestID          string            `json:"request_id,omitempty"`
 	ID                 string            `json:"authorization_id"`
 	Actor              string            `json:"actor"`
 	ProjectID          string            `json:"project_id"`
@@ -67,6 +68,10 @@ func checkToolBinding(s *storage.Session, g toolGrant) error {
 	}
 	if root != g.ProjectRoot {
 		return errors.New("项目位置已改变，需要重新确认")
+	}
+	if g.RequestID != "" {
+		_, err := validateDocumentProposal(s, g, nil)
+		return err
 	}
 	if g.TaskID == "" && g.AttemptID == "" && g.SpecHash == "" {
 		return nil
@@ -123,7 +128,7 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 	if len(raw) > 512<<10 {
 		return nil, errors.New("文档参数超过512 KiB")
 	}
-	g := toolGrant{ID: id, Actor: "Human control command", ProjectID: str(p["project_id"]), TaskID: str(p["task_id"]), AttemptID: str(p["attempt_id"]), SpecHash: str(p["spec_hash"]), Tool: str(p["tool_version"]), Parameters: params, Expires: now() + 900, Process: a.Process, Implementation: a.Implementation, Inputs: []Artifact{}}
+	g := toolGrant{RequestID: str(p["request_id"]), ID: id, Actor: "Human control command", ProjectID: str(p["project_id"]), TaskID: str(p["task_id"]), AttemptID: str(p["attempt_id"]), SpecHash: str(p["spec_hash"]), Tool: str(p["tool_version"]), Parameters: params, Expires: now() + 900, Process: a.Process, Implementation: a.Implementation, Inputs: []Artifact{}}
 	var e error
 	g.ProjectRoot, e = projectRoot(s, g.ProjectID)
 	if e != nil {
@@ -138,15 +143,30 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 		}
 		return map[string]any{"authorization_id": id, "state": "AUTHORIZED", "grant": g}, nil
 	}
+	files, ok := p["input_files"].([]any)
+	if !ok && p["input_files"] != nil {
+		return nil, errors.New("模板列表无效")
+	}
+	if e := a.freezeDocumentInputs(s, &g, params, files); e != nil {
+		return nil, e
+	}
+	if g.RequestID != "" {
+		q, e := validateDocumentProposal(s, g, p)
+		if e != nil {
+			return nil, e
+		}
+		if !sameDocumentValue(g.Inputs, q["input_versions"]) {
+			return nil, errors.New("模板版本已变化，请重新提出文档操作")
+		}
+	}
+	return map[string]any{"authorization_id": id, "state": "AUTHORIZED", "grant": g}, nil
+}
+func (a *App) freezeDocumentInputs(s *storage.Session, g *toolGrant, params map[string]any, files []any) error {
 	format := str(params["format"])
 	switch format {
 	case "xlsx", "csv", "docx", "pdf", "pptx", "md", "html", "tex":
 	default:
-		return nil, errors.New("文件类型无效")
-	}
-	files, ok := p["input_files"].([]any)
-	if !ok && p["input_files"] != nil {
-		return nil, errors.New("模板列表无效")
+		return errors.New("文件类型无效")
 	}
 	action := str(params["action"])
 	maxInputs := 1
@@ -154,11 +174,12 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 		maxInputs = 16
 	}
 	if (action != "edit" && action != "create") || (action == "edit" && (len(files) < 1 || len(files) > maxInputs)) || (action == "create" && len(files) != 0) {
-		return nil, errors.New("输入数量不符合所选的文档操作")
+		return errors.New("输入数量不符合所选的文档操作")
 	}
 	total := 0
 	for _, v := range files {
 		var input Artifact
+		var e error
 		if ref, ok := v.(map[string]any); ok {
 			input, e = a.priorDocumentInput(s, g.ProjectID, ref)
 		} else {
@@ -169,15 +190,15 @@ func (a *App) createToolGrant(s *storage.Session, id string, p map[string]any) (
 			input = Artifact{Path: filepath.ToSlash(filepath.Clean(name)), Bytes: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
 		}
 		if e != nil {
-			return nil, e
+			return e
 		}
 		total += int(input.Bytes)
 		if total > documentInputLimit {
-			return nil, errors.New("所选材料合计超过64 MiB")
+			return errors.New("所选材料合计超过64 MiB")
 		}
 		g.Inputs = append(g.Inputs, input)
 	}
-	return map[string]any{"authorization_id": id, "state": "AUTHORIZED", "grant": g}, nil
+	return nil
 }
 
 // Resolve a project artifact version to its immutable job result. The caller
@@ -246,13 +267,16 @@ func (a *App) revokeToolGrant(s *storage.Session, p map[string]any) (map[string]
 	}
 	return map[string]any{"authorization_id": g.ID, "state": "REVOKED"}, g, nil
 }
-func (a *App) authorizedJob(s *storage.Session, p map[string]any) (*Job, error) {
+func (a *App) authorizedJob(s *storage.Session, commandID string, p map[string]any) (*Job, error) {
 	if len(p) != 1 {
 		return nil, errors.New("已确认的调用只接受授权编号")
 	}
 	g, e := a.loadToolGrant(s, str(p["authorization_id"]))
 	if e != nil {
 		return nil, e
+	}
+	if g.RequestID != "" && commandID != taskPartnerCommandID("doc-run", g.RequestID, "") {
+		return nil, errors.New("请按原文档执行命令派发")
 	}
 	exists, e := s.Execute("SELECT id FROM core_tool_jobs WHERE json_extract(data,'$.authorization_id')=? LIMIT 1", []any{g.ID})
 	if e != nil {

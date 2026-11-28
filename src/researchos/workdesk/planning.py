@@ -164,6 +164,25 @@ class Planning:
             if source.get('project_id')!=project:raise ValueError('接续材料不属于此目标的项目。')
         row.update(origin_command_id=self.s.command_identity,dispatch_before=deadline,source_handoff_id=reference,
                    blocker='',human_paused=True)
+        origin=p.get('source_task')
+        if origin:
+            if not isinstance(origin,dict):raise ValueError('原任务标识无效。')
+            task,attempt=self.eligible(db,origin.get('task_id'))
+            spec=task['spec']
+            if (origin.get('attempt_id'),origin.get('spec_hash'),project,provider,access)!=(attempt['id'],task['spec_hash'],task['project_id'],spec['provider'],spec.get('access','workspace')):
+                raise ValueError('原工作、尝试、权限或项目已变化。')
+            if (binding or {}).get('id')!=(spec.get('partner_connection') or {}).get('id'):
+                raise ValueError('原任务工作连接已变化。')
+            row.update(task_id=task['id'],attempt_id=attempt['id'],binding=task['spec_hash'],
+                       source_task=origin,reviewed_attempt_id=attempt['id'],task_usage=self.s.store.usage(task=task['id'],db=db))
+        if p.get('files'):
+            if origin:raise ValueError('已有任务沿用原材料。')
+            if p.get('selection_ref'):
+                selection,_=self.s.file_inspector.checked(db,p['selection_ref'])
+                if selection['project_id']!=project or sorted(p['files'])!=sorted(f['file'] for f in selection['selected']):
+                    raise ValueError('已选材料或项目已变化，请重新选择。')
+            else:selection=self.s.file_inspector.save(db,{'project_id':project,'files':p['files']})['selection']
+            row['file_selection']={k:selection[k] for k in ('id','revision')}
         if binding:row['partner_connection']=binding
         row['credential_revision']=self.job_credential(db,row)
         self.c.put(db,'goal_job',row);return {'job':row,'no_dispatch':True}
@@ -212,6 +231,12 @@ class Planning:
         _,row=self.checked(db,{**p,'kind':'goal_job'})
         if row['state'] not in {'MODEL_COMPLETE_REVIEW','COMPLETE'} or type(p.get('accepted')) is not bool:
             raise ValueError('请核对等待验收的目标与决定。')
+        if row.get('result_id'):
+            result=self.c.get(db,'work_result',row['result_id'])
+            if result['task_id']!=row['task_id'] or result['attempt_id']!=row['attempt_id']:raise ValueError('目标成果归属已变化。')
+            self.s.results.decide(db,{'id':result['id'],'revision':result['revision'],'snapshot_hash':result['snapshot_hash'],
+                 'decision':'accept' if p['accepted'] else 'return','confirm':True,'note':p.get('note','')})
+            row.update(reviewed_result_id=result['id'],reviewed_snapshot_hash=result['snapshot_hash'])
         row.update(state='ACCEPTED' if p['accepted'] else 'PAUSED',revision=uid(),last_state_command_id=self.s.command_identity,
                    human_paused=not p['accepted'],reviewed_attempt_id=row.get('attempt_id'),review_command_id=self.s.command_identity,
                    reason='Human 已确认完成。' if p['accepted'] else 'Human 要求继续处理，已暂停等待启动。')
@@ -238,7 +263,9 @@ class Planning:
             worker=self.s.workers.get(a['id'])
             if a['state'] in ACTIVE or worker and worker['thread'].is_alive():return {'no_dispatch':True}
             if a['id']!=row['attempt_id'] or task['spec_hash']!=row['binding']:raise ValueError('工作已由其它操作接续或更改，计划未自动跟随。')
-            if a['state']!='COMPLETED' or not self.s.operations.exit_proved(a) or self.s.store.usage(task=task['id'],db=db)['unknown_requests']:raise ValueError('旧回合失败、中断或状态未知，请核对后重新安排。')
+            usage=self.s.store.usage(task=task['id'],db=db)
+            if kind=='goal_job':row['task_usage']=usage
+            if a['state']!='COMPLETED' or not self.s.operations.exit_proved(a) or usage['unknown_requests']:raise ValueError('旧回合失败、中断或状态未知，请核对后重新安排。')
             project=db.execute('SELECT root FROM projects WHERE id=?',(task['project_id'],)).fetchone()
             if Path(project['root']).resolve()!=Path(a['workspace']).resolve():raise ValueError('项目目录已重新定位，请在新目录新建工作再安排自动任务。')
             scope={'task_id':task['id'],'attempt_id':a['id'],'owner':a['owner']}
@@ -264,6 +291,9 @@ class Planning:
         elif scope:payload={**scope,'goal':self.prompt(row)}
         else:
             payload={'project_id':row['project_id'],'provider':row['provider'],**row['config'],'access':row['access'],'goal':self.prompt(row)}
+            if row.get('file_selection'):
+                selection,_=self.s.file_inspector.checked(db,row['file_selection'])
+                payload.update(files=selection['files'],attachments=selection['attachments'],file_selection=row['file_selection'])
             if row.get('partner_connection'):
                 binding=row['partner_connection'];payload.update(connection_id=binding['id'],connection_revision=binding['revision'])
         launch=self.s.file_inspector.send(db,payload)
@@ -294,5 +324,6 @@ class Planning:
                     with self.s.store.write() as db:
                         current=self.c.get(db,kind,row['id'])
                         if current['state']!='RUNNING' or current['revision']!=row['revision']:continue
+                        if kind=='goal_job' and current.get('task_id'):current['task_usage']=self.s.store.usage(task=current['task_id'],db=db)
                         current.update(state='PAUSED',revision=uid(),reason=str(exc)[:1000]);self.c.put(db,kind,current)
                         if kind=='goal_job':self.notice(db,current,'failure',current.get('last_state_command_id'))

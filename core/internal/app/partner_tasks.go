@@ -228,6 +228,12 @@ func (a *App) partnerTask(method string, p map[string]any) (any, error) {
 		for key, value := range resume {
 			link[key] = value
 		}
+		if spec["work_mode"] == "independent" && spec["interaction"] != "chat" && (binding["provider"] == "kimi" || binding["provider"] == "deepseek") {
+			server := map[string]any{"config": map[string]any{"transport": "http"}}
+			if a.checkPartnerTaskMCP([]any{server}, binding, value, parent["workspace"]) == nil {
+				link["document_mcp"] = true
+			}
+		}
 		if scene, _ := spec["scene_snapshot"].(map[string]any); scene != nil {
 			if servers, _ := scene["mcp"].([]any); len(servers) != 0 {
 				if err := a.checkPartnerTaskMCP(servers, binding, value, parent["workspace"]); err != nil {

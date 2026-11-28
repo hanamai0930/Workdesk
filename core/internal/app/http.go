@@ -125,7 +125,7 @@ func (a *App) api(w http.ResponseWriter, r *http.Request, path string) {
 			failed(w, errors.New("伙伴安装、登录或工作仍在途或结果未知，请先停止或核对"))
 			return
 		}
-		if kind == "notice.create" || kind == "notice.state" || strings.HasPrefix(kind, "schedule.tool-") || strings.HasPrefix(kind, "project.archive.") || strings.HasPrefix(kind, "memory.") || kind == "project.handoff-create" || kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "budget.save" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
+		if kind == "work.complete" || kind == "work.guidance" || kind == "chat.work-draft" || kind == "notice.create" || kind == "notice.state" || strings.HasPrefix(kind, "schedule.tool-") || strings.HasPrefix(kind, "project.archive.") || strings.HasPrefix(kind, "memory.") || kind == "project.handoff-create" || kind == "tool.run" || kind == "tool.cancel" || kind == "tool.input" || kind == "budget.save" || kind == "tool.authorize" || kind == "tool.revoke" || kind == "tool.decide" {
 			result, e := a.toolCommand(body)
 			if e != nil {
 				failed(w, e)
@@ -182,6 +182,10 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 }
 func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, error) {
 	q := r.URL.Query()
+	if path == "/api/v2/document-requests" {
+		rows, e := a.documentRequests(q.Get("task_id"), "")
+		return map[string]any{"requests": rows}, e
+	}
 	if path == "/api/v2/notifications" {
 		return a.inbox(q)
 	}
@@ -211,6 +215,9 @@ func (a *App) v2(w http.ResponseWriter, r *http.Request, path string) (any, erro
 			return nil, err
 		}
 		return map[string]any{"implementation_revision": a.Implementation, "contract": contract}, nil
+	}
+	if path == "/api/v2/work-delivery" {
+		return a.workDeliveryView(q.Get("task_id"))
 	}
 	if path == "/api/v2/tools" {
 		return a.documentCatalog(), nil

@@ -36,7 +36,23 @@ def preview_file(folder, name, expected):
 
 class Results:
     def __init__(self,service):self.s=service;self.c=service.collaboration
-    def handlers(self):return {'result.capture':self.capture,'result.verify':self.verify,'result.decide':self.decide}
+    def handlers(self):return {'result.capture':self.capture,'result.verify':self.verify,'result.decide':self.decide,'result.task-complete':self.complete_task}
+
+    def complete_task(self,db,p):
+        row=self.checked(db,p)
+        task=self.s.store.task(row['task_id'],db)
+        check=self.inspect(db,row)
+        criteria=p.get('criteria')
+        if task['spec'].get('work_mode')!='independent' or check['state']!='CURRENT' or p.get('confirm') is not True or not isinstance(criteria,str) or not criteria.strip() or len(criteria)>4000:
+            raise ValueError('请复核本回合成果并确认完成依据。')
+        if (row.get('decision') or {}).get('value')=='return':
+            raise ValueError('该版本已退回，请先修订。')
+        required=task['spec'].get('deliverable_files',[])
+        if any(name not in row['snapshot']['manifest'] for name in required):
+            raise ValueError('此快照缺少声明交付文件。')
+        completion={'task_id':row['task_id'],'attempt_id':row['attempt_id'],'result_id':row['id'],'snapshot_hash':row['snapshot_hash'],'criteria':criteria.strip(),'state':'COMPLETED'}
+        self.s.store.event(row['task_id'],row['attempt_id'],'result.task-complete',{'receipt':completion},db)
+        return completion
 
     def catalog(self,task_id=None):
         with self.s.store.read() as db:
@@ -45,11 +61,21 @@ class Results:
             tasks=[dict(r) for r in db.execute("SELECT t.id,coalesce(json_extract(d.data,'$.title'),t.title) AS title,t.state,t.project_id,json_extract(t.spec,'$.runtime_mode') AS runtime_mode FROM tasks t LEFT JOIN collaboration d ON d.kind='display' AND d.id='display:task:'||t.id WHERE coalesce(json_extract(t.spec,'$.interaction'),'')!='chat' AND coalesce(json_extract(d.data,'$.deleted'),0)=0 ORDER BY t.created DESC")]
         return {'results':rows,'tasks':tasks,'no_dispatch':True,'acceptance':'EXPLICIT_HUMAN_DECISION_ONLY'}
 
-    def capture(self,db,p):
+    def capture_delivered(self,db,task,attempt):
+        names=task['spec'].get('deliverable_files',[])
+        try:
+            for name in names:
+                file=workspace.plain(Path(attempt['workspace'])/name,Path(attempt['workspace']))
+                if not workspace.io_path(file).is_file():raise ValueError('未取得声明文件：'+name)
+            self.capture(db,{'task_id':task['id'],'attempt_id':attempt['id'],'owner':attempt['owner'],'files':names},finishing=True)
+        except (ValueError,OSError) as exc:
+            self.s.store.event(task['id'],attempt['id'],'work_result_capture_pending',{'files':names,'reason':str(exc)},db)
+
+    def capture(self,db,p,*,finishing=False):
         task,attempt=self.s._latest(db,p);self.s.work_records.guard(db,'task',task['id'])
         if task['spec'].get('runtime_mode')!='official':raise ValueError('有限任务继续使用原候选、检查和整合流程。')
         if not attempt or attempt['state']!='COMPLETED' or not self.s.operations.exit_proved(attempt):raise ValueError('请等待回合正常完成并确认本地退出，再保存成果。')
-        if self.s.workers.get(attempt['id']) and self.s.workers[attempt['id']]['thread'].is_alive():raise ValueError('工作端仍在收尾。')
+        if not finishing and self.s.workers.get(attempt['id']) and self.s.workers[attempt['id']]['thread'].is_alive():raise ValueError('工作端仍在收尾。')
         if self.s.store.usage(task=task['id'],db=db)['unknown_requests']:raise ValueError('仍有未知请求，先核对。')
         names=p.get('files',[])
         if not isinstance(names,list) or any(not isinstance(n,str) for n in names):raise ValueError('请选择成果文件清单。')
@@ -131,7 +157,7 @@ class Results:
         if p.get('decision') not in {'accept','return'} or p.get('confirm') is not True:raise ValueError('请明确接受或退回此版本。')
         note=p.get('note','')
         if not isinstance(note,str) or len(note)>4000:raise ValueError('验收说明最多4000字。')
-        decision={'actor':'HUMAN','value':p['decision'],'note':note,'snapshot_hash':row['snapshot_hash'],'at':time.time(),
+        decision={'actor':'HUMAN','command_id':self.s.command_identity,'value':p['decision'],'note':note,'snapshot_hash':row['snapshot_hash'],'at':time.time(),
                   'independent_review_replaced':False,'model_dispatched':False}
         self.c.put(db,'result_decision',{'id':uid(),'result_id':row['id'],**decision})
         row.update(decision=decision,verification=check,revision=uid());self.c.put(db,'work_result',row)

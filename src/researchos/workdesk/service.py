@@ -205,7 +205,7 @@ class Service(TaskDraftCommands, TaskExecutionCommands):
             if task['spec']['provider']=='deepseek':independent_service['native_resume']=False
         if task['spec'].get('execution')=='partner_native':
             with self.store.read() as db:
-                linked=db.execute("SELECT id FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.parent_task_id')=? ORDER BY json_extract(data,'$.created') DESC LIMIT 1",(identity,)).fetchone()
+                linked=db.execute("SELECT id FROM core_partner_objects WHERE kind='run' AND json_extract(data,'$.parent_task_id')=? AND json_extract(data,'$.parent_attempt_id')=?",(identity,attempts[-1]['id'] if attempts else None)).fetchone()
             if linked:
                 task['partner_run_id']=linked[0]
         return {'task':task,'work_items':work_items,'attempts':attempts,'events':events,'cursor':events[-1]['seq'] if events else int(cursor),

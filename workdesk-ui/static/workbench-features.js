@@ -517,6 +517,8 @@ window.WorkdeskFeatures = function(B) {
     return false;
   }
   document.addEventListener('input',e=>{
+    if(e.target.id==='wb-completion-criteria'){v.formDraft.completionCriteria=e.target.value;autosave();}
+    if(e.target.id==='wb-delivery-paths'){v.formDraft.deliveryPaths=e.target.value;autosave();}
     if(e.target.id==='wb-work-input'){v.input=e.target.value;autosave();}
     if(e.target.id==='wb-chat-input'){v.chatInput=e.target.value;autosave();}
     if(e.target.closest('#wb-start-form')){const f=new FormData(e.target.form);Object.assign(v.formDraft,Object.fromEntries(['acceptance','writable','checks'].map(k=>[k,f.get(k)||''])));autosave();}

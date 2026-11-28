@@ -981,6 +981,9 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 					for _, key := range []string{"parent_task_id", "parent_attempt_id", "parent_spec_hash", "parent_prompt_sha256", "workspace"} {
 						run[key] = parent[key]
 					}
+					if parent["document_mcp"] == true {
+						run["document_mcp"] = true
+					}
 					if sceneMCP := parent["scene_mcp"]; sceneMCP != nil {
 						run["scene_mcp"] = sceneMCP
 					}
@@ -1089,6 +1092,9 @@ func (a *App) partnerCommandWithParent(command map[string]any, parent map[string
 			}
 			receipt = map[string]any{"run_id": rid, "state": run["state"]}
 			after = func() {
+				if kind == "partner.stop" && run["document_mcp"] == true {
+					a.cancelRunDocuments(run)
+				}
 				if e := proc.send(action); e != nil {
 					a.partnerFailure(rid, e)
 				}
@@ -1427,6 +1433,14 @@ func (a *App) runPartner(run map[string]any) {
 	}
 	if sceneMCP := run["scene_mcp"]; sceneMCP != nil {
 		config["scene_mcp"] = sceneMCP
+	}
+	if run["document_mcp"] == true {
+		closeServer, e := a.documentMCP(ctx, run, config, proc)
+		if e != nil {
+			a.failPartnerBeforeStart(rid, e)
+			return
+		}
+		defer closeServer()
 	}
 	if str(connection["route"]) == "account" {
 		config["auth_options"] = run["auth_options"]

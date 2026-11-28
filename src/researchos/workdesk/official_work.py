@@ -26,6 +26,15 @@ def send(service, db, payload, *, cooperative=None):
     if '_connection_binding' not in payload:payload,_=service.resources.before(db,'independent.send',payload)
     binding=payload['_connection_binding'];partner=partner_task.is_binding(binding)
     allowed={'task_id','attempt_id','owner','project_id','provider','model','effort','tier','goal','work_scene','files','attachments','access','_connection_binding','work_directory_confirmation','plan_only'}
+    delivery={}
+    if not cooperative and not payload.get('task_id'):
+        criteria=payload.pop('completion_criteria','')
+        outputs=payload.pop('deliverable_files',[])
+        if not isinstance(criteria,str) or len(criteria)>4000 or not isinstance(outputs,list) or len(outputs)>32:
+            raise ValueError('请核对完成条件与交付文件清单。')
+        outputs=list(dict.fromkeys(workspace.relative(n) for n in outputs))
+        if criteria.strip() or outputs:
+            delivery={'completion_criteria':criteria.strip(),'deliverable_files':outputs}
     if set(payload)-allowed:raise ValueError('独立Work直接发送不接收任务范围、预算或工具限制。')
     if type(payload.get('plan_only',False)) is not bool:raise ValueError('计划模式设置无效。')
     note=bounded_text(payload.get('goal'),'消息')
@@ -106,6 +115,9 @@ def send(service, db, payload, *, cooperative=None):
               'role':'executor','acceptance':'','materials':{},'writable':[],'checks':[],'alternatives':[],
               'budget':{},'campaign':None,'native':{'configuration':'FROZEN_PARTNER_CONNECTION' if partner else 'VENDOR_DEFAULTS'},
               'execution_connection':payload['_connection_binding']}
+        if delivery:
+            spec.update(delivery,acceptance=delivery['completion_criteria'])
+            spec['goal']=note+('\n完成条件：'+delivery['completion_criteria'] if delivery['completion_criteria'] else '')+('\n声明交付文件：'+'、'.join(delivery['deliverable_files']) if delivery['deliverable_files'] else '')
         if partner:spec['partner_connection']=dict(binding)
         if interface:spec['qwen_runtime']=interface
         if payload.get('plan_only'):spec['plan_only']=True
@@ -213,6 +225,8 @@ def run(service, identity, stop, resume_mode, note):
         service.store.update_attempt(identity,result['state'],db=db,result=result)
         db.execute("UPDATE native_requests SET state='CANCELLED',resolved=? WHERE attempt_id=? AND state IN ('PENDING','READY','REPLY_INTENT')",(time.time(),identity))
         service.store.event(task['id'],identity,'attempt_result_saved',result,db)
+        if task['spec'].get('work_mode')=='independent' and result['state']=='COMPLETED' and (result.get('answer') or task['spec'].get('deliverable_files')):
+            service.results.capture_delivered(db,task,attempt)
 
 
 def _legacy_run(service,task,attempt,tools,stop,resume,note):

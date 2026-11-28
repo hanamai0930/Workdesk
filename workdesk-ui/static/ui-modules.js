@@ -28,8 +28,9 @@
   definitions.settings.sources.push('../frontend/modules/partners.tsx');
   definitions.connect.sources.push('../frontend/modules/partners.tsx');
   definitions.settings.styles.push('../frontend/modules/partners.css');
-  definitions.workbench.sources.push('../frontend/modules/partner-work.tsx');
-  definitions.workbench.styles.push('../frontend/modules/partner-work.css');
+  definitions.workbench.sources.push('../frontend/modules/partner-work.tsx','../frontend/modules/task-delivery.tsx');
+  definitions.workbench.sources.push('../frontend/modules/chat-work-handoff.tsx','../frontend/modules/work-goal.tsx');
+  definitions.workbench.styles.push('../frontend/modules/partner-work.css','../frontend/modules/stage4-dialog.css');
   // Native Work-only floating selectors; portal roots retain workbench scope.
   definitions.workbench.sources.push('../frontend/modules/work-model-picker.tsx');
   definitions.workbench.styles.push('../frontend/modules/work-model-picker.css');

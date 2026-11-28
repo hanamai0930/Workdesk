@@ -1,6 +1,13 @@
 {
   "schema": 1,
   "control_protocol": 2,
+  "single_task_delivery": {
+    "status": "/api/v2/work-delivery?task_id={task_id}", "jobs": "/api/v2/jobs?task_id={task_id}",
+    "complete": {"kind":"work.complete","fields":["task_id","attempt_id","run_id","spec_hash","invocation_id","path","sha256","criteria","confirm"]},
+    "native_snapshot":{"complete":"result.task-complete","verify":"result.verify","decision":"result.decide","reference":["id","revision","snapshot_hash"]},
+    "guidance": {"kind":"work.guidance","fields":["task_id","attempt_id","run_id","spec_hash","previous","note"],"effect":"editable until original turn continuation"},
+    "continue": {"kind":"independent.send","parent":["task_id","attempt_id","owner"],"optional_sources":["feedback_command_id","feedback_snapshot","guidance_command_id"]}
+  },
   "instance_schema": 1,
   "storage_schema": 3,
   "legacy_bridge_protocol": 1,
@@ -8,6 +15,7 @@
   "command": {"fields": ["id", "kind", "payload"], "receipt_lookup": "/api/v1/receipt?id={id}", "unknown_no_resend": true},
   "read_models": ["/api/v2/projects", "/api/v2/records", "/api/v2/records/{kind}/{id}", "/api/v2/events", "/api/v2/runtime", "/api/v2/components"],
   "professional_tool": {"command": "tool.run", "cancel": "tool.cancel", "tool": "material-summary/1", "model_requests": 0, "log_segment_bytes": 4194304, "log_read_default_bytes": 65536, "log_route": "/api/v2/jobs/{id}/log"},
+  "task_document_request": {"tool":"workdesk_document","native_endpoint":"kimi or deepseek with verified per-task HTTP MCP","arguments":["parameters","input_files"],"requests":"/api/v2/document-requests?task_id={task_id}","review":"tool.authorize using request.authorization_id and exact parameters plus request_id","run":"tool.run using request.command_id and authorization_id","reject":"document.reject","receipt_lookup":"/api/v1/receipt?id={id}"},
   "document_tool": {
     "version": "document/1", "catalog": "/api/v2/tools", "contexts": "/api/v2/tool-contexts?project_id={project_id}",
     "authorize": {"kind":"tool.authorize","payload":["project_id","tool_version","input_files","parameters","confirm"],"optional_parent":["task_id","attempt_id","spec_hash"],"ttl_seconds":900,"single_use":true},
@@ -76,5 +84,7 @@
     "list":"/api/v2/notifications?project_id={project_id}","detail":"/api/v2/notifications?id={id}",
     "create":"notice.create","transition":"notice.state","open_round":"#planning/round/{round_id}?project_id={project_id}"
   },
+  "chat_work_handoff": {"command":"chat.work-draft","payload":["chat_id","revision","project_id","goal","message_ids","attachment_ids","confirm"],"optional":["include_link","include_prompt","pasted","local_files"],"receipt":["draft_id","selection_id","chat_source"],"dispatch":false},
+  "work_goal":{"command":"planning.goal-save","optional_existing_task":{"source_task":["task_id","attempt_id","spec_hash"]},"optional_draft_materials":["files","selection_ref"],"initial_state":"PAUSED","review":"planning.goal-review"},
   "ownership": {"lock": "backend.lock", "byte_offset": 0, "byte_length": 1, "writer": "go-core", "stale_epoch_rejected": true}
 }

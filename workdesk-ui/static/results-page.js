@@ -78,6 +78,8 @@
         ${S.text('验收说明','note',v.notes.get(r.id)||'','maxlength="4000"')}
         <div class="sp-actions">
           ${S.button('重新核对版本',`data-result-action="verify" data-id="${h(r.id)}"`)}
+          ${v.detail?.task.spec.work_mode==='independent'&&latest(v)?.id===r.attempt_id?'<button type="submit" name="decision" value="complete">登记任务完成</button>':''}
+          ${decision?.value==='return'&&v.detail?.task.spec.work_mode==='independent'&&latest(v)?.id===r.attempt_id?S.button('在原任务修订此快照',`data-result-action="revise-native" data-id="${h(r.id)}"`):''}
           <button type="submit" name="decision" value="accept">接受此版本</button>
           <button type="submit" name="decision" value="return">退回此版本</button>
         </div>
@@ -142,6 +144,11 @@
       if(v.preview?.id!==r.id||v.preview.hash!==r.snapshot_hash)return;
       const p=v.preview.data,bytes=Uint8Array.from(atob(p.data),c=>c.charCodeAt(0));
       S.download(bytes,p.file.split('/').at(-1),p.mime||'application/octet-stream');
+    }else if(action==='revise-native'){
+      const a=latest(v);
+      if(r.attempt_id!==a?.id||!await S.confirm('接续原工作端修订？',r.title,r.decision?.note||'沿用此成果版本和原会话。')||!active(v))return;
+      await S.command('independent.send',{task_id:r.task_id,attempt_id:a.id,owner:a.owner,goal:'按原版本的退修意见修改。',feedback_snapshot:ref(r)});
+      if(active(v))location.hash='#work/task/'+encodeURIComponent(r.task_id);
     }else if(action==='verify'){
       const forms=[...v.host.querySelectorAll('[data-result-form]')];
       for(const form of forms){
@@ -163,6 +170,12 @@
       await S.command('result.capture',{task_id:v.task,attempt_id:a.id,owner:a.owner,files});
     }else{
       const r=results(v).find(row=>row.id===form.dataset.resultForm),decision=submitter?.value;
+      if(r&&decision==='complete'){
+        const criteria=String(new FormData(form).get('note')||v.detail?.task.spec.acceptance||v.detail?.task.spec.goal||'');
+        if(!await S.confirm('确认任务已完成？',r.title,criteria,{confirmLabel:'确认任务完成'})||!active(v))return;
+        await S.command('result.task-complete',{...ref(r),confirm:true,criteria});
+        await load(v);return;
+      }
       if(!r||!['accept','return'].includes(decision))return;
       const note=String(new FormData(form).get('note'));
       const confirmed=await S.confirm(decision==='accept'?'接受此成果版本？':'退回此成果版本？',r.title,'只记录你的验收决定，不会重新运行模型或更改项目文件。',{confirmLabel:decision==='accept'?'接受此版本':'退回此版本'});

@@ -26,6 +26,16 @@
   .wd-partner-work-history li a { overflow-wrap:anywhere; color:var(--wk-action); }
   .wd-partner-work-history li span { flex:none; color:var(--wk-muted); }
   .wd-partner-work-history form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; }
+  .wd-task-delivery {overflow-wrap:anywhere;}
+  .wd-task-delivery pre {max-height:14rem;overflow:auto;white-space:pre-wrap;}
+  .wd-task-delivery article {padding:.75rem;border:1px solid var(--wk-line);border-radius:8px;}
+  .wd-task-delivery article>div {padding:.5rem 0;}
+  .wd-task-delivery button,.wd-task-delivery a {width:fit-content;margin:.15rem .5rem .15rem 0;}
+  .wd-task-delivery button {padding:.25rem .6rem;border:1px solid var(--wk-line);border-radius:6px;background:var(--wk-soft);}
+  .wd-task-delivery button:disabled {opacity:.55;}
+  .wd-task-delivery p,.wd-task-delivery summary {font-size:13px;line-height:1.55;}
+  .wd-task-delivery :is(input,textarea) {padding:.5rem;border:1px solid var(--wk-line);border-radius:6px;}
+  .wd-task-delivery form {grid-template-columns:minmax(0,1fr);}
   .wd-partner-runtime-usage { font-size:13px; line-height:1.7; }
   .wd-partner-runtime-usage dl>div { display:flex; flex-wrap:wrap; gap:8px; }
   .wd-partner-runtime-usage dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }

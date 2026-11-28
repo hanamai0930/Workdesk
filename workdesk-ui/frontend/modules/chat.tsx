@@ -1,3 +1,4 @@
+import { ChatWorkHandoff, type HandoffChat } from './chat-work-handoff';
 import { Button } from '../components/ui/button';
 import { NativeSelect } from '../components/ui/native-select';
 import { useLayoutEffect, useRef, type ReactNode } from 'react';
@@ -16,7 +17,7 @@ export function chatDisplayNames(model:string){
   return {user:preferences?.userNickname?.trim()||'User',assistant:preferences?.assistantNickname?.trim()||model||'AI'};
 }
 
-type ChatRecord=NonNullable<Parameters<typeof apiSummary>[0]>&{id:string;archived?:boolean;list_project?:string};
+type ChatRecord=NonNullable<Parameters<typeof apiSummary>[0]>&HandoffChat & {archived?:boolean};
 
 export function ChatFrame({record,records,projectId,api,filesDisabled,actions,children}:{
   record?:ChatRecord;records:ChatRecord[];projectId?:string;api?:boolean;filesDisabled?:boolean;actions?:ReactNode;children:ReactNode;
@@ -29,7 +30,7 @@ export function ChatFrame({record,records,projectId,api,filesDisabled,actions,ch
       <h1 title={title}><MessageSquare aria-hidden="true"/><span>{title}</span></h1>
       <div className="wd-chat-tools">
         {actions}
-        {record?<>
+        {record?<><ChatWorkHandoff key={record.id} source={record}/>
           <Button asChild variant="ghost" size="icon-sm"><a href={'#work-items/view-chat/'+encodeURIComponent(record.id)}
             aria-label="对话详情" title="对话详情" data-chat-detail><Info aria-hidden="true"/></a></Button>
           <Button type="button" variant="ghost" size="icon-sm" data-wb-menu="conversation" aria-label="对话操作" title="对话操作" aria-expanded={false}><MoreHorizontal/></Button>

@@ -95,6 +95,23 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			return json.Unmarshal([]byte(str(row[2])), &receipt)
 		}
 		switch kind {
+		case "work.complete", "work.guidance":
+			receipt, e = a.workDelivery(s, id, kind, p)
+			if e != nil {
+				return e
+			}
+			taskID, attemptID = str(p["task_id"]), str(p["attempt_id"])
+		case "chat.work-draft":
+			receipt, e = a.chatHandoff(s, id, p)
+			if e != nil {
+				return e
+			}
+		case "document.reject":
+			receipt, e = rejectDocument(s, str(p["request_id"]))
+			if e != nil {
+				return e
+			}
+			taskID, attemptID = str(receipt["task_id"]), str(receipt["attempt_id"])
 		case "budget.save":
 			receipt, e = saveProjectBudget(s, id, p)
 			if e != nil {
@@ -142,7 +159,7 @@ func (a *App) toolCommand(command map[string]any) (any, error) {
 			taskID, attemptID = current.TaskID, current.AttemptID
 		case "tool.run":
 			if authoritativeDocument(p) {
-				job, e = a.authorizedJob(s, p)
+				job, e = a.authorizedJob(s, id, p)
 				if e != nil {
 					return e
 				}

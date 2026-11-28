@@ -1,5 +1,6 @@
 """Local file previews and version-bound selections; native Work owns processing."""
 import base64
+import json
 from pathlib import Path
 import time
 
@@ -66,9 +67,53 @@ class FileInspector:
             if payload.get('task_id'):raise ValueError('已有回合的材料清单沿用原配置。')
             row,expected=self.checked(db,reference)
             if row['project_id']!=payload.get('project_id'):raise ValueError('所选材料属于另一项目。')
+        feedback=payload.pop('feedback_command_id',None)
+        guidance=payload.pop('guidance_command_id',None)
+        snapshot=payload.pop('feedback_snapshot',None)
+        source={}
+        if snapshot:
+            if feedback or not isinstance(snapshot,dict):raise ValueError('请一次选择一个退修版本。')
+            result=self.s.results.checked(db,snapshot)
+            decision=result.get('decision') or {}
+            if (result['task_id']!=payload.get('task_id') or result['attempt_id']!=payload.get('attempt_id')
+                or decision.get('value')!='return' or decision.get('snapshot_hash')!=result['snapshot_hash']
+                or self.s.results.inspect(db,result)['state']!='CURRENT'):
+                raise ValueError('原任务、退修决定或快照已变化，请重新核对。')
+            source={'feedback_snapshot':{**{k:result[k] for k in ('id','revision','snapshot_hash')},'decision_command_id':decision.get('command_id')}}
+            payload['goal']=payload.get('goal','')+'\n退修原成果 '+result['id']+'，版本 '+result['snapshot_hash']+'：'+(decision.get('note') or '请复核并修订所交成果。')
+        if feedback or guidance:
+            task_id,attempt_id=payload.get('task_id'),payload.get('attempt_id')
+            if not task_id or not attempt_id:
+                raise ValueError('请选择原任务与尝试。')
+            if feedback:
+                row=db.execute("SELECT receipt FROM commands WHERE id=? AND kind='tool.decide'",(feedback,)).fetchone()
+                decision=json.loads(row[0]) if row else {}
+                jobrow=db.execute('SELECT data FROM core_tool_jobs WHERE id=?',(decision.get('invocation_id'),)).fetchone()
+                job=json.loads(jobrow[0]) if jobrow else {}
+                if job.get('task_id')!=task_id or job.get('attempt_id')!=attempt_id or decision.get('decision')!='revise':
+                    raise ValueError('退修意见与原任务版本不符。')
+                selected=[d for d in job.get('decisions',[]) if d['path']==decision['path'] and d['sha256']==decision['sha256']]
+                if not selected or selected[-1]['command_id']!=feedback:
+                    raise ValueError('该成果已有新的验收决定，请重新选择。')
+                index=next((i for i,f in enumerate(job['artifacts']) if (f['path']==decision['path'] or decision.get('relative_path') and f['relative_path']==decision['relative_path']) and f['sha256']==decision['sha256']),None)
+                if index is None:raise ValueError('退修版本已无法定位。')
+                source={'feedback_command_id':feedback,'input_version':{'kind':'job','source':job['id'],'entry':str(index),'sha256':decision['sha256']}}
+                payload['goal']=payload.get('goal','')+'\n退修意见：'+decision['note']+'\n请以此准确版本作为文档工具 input_files 的输入：'+json.dumps([source['input_version']],ensure_ascii=False)
+            if guidance:
+                row=db.execute("SELECT json_extract(payload,'$.receipt') FROM events WHERE task_id=? AND attempt_id=? AND kind='work.guidance' ORDER BY seq DESC LIMIT 1",(task_id,attempt_id)).fetchone()
+                draft=json.loads(row[0]) if row else {}
+                if draft.get('command_id')!=guidance or not draft.get('note'):
+                    raise ValueError('补充要求已变化，请刷新。')
+                payload['goal']=payload.get('goal','')+'\n'+draft['note']
+                source['guidance_command_id']=guidance
         result=self.s.scenes.send(db,payload)
+        if source:
+            self.s.store.event(result['task_id'],result['launch_attempt'],'single_task_continued',{'previous_attempt_id':payload['attempt_id'],**source},db)
         if expected is not None:
             task=self.s.store.task(result['task_id'],db)
-            if task['spec']['materials']!=expected:raise ValueError('发送材料与已保存选择不一致；未派发。')
-            self.s.store.event(task['id'],result['launch_attempt'],'file_selection_delivery_verified',{'selection_id':reference['id'],'revision':reference['revision'],'manifest':expected,'model_comprehension':'NOT_ATTESTED'},db)
+            materials=task['spec']['materials']
+            matches=(all(materials.get(name)==version for name,version in expected.items())
+                     if row.get('chat_source') else materials==expected)
+            if not matches:raise ValueError('发送材料与已保存选择不一致；请返回原材料重新选择。')
+            self.s.store.event(task['id'],result['launch_attempt'],'file_selection_delivery_verified',{'selection_id':reference['id'],'revision':reference['revision'],'manifest':expected,**({'chat_source':row['chat_source']} if row.get('chat_source') else {}),'model_comprehension':'NOT_ATTESTED'},db)
         return result

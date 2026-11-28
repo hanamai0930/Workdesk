@@ -1,0 +1,11 @@
+@scope ([data-ui-module="workbench"]) {
+ .wd-stage4-dialog {color:var(--text,CanvasText);background:var(--surface,Canvas);width:min(36rem,94vw);max-height:85vh;overflow:auto;padding:1.25rem;border:1px solid var(--border,#aaa);border-radius:.75rem;margin:auto;}
+ .wd-stage4-dialog::backdrop {background:rgb(0 0 0 / .28);}
+ .wd-stage4-dialog h2 {font-size:1.15rem;margin:0 0 .75rem;}
+ .wd-stage4-dialog form {display:grid;gap:.65rem;}
+ .wd-stage4-dialog label {display:block;}
+ .wd-stage4-dialog :is(textarea,select,input:not([type=checkbox])) {display:block;width:100%;box-sizing:border-box;padding:.4rem;border:1px solid var(--border,#aaa);border-radius:.3rem;background:transparent;color:inherit;}
+ .wd-stage4-dialog button[type=submit] {background:#195849;color:white;}
+ .wd-stage4-dialog pre {white-space:pre-wrap;overflow-wrap:anywhere;}
+ .wd-stage4-dialog fieldset {padding:.65rem;max-height:30vh;overflow:auto;}
+}

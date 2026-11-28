@@ -6,12 +6,14 @@ import { Textarea } from '../components/ui/textarea';
 import { coreClient } from '../core/client';
 import { PartnerRunList, partnerRunning, partnerStateLabel, type PartnerRun } from '../core/partner-runtime';
 import type { PartnersSnapshot } from './partners';
+import {TaskDelivery,type TaskDetail} from './task-delivery';
 import './partner-work.css';
 
 type Project = {id:string;name:string;root:string};
-type Receipt = {run_id?:string};
+type Receipt = {run_id?:string;task_id?:string};
 const errorText=(value:unknown)=>value instanceof Error?value.message:'操作未完成，请核对当前状态。';
-export function PartnerWork({runId,task}: {runId?:string;task?:{id:string;title?:string}}) {
+export function PartnerWork({runId,detail}: {runId?:string;detail?:TaskDetail}) {
+  const task=detail?.task;
   const [data,setData]=useState<PartnersSnapshot|null>(null),[projects,setProjects]=useState<Project[]>([]),[run,setRun]=useState<PartnerRun|null>(null);
   const [connection,setConnection]=useState(''),[project,setProject]=useState(''),[prompt,setPrompt]=useState(''),[lookup,setLookup]=useState('');
   const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[notice,setNotice]=useState(''),[error,setError]=useState('');
@@ -48,7 +50,7 @@ export function PartnerWork({runId,task}: {runId?:string;task?:{id:string;title?
       const value=await coreClient.command<Receipt>(kind,payload);
       if(!alive.current)return;
       setNotice(success);after?.();
-      if(kind==='partner.run'&&value.receipt.run_id){location.hash='#work/partners/run/'+encodeURIComponent(value.receipt.run_id);return;}
+      if(kind==='independent.send'&&value.receipt.task_id){location.hash='#work/task/'+encodeURIComponent(value.receipt.task_id);return;}
       await refresh();
     }catch(e){if(alive.current)setError(errorText(e));}
     finally{lock.current=false;if(alive.current){setBusy(false);setPending(coreClient.uncertainCommands());}}
@@ -67,7 +69,7 @@ export function PartnerWork({runId,task}: {runId?:string;task?:{id:string;title?
     {error&&<p role="alert" className="wd-partners-error">{error}</p>}{notice&&<p role="status" className="wd-partners-note">{notice}</p>}
     {pending.length>0&&<div className="wd-partners-request" role="alert"><p>有操作回执待核对。新工作暂不发送；核对不会重复执行。</p>{pending.map(item=><Button key={item.id} variant="outline" disabled={busy} onClick={()=>void receipt(item.id)}>核对原操作 · {item.id.slice(0,8)}</Button>)}</div>}
     {loading&&<p role="status">正在读取伙伴连接与项目…</p>}
-    {!runId&&data&&<form className="wd-partner-work-composer" onSubmit={event=>{event.preventDefault();if(available&&selectedProject&&prompt.trim())void perform('partner.run',{connection_id:connection,connection_revision:selected.revision,project_id:project,prompt:prompt.trim()},'工作已发送至所选官方端。');}}>
+    {!runId&&data&&<form className="wd-partner-work-composer" onSubmit={event=>{event.preventDefault();if(available&&selectedProject&&prompt.trim())void perform('independent.send',{provider:selected.partner_id,connection_id:connection,connection_revision:selected.revision,project_id:project,goal:prompt.trim()},'工作已发送至所选官方端。');}}>
       <div className="wd-partner-work-fields"><label>使用伙伴连接<NativeSelect aria-label="使用伙伴连接" value={connection} disabled={blocked} onChange={event=>setConnection(event.currentTarget.value)}><option value="">请选择已保存的连接</option>{data.connections.map(item=><option key={item.id} value={item.id}>{data.partners.find(p=>p.id===item.partner_id)?.name||item.partner_id} · {item.route==='api'?apiName(item)+' API':'官方账号'} · {data.accounts.find(a=>a.id===item.account_id)?.label||'账号待核对'} · {partnerStateLabel(item.state)}</option>)}</NativeSelect></label>
       <label>项目<NativeSelect aria-label="伙伴工作项目" value={project} disabled={blocked} onChange={event=>setProject(event.currentTarget.value)}><option value="">请选择已登记项目</option>{projects.map(item=><option key={item.id} value={item.id}>{item.name||item.id}</option>)}</NativeSelect></label></div>
       {selected&&<div className="wd-partner-work-selection"><p>{data.partners.find(p=>p.id===selected.partner_id)?.name||selected.partner_id} ＋ {selected.route==='api'?apiName(selected)+' API':'官方账号'} · {selected.model||'官方默认模型'} · {account?.label} · 版本 {release?.version||'未准备'}</p><p className="wd-partners-note">{selectedProject?.root||'请明确选择本次项目。'}{!available?' · 此连接暂不可派发，请检查组件和连接状态。':''}</p></div>}
@@ -75,7 +77,8 @@ export function PartnerWork({runId,task}: {runId?:string;task?:{id:string;title?
       {selected?.route==='api'&&<p className="wd-partners-note">使用所选 API 凭据，会产生实际费用。</p>}
       <div className="wd-partners-actions"><Button type="submit" disabled={blocked||!available||!selectedProject||!prompt.trim()}>开始伙伴工作</Button></div>
     </form>}
-    {runId&&run&&<><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work/partners">开始另一项工作</a></Button><span className="wd-partners-note">同一运行记录 · {run.id}</span></div><PartnerRunList runs={[run]} busy={busy} blocked={blocked} perform={perform} apiProviders={data?.api_providers}/></>}
+    {runId&&run&&<><div className="wd-partners-actions"><Button asChild variant="outline"><a href="#work/partners">开始另一项工作</a></Button><span className="wd-partners-note">同一运行记录 · {run.id}</span></div><PartnerRunList runs={[run]} busy={busy} blocked={blocked} perform={(kind,payload,success,after)=>{const a=detail?.attempts.at(-1);return kind==='partner.stop'&&a&&detail?.task.spec.work_mode==='independent'?perform('task.stop',{task_id:detail.task.id,attempt_id:a.id,owner:a.owner},success,after):perform(kind,payload,success,after);}} apiProviders={data?.api_providers}/></>}
+    {detail&&run&&detail.task.spec.work_mode==='independent'&&detail.attempts.length>0&&<TaskDelivery detail={detail} run={run}/>}
     {!task&&<section className="wd-partner-work-history"><h2>伙伴工作记录</h2>{!recent.length&&<p className="wd-partners-note">尚无伙伴工作记录。登录和本地检查不会作为工作列入。</p>}<ul>{recent.map(item=><li key={item.id}><a href={'#work/partners/run/'+encodeURIComponent(item.id)}>{item.prompt?.slice(0,100)||data?.partners.find(p=>p.id===item.partner_id)?.name||item.id}</a><span>{partnerStateLabel(item.state)}</span></li>)}</ul>
       <form onSubmit={event=>{event.preventDefault();if(lookup.trim())location.hash='#work/partners/run/'+encodeURIComponent(lookup.trim());}}><label>按准确运行标识打开<Input aria-label="伙伴运行标识" value={lookup} onChange={event=>setLookup(event.currentTarget.value)}/></label><Button type="submit" variant="outline" disabled={!lookup.trim()}>打开原运行</Button></form>
     </section>}

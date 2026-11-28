@@ -53,7 +53,9 @@
       payload={...payload,scene_preset:preset?{id:preset.id,revision:preset.revision}:null};
       if(composerCapabilities().length)payload.composer_capabilities=structuredClone(composerCapabilities());
       const ref=v.formDraft?.fileSelection,current=[...new Set([...lines(v.files),...v.attachments.map(x=>x.file)])].sort();
-      if(ref&&JSON.stringify([...ref.files].sort())===JSON.stringify(current))payload.file_selection={id:ref.id,revision:ref.revision};
+      if(ref&&(v.formDraft?.chatSource||JSON.stringify([...ref.files].sort())===JSON.stringify(current)))payload.file_selection={id:ref.id,revision:ref.revision};
+      if(v.formDraft?.completionCriteria?.trim())payload.completion_criteria=v.formDraft.completionCriteria.trim();
+      if(v.formDraft?.deliveryPaths?.trim())payload.deliverable_files=lines(v.formDraft.deliveryPaths);
       if(v.formDraft?.workItem)payload.work_item=structuredClone(v.formDraft.workItem);
       if(v.formDraft?.resourceSelection)payload.resource_selection=structuredClone(v.formDraft.resourceSelection);
     }

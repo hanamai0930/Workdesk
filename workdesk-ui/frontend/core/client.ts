@@ -115,7 +115,7 @@ async function loadIdentity(signal?: AbortSignal) {
   return value;
 }
 
-async function command<T = any>(kind: string, payload: unknown, id = crypto.randomUUID()) {
+async function command<T = any>(kind: string, payload: unknown, id: string = crypto.randomUUID()) {
   const frozen = structuredClone({id, kind, payload});
   return request<{receipt: T; command_id: string; replayed: boolean}>('v1/command', {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(frozen),
